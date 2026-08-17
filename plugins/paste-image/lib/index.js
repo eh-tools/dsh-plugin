@@ -1,7 +1,7 @@
 /**
  * dsh-paste-image — host half(静态双半插件)
  *
- * 职责: 接收 client 传来的粘贴图片(base64), 校验后经 ctx.shell 落盘到
+ * 职责: 接收 client 传来的粘贴图片(base64), 校验后用 node:fs 落盘到
  * 会话工作目录 <cwd>/attachments/<时间戳>-<文件名>, 返回绝对路径。
  *
  * 静态插件的 client→host 通信不走动态插件的 harness.handle 私有 RPC, 而是
@@ -16,9 +16,11 @@
  * 流程, 无 Run 卡批准, 重启不丢。
  */
 
+import { mkdir, writeFile } from 'node:fs/promises';
+
 export const name = 'dsh-paste-image';
 
-export const inject = ['webServer', 'sessions', 'shell'];
+export const inject = ['webServer', 'sessions'];
 
 export function apply(ctx) {
   const MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
@@ -87,17 +89,13 @@ export function apply(ctx) {
     const file = Date.now() + '-' + safeName;
     const target = dir + '/' + file;
 
-    // 用 shell 的 stdin 通道写二进制: base64 -d 从 stdin 读、写目标文件,
-    // 避免超长命令行参数。
-    const spec = ctx.shell.resolve({
-      command: "mkdir -p '" + dir + "' && base64 -d > '" + target + "'",
-      stdin: data,
-      timeoutMs: 30000,
-    });
-    const result = await ctx.shell.run(spec);
-    if (result.exitCode !== 0) {
-      throw new Error('write failed (exit ' + String(result.exitCode) + '): ' + result.stderr.text);
-    }
+    // 落盘走 node:fs 直写(Host 半是受信的服务端代码, 与 dsh-better-sidebar
+    // 同款): 不能用 ctx.shell —— 那会把命令塞进代理沙箱(默认 read-only),
+    // mkdir 会被 seatbelt 以 EPERM 拒绝("Operation not permitted")。base64
+    // 先解码成 Buffer 再写, 也避免了超长命令行参数。
+    const buffer = Buffer.from(data, 'base64');
+    await mkdir(dir, { recursive: true });
+    await writeFile(target, buffer);
     return { path: target };
   }
 

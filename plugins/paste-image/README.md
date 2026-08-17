@@ -25,8 +25,9 @@ DSH 输入框原生支持粘贴图片(显示缩略图草稿),但发送时 host �
 2. 拦截默认行为,图片**不进入**官方草稿栏(避免发送时被模型检查拒绝)。
 3. 图片以 base64 经 `fetch POST /paste-image/api/save` 发给 Host(静态插件的
    HTTP JSON 路由,替代动态插件的 `host.call` 私有 RPC)。
-4. Host 校验类型(png/jpeg/webp/gif)与大小(≤30MB),经 `ctx.shell` 的 stdin
-   通道 `base64 -d` 落盘到 `<会话cwd>/attachments/<时间戳>-<文件名>`。
+4. Host 校验类型(png/jpeg/webp/gif)与大小(≤30MB),经 **node:fs 直写**落盘到
+   `<会话cwd>/attachments/<时间戳>-<文件名>`(不走代理沙箱的 `ctx.shell`——
+   那会以默认 read-only 模式运行, mkdir 被 seatbelt 以 EPERM 拒绝)。
 5. 返回绝对路径,Client 用 `inputActions.setDraft` 追加到草稿。
 6. agent 看到路径,调用 `tool-vision` 识别(需要 `vision` preset 或已挂载
    tool-vision)。
@@ -54,14 +55,14 @@ dsh plugin --profile web add link:/Users/a1/workspace/dsh-plugin/plugins/paste-i
 - 旧的动态加载方式(用 `host.js`/`client.js` 走 `cordis_define`/`cordis_run`)
   已废弃,仅保留文件作参考;两者不要混用。
 
-| 文件                    | 内容                                                                                           |
-| ----------------------- | ---------------------------------------------------------------------------------------------- |
-| `lib/index.js`          | **Host 半(静态)** — 校验 + `ctx.shell` 落盘, `ctx.webServer` 暴露 `POST /paste-image/api/save` |
-| `lib/client.js`         | **Client 半(静态 bundle)** — capture 拦截粘贴, fetch 上传, 路径写入 draft                      |
-| `package.json`          | npm 包声明(`dsh.bundle.patch` + `dsh.client`)                                                  |
-| `cordis.patch.yml`      | 挂载层(profile boot 时自动合并)                                                                |
-| `host.js` / `client.js` | (已废弃) 旧动态插件函数体, 仅供对比参考                                                        |
-| `manifest.json`         | kind / files / install, 供重建使用                                                             |
+| 文件                    | 内容                                                                                       |
+| ----------------------- | ------------------------------------------------------------------------------------------ |
+| `lib/index.js`          | **Host 半(静态)** — 校验 + node:fs 落盘, `ctx.webServer` 暴露 `POST /paste-image/api/save` |
+| `lib/client.js`         | **Client 半(静态 bundle)** — capture 拦截粘贴, fetch 上传, 路径写入 draft                  |
+| `package.json`          | npm 包声明(`dsh.bundle.patch` + `dsh.client`)                                              |
+| `cordis.patch.yml`      | 挂载层(profile boot 时自动合并)                                                            |
+| `host.js` / `client.js` | (已废弃) 旧动态插件函数体, 仅供对比参考                                                    |
+| `manifest.json`         | kind / files / install, 供重建使用                                                         |
 
 ## 备注
 

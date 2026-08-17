@@ -77,10 +77,12 @@ function makeEnv({
     base = 'https://api.deepseek.com',
 } = {}) {
     let calls = [];
+    const handlers = {};
     const harness = {
         handle(method, fn) {
-            this.handler = fn;
+            this.handlers[method] = fn;
         },
+        handlers,
     };
     const credentials = {
         async resolve(ref) {
@@ -140,7 +142,7 @@ function makeEnv({
     const factory = new Function('harness', src);
     const plugin = factory(harness);
     plugin.apply(ctx);
-    return { call: () => harness.handler(), calls };
+    return { call: () => harness.handlers['ds-balance/query'](), calls };
 }
 
 // 1. 官方 base: 余额 + 用量 都解析成功
@@ -205,10 +207,12 @@ function makeEnv({
 // 6. no-key: resolve 返回 undefined
 {
     const src2 = fs.readFileSync(new URL('../plugins/ds-balance/host.js', import.meta.url), 'utf8');
+    const handlers = {};
     const harness = {
         handle(m, fn) {
-            this.handler = fn;
+            this.handlers[m] = fn;
         },
+        handlers,
     };
     const ctx = {
         get(name) {
@@ -223,7 +227,7 @@ function makeEnv({
     };
     const factory = new Function('harness', src2);
     factory(harness).apply(ctx);
-    const r = await harness.handler();
+    const r = await harness.handlers['ds-balance/query']();
     if (!(r.error === 'no-key')) throw new Error('expected no-key, got ' + JSON.stringify(r));
     console.log('6 no-key → {error:"no-key"} ok');
 }

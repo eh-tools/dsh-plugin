@@ -12,6 +12,7 @@ lint:
 # ---- 单元测试 ----
 test:
     node plugins/tool-vision/tests/smoke.mjs
+    node plugins/paste-image/tests/save.test.mjs
     node scripts/verify-ds-balance.mjs
 
 # ---- E2E (需真实 llama-server, 仅手动) ----
