@@ -19,6 +19,10 @@ export default [
       // playwright 登录脚本: page.evaluate 回调在浏览器上下文运行,
       // localStorage 等静态 no-undef 检查无意义
       'plugins/ds-balance/scripts/deepseek-login.cjs',
+      // 静态插件的 client bundle: 浏览器 CJS 闭包(window.__ModuleLoader__ /
+      // require / module 不在 node globals 里, no-undef 检查无意义)
+      'plugins/ds-balance/lib/client.js',
+      'plugins/paste-image/lib/client.js',
     ],
   },
   js.configs.recommended,
