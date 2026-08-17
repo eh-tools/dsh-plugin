@@ -4,6 +4,8 @@
 // 失败回退与缓存行为。Run: node scripts/verify-ds-balance.mjs
 import { apply } from '../plugins/ds-balance/lib/index.js';
 
+const originalFetch = globalThis.fetch;
+
 // --- 余额响应(官方真实结构) ---
 const BALANCE_OK = JSON.stringify({
     is_available: true,
@@ -76,6 +78,22 @@ function makeEnv({
     base = 'https://api.deepseek.com',
 } = {}) {
     const routes = [];
+    globalThis.fetch = async (url) => {
+        const u = String(url);
+        if (u.includes('/user/balance')) {
+            if (balanceFails) return { ok: false, status: 500, text: async () => '' };
+            return { ok: true, status: 200, text: async () => BALANCE_OK };
+        }
+        if (usageFails) {
+            return {
+                ok: true,
+                status: 200,
+                text: async () =>
+                    '{"code":40003,"msg":"Authorization Failed (invalid token)","data":null}',
+            };
+        }
+        return { ok: true, status: 200, text: async () => usageBody() };
+    };
     const credentials = {
         async resolve(ref) {
             if (ref === 'DEEPSEEK_API_KEY') return { value: 'sk-test-123' };
@@ -101,7 +119,12 @@ function makeEnv({
                     },
                     spawn(spec) {
                         let out;
-                        if (spec.argv[2].includes('/user/balance')) {
+                        const scriptArg = spec.argv.find(
+                            (a) =>
+                                typeof a === 'string' &&
+                                (a.includes('/user/balance') || a.includes('/api/v0/usage')),
+                        );
+                        if (scriptArg && scriptArg.includes('/user/balance')) {
                             if (balanceFails)
                                 return {
                                     done: Promise.resolve({ exitCode: 22 }),
@@ -152,7 +175,7 @@ function makeEnv({
         const req = {
             method: 'POST',
             url: '/ds-balance/api/' + method,
-            headers: { host: '127.0.0.1:3080' },
+            headers: { host: '127.0.0.1:3080', 'x-dsh-plugin': '1' },
         };
         await spec.handler(req, res);
         if (status !== 200) throw new Error('route status ' + status + ': ' + body);
@@ -253,7 +276,7 @@ function makeEnv({
     const req = {
         method: 'POST',
         url: '/ds-balance/api/query',
-        headers: { host: 'localhost' },
+        headers: { host: 'localhost', 'x-dsh-plugin': '1' },
     };
     await spec.handler(req, res);
     if (status !== 200) throw new Error('route status ' + status + ': ' + body);
@@ -262,4 +285,49 @@ function makeEnv({
     console.log('6 no-key → {error:"no-key"} ok');
 }
 
+// 7. 用量接口不返回 REQUEST 时 requests 为 null(前端据此省略“次”)
+{
+    const call = makeEnv({
+        usageBody: () =>
+            JSON.stringify({
+                code: 0,
+                msg: 'success',
+                data: {
+                    biz_code: 0,
+                    biz_msg: 'success',
+                    biz_data: {
+                        start: 1750000000,
+                        end: 1752600000,
+                        bucket: 'day',
+                        models: ['deepseek-chat'],
+                        series: [
+                            {
+                                api_key: 'sk-xxx',
+                                model: 'deepseek-chat',
+                                buckets: [
+                                    {
+                                        time: TODAY_START,
+                                        usage: {
+                                            PROMPT_CACHE_HIT_TOKEN: '30000',
+                                            PROMPT_CACHE_MISS_TOKEN: '2000',
+                                            RESPONSE_TOKEN: '1500',
+                                        },
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                },
+            }),
+    });
+    const r = await call();
+    if (r.usage === null) throw new Error('expected usage');
+    if (r.usage.today.requests !== null) throw new Error('today.requests should be null');
+    if (r.usage.month.requests !== null) throw new Error('month.requests should be null');
+    if (r.usage.today.response !== 1500) throw new Error('today.response != 1500');
+    console.log('7 usage without REQUEST → requests=null ok');
+}
+
 console.log('\nALL HOST LOGIC CHECKS PASSED');
+
+globalThis.fetch = originalFetch;

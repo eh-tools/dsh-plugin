@@ -11,6 +11,7 @@
 
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import { rm, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { apply } from '../lib/index.js';
@@ -265,7 +266,7 @@ async function main() {
         apply(ctx, {
             baseUrl: `http://127.0.0.1:${port}/v1`,
             autoStart: true,
-            serverCommand: `VISION_TEST_PORT=${port} node ${mockServer}`,
+            serverCommand: `node "${mockServer}" ${port}`,
             keepAliveMs: 0,
             startupTimeoutMs: 10000,
         });
@@ -288,7 +289,7 @@ async function main() {
         apply(ctx, {
             baseUrl: `http://127.0.0.1:${port}/v1`,
             autoStart: true,
-            serverCommand: `VISION_TEST_PORT=${port} node ${mockServer}`,
+            serverCommand: `node "${mockServer}" ${port}`,
             keepAliveMs: 60000,
             startupTimeoutMs: 10000,
         });
@@ -385,6 +386,23 @@ async function main() {
             await mock.close();
         }
         console.log('ok 14 — apiKey env:NAME reference + missing-env fail loud');
+    }
+
+    // 15. A file with an image extension but non-image content is rejected.
+    {
+        const fakePng = path.join(ROOT, 'fixtures', '.tmp-fake.png');
+        await writeFile(fakePng, 'this is not really a png');
+        try {
+            const ctx = fakeCtx();
+            apply(ctx, {});
+            await assert.rejects(
+                ctx.registered.execute({ image: fakePng }, { signal: signal() }),
+                /file content does not match image type "image\/png"/,
+            );
+            console.log('ok 15 — mismatched image content rejected');
+        } finally {
+            await rm(fakePng, { force: true });
+        }
     }
 
     console.log('\nall smoke tests passed');

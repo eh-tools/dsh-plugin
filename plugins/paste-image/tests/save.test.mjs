@@ -57,12 +57,12 @@ function fakeCtx({ cwd, shell }) {
 }
 
 /** A minimal IncomingMessage stand-in: headers/method/url + async body chunks. */
-function jsonRequest({ url, body, host = '127.0.0.1:3080', method = 'POST' }) {
+function jsonRequest({ url, body, host = '127.0.0.1:3080', method = 'POST', headers = {} }) {
     const chunks = [Buffer.from(JSON.stringify(body))];
     return {
         method,
         url,
-        headers: { host },
+        headers: { host, 'x-dsh-plugin': '1', ...headers },
         [Symbol.asyncIterator]: async function* () {
             for (const chunk of chunks) yield chunk;
         },
@@ -227,6 +227,44 @@ async function main() {
             const entries = await readdir(path.join(tmp, 'attachments'));
             assert.equal(entries.length, 1, 'oversized image must not be written');
             console.log('ok 8 — oversized image rejected (400), nothing written');
+        }
+
+        // 7. Missing CSRF header is rejected before any handling.
+        {
+            const res = fakeRes();
+            await handler(
+                jsonRequest({
+                    url: '/paste-image/api/save',
+                    headers: { 'x-dsh-plugin': undefined },
+                    body: { sessionId: 's1', name: 'a.png', mediaType: 'image/png', data: 'x' },
+                }),
+                res,
+            );
+            assert.equal(res.status, 403);
+            assert.equal(res.json.ok, false);
+            console.log('ok 9 — missing CSRF header rejected (403)');
+        }
+
+        // 8. Default filename extension follows mediaType when name is empty.
+        {
+            const res = fakeRes();
+            await handler(
+                jsonRequest({
+                    url: '/paste-image/api/save',
+                    body: {
+                        sessionId: 's1',
+                        name: '',
+                        mediaType: 'image/webp',
+                        data: PNG_BYTES.toString('base64'),
+                    },
+                }),
+                res,
+            );
+            assert.equal(res.status, 200);
+            const saved = res.json;
+            assert.ok(saved.path.endsWith('.webp'), `expected .webp, got ${saved.path}`);
+            assert.deepEqual(await readFile(saved.path), PNG_BYTES);
+            console.log('ok 10 — empty name uses mediaType extension (.webp)');
         }
 
         console.log('\nall paste-image host tests passed');

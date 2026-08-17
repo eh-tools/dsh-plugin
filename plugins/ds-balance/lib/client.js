@@ -19,7 +19,10 @@ window.__ModuleLoader__.load({
 
       // 静态插件没有 harness 私有 RPC, 走 host 注册的 HTTP JSON 路由。
       function api(method) {
-        return fetch('/ds-balance/api/' + method, { method: 'POST' }).then(function (res) {
+        return fetch('/ds-balance/api/' + method, {
+          method: 'POST',
+          headers: { 'x-dsh-plugin': '1' },
+        }).then(function (res) {
           if (!res.ok) throw new Error('ds-balance: http ' + String(res.status));
           return res.json();
         });

@@ -3,9 +3,9 @@
 // /v1/chat/completions like llama-server's OpenAI-compatible API.
 import http from 'node:http';
 
-const port = Number(process.env.VISION_TEST_PORT);
+const port = Number(process.argv[2] || process.env.VISION_TEST_PORT);
 if (!Number.isInteger(port) || port <= 0) {
-    console.error('VISION_TEST_PORT must be a positive integer');
+    console.error('VISION_TEST_PORT must be a positive integer (or pass it as argv[2])');
     process.exit(1);
 }
 

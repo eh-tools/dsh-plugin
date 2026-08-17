@@ -20,6 +20,9 @@
  * 流程, 无 Run 卡批准, 重启不丢。
  */
 
+import { existsSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const name = 'dsh-ds-balance';
@@ -34,24 +37,51 @@ export function apply(ctx) {
   // dashboard 用量接口(userToken 认证, 按天返回; by_api_key/amount 的备用/主路径)。
   const PLATFORM_AMOUNT_URL = 'https://platform.deepseek.com/api/v0/usage/amount';
   // platform 前端接口需要浏览器指纹头, 否则被 WAF 429 拦截。
-  const PLATFORM_HEADERS = [
-    '-H "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"',
-    '-H "Accept: application/json, text/plain, */*"',
-    '-H "Origin: https://platform.deepseek.com"',
-    '-H "Referer: https://platform.deepseek.com/usage"',
-    '-H "x-app-version: 1.0.0"',
-    '-H "Authorization: Bearer $DSH_BALANCE_KEY"',
-  ].join(' ');
-  const BALANCE_HEADERS =
-    '-H "Accept: application/json" -H "Authorization: Bearer $DSH_BALANCE_KEY"';
+  const PLATFORM_HEADERS = {
+    'User-Agent':
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+    Accept: 'application/json, text/plain, */*',
+    Origin: 'https://platform.deepseek.com',
+    Referer: 'https://platform.deepseek.com/usage',
+    'x-app-version': '1.0.0',
+  };
+  const BALANCE_HEADERS = { Accept: 'application/json' };
   // Playwright 一键登录脚本(随包相对解析, 移动/克隆仓库无需改路径)。
   const LOGIN_SCRIPT = fileURLToPath(new URL('../scripts/deepseek-login.cjs', import.meta.url));
   // 全局 node_modules 位置(npm root -g), 供脚本解析 playwright。
   // 默认值面向本机, 其他机器可用环境变量覆盖。
   const GLOBAL_NODE_MODULES =
-    process.env.DSH_DS_BALANCE_PLAYWRIGHT_PATH ?? '/opt/homebrew/lib/node_modules';
-  // node 绝对路径回退(scrubbed PATH 可能不含 homebrew bin), 可用环境变量覆盖。
-  const NODE_BIN = process.env.DSH_DS_BALANCE_NODE_BIN ?? '/opt/homebrew/bin/node';
+    process.env.DSH_DS_BALANCE_PLAYWRIGHT_PATH ??
+    (process.platform === 'win32'
+      ? path.join(
+          process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'),
+          'npm',
+          'node_modules',
+        )
+      : '/opt/homebrew/lib/node_modules');
+  // node 绝对路径回退(scrubbed PATH 可能不含 node), 可用环境变量覆盖。
+  // 直接复用当前 host 进程的 node, 天然跨平台且不依赖 PATH。
+  const NODE_BIN = process.env.DSH_DS_BALANCE_NODE_BIN ?? process.execPath;
+
+  // 在全局 node_modules 下定位可用的 playwright 模块。npm 有时会把
+  // playwright 提升到顶层, 有时嵌套在 @playwright/test/node_modules 下,
+  // 这里逐个探测, 避免一键登录因路径不对而失败。
+  function resolvePlaywrightModule(globalNodeModules) {
+    const candidates = [
+      path.join(globalNodeModules, 'playwright'),
+      path.join(globalNodeModules, '@playwright', 'test', 'node_modules', 'playwright'),
+      path.join(globalNodeModules, 'playwright-core'),
+    ];
+    for (const candidate of candidates) {
+      try {
+        if (existsSync(path.join(candidate, 'package.json'))) return candidate;
+      } catch {
+        // ignore and try next
+      }
+    }
+    return path.join(globalNodeModules, 'playwright');
+  }
+
   let cachedAt = 0;
   let cachedResult = null;
   let inFlight = null;
@@ -85,55 +115,36 @@ export function apply(ctx) {
     }
   }
 
-  // 执行一次 curl GET。key 走显式 child-env opt-in(躲过密钥清理),
-  // 由 sh 展开 $DSH_BALANCE_KEY, 密钥不进进程 argv。
-  async function runCurl(url, headerArgs, keyValue) {
-    const subprocess = ctx.get('subprocess');
-    const sandboxPolicy = ctx.get('sandboxPolicy');
-    if (subprocess === undefined || sandboxPolicy === undefined) {
-      return { error: 'unavailable' };
-    }
-    let curlPath;
+  // 执行一次 HTTP GET。直接用 Node 原生 fetch, 不依赖系统 curl/shell,
+  // 天然跨平台且密钥只存在于内存 headers, 不会出现在 argv/env 中。
+  async function httpGetJson(url, headers, keyValue) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
     try {
-      curlPath = await subprocess.resolveExecutable('curl');
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: { ...headers, authorization: 'Bearer ' + keyValue },
+        signal: controller.signal,
+      });
+      if (!response.ok) return { error: 'http' };
+      const text = await response.text();
+      try {
+        return { json: JSON.parse(text) };
+      } catch (err) {
+        console.error('ds-balance: response is not JSON', err);
+        return { error: 'parse' };
+      }
     } catch (err) {
-      console.error('ds-balance: curl is not resolvable', err);
-      return { error: 'curl-missing' };
-    }
-    const script =
-      'exec ' +
-      JSON.stringify(curlPath) +
-      ' -fsS --max-time 15 ' +
-      headerArgs +
-      ' ' +
-      JSON.stringify(url);
-    const handle = subprocess.spawn({
-      argv: ['/bin/sh', '-c', script],
-      cwd: sandboxPolicy.workspaceRoot,
-      stdio: {
-        stdin: 'ignore',
-        stdout: { maxBytes: 65536 },
-        stderr: { maxBytes: 4096 },
-      },
-      graceMs: 2000,
-      env: { DSH_BALANCE_KEY: keyValue },
-    });
-    const outcome = await handle.done;
-    if (outcome.exitCode !== 0) return { error: 'http' };
-    const stdout = handle.collected.stdout;
-    if (stdout === undefined) return { error: 'http' };
-    const text = stdout.readFrom(0).text;
-    try {
-      return { json: JSON.parse(text) };
-    } catch (err) {
-      console.error('ds-balance: response is not JSON', err);
-      return { error: 'parse' };
+      console.error('ds-balance: request failed', err);
+      return { error: 'http' };
+    } finally {
+      clearTimeout(timer);
     }
   }
 
   // 官方余额接口: GET {base}/user/balance
   async function queryBalance(base, keyValue) {
-    const res = await runCurl(base + '/user/balance', BALANCE_HEADERS, keyValue);
+    const res = await httpGetJson(base + '/user/balance', BALANCE_HEADERS, keyValue);
     if (res.error !== undefined) return { ok: false, error: res.error };
     const infos = Array.isArray(res.json.balance_infos) ? res.json.balance_infos : [];
     const info = infos[0];
@@ -194,6 +205,7 @@ export function apply(ctx) {
     const month = { requests: 0, promptCacheHit: 0, promptCacheMiss: 0, response: 0 };
     const today = { requests: 0, promptCacheHit: 0, promptCacheMiss: 0, response: 0 };
     let any = false;
+    let hasRequests = false;
     for (const s of series) {
       if (s === undefined || typeof s !== 'object') continue;
       const buckets = Array.isArray(s.buckets) ? s.buckets : [];
@@ -207,12 +219,15 @@ export function apply(ctx) {
         const resp = toFiniteNumber(usage.RESPONSE_TOKEN);
         if (req === null && hit === null && miss === null && resp === null) continue;
         any = true;
-        month.requests += req ?? 0;
+        if (req !== null) {
+          hasRequests = true;
+          month.requests += req;
+        }
         month.promptCacheHit += hit ?? 0;
         month.promptCacheMiss += miss ?? 0;
         month.response += resp ?? 0;
         if (typeof b.time === 'number' && b.time >= dayStart) {
-          today.requests += req ?? 0;
+          if (req !== null) today.requests += req;
           today.promptCacheHit += hit ?? 0;
           today.promptCacheMiss += miss ?? 0;
           today.response += resp ?? 0;
@@ -220,6 +235,10 @@ export function apply(ctx) {
       }
     }
     if (!any) return null;
+    if (!hasRequests) {
+      month.requests = null;
+      today.requests = null;
+    }
     return { today, month };
   }
 
@@ -241,6 +260,7 @@ export function apply(ctx) {
     const month = { requests: 0, promptCacheHit: 0, promptCacheMiss: 0, response: 0 };
     const today = { requests: 0, promptCacheHit: 0, promptCacheMiss: 0, response: 0 };
     let any = false;
+    let hasRequests = false;
     const addDay = (day, acc) => {
       const entries = Array.isArray(day.data) ? day.data : [];
       for (const entry of entries) {
@@ -255,7 +275,10 @@ export function apply(ctx) {
           if (type === 'PROMPT_CACHE_HIT_TOKEN') acc.promptCacheHit += amount;
           else if (type === 'PROMPT_CACHE_MISS_TOKEN') acc.promptCacheMiss += amount;
           else if (type === 'RESPONSE_TOKEN') acc.response += amount;
-          else if (type === 'REQUEST') acc.requests += amount;
+          else if (type === 'REQUEST') {
+            hasRequests = true;
+            acc.requests += amount;
+          }
           // PROMPT_TOKEN 是未命中缓存的输入旧口径, 与 CACHE_MISS 重叠, 不计。
         }
       }
@@ -266,6 +289,10 @@ export function apply(ctx) {
       if (day.date === todayKey) addDay(day, today);
     }
     if (!any) return null;
+    if (!hasRequests) {
+      month.requests = null;
+      today.requests = null;
+    }
     return { today, month };
   }
 
@@ -277,7 +304,7 @@ export function apply(ctx) {
       const month = now.getMonth() + 1;
       const year = now.getFullYear();
       const url = PLATFORM_AMOUNT_URL + '?month=' + month + '&year=' + year;
-      const res = await runCurl(url, PLATFORM_HEADERS, userToken);
+      const res = await httpGetJson(url, PLATFORM_HEADERS, userToken);
       if (res.error !== undefined) throw new Error('usage ' + res.error);
       const parsed = parseDaysUsage(res.json);
       if (parsed === null) throw new Error('usage shape mismatch');
@@ -287,7 +314,7 @@ export function apply(ctx) {
     const start = Math.floor(new Date(now.getFullYear(), now.getMonth(), 1).getTime() / 1000);
     const end = Math.floor(now.getTime() / 1000);
     const url = PLATFORM_USAGE_URL + '?start=' + start + '&end=' + end + '&tz=' + tz;
-    const res = await runCurl(url, PLATFORM_HEADERS, keyValue);
+    const res = await httpGetJson(url, PLATFORM_HEADERS, keyValue);
     if (res.error !== undefined) throw new Error('usage ' + res.error);
     const parsed = parseUsage(res.json);
     if (parsed === null) throw new Error('usage shape mismatch');
@@ -360,20 +387,27 @@ export function apply(ctx) {
       return { ok: false, error: 'unavailable' };
     }
     const LOGIN_URL = 'https://platform.deepseek.com';
-    let opener = 'open';
-    try {
-      await subprocess.resolveExecutable('open');
-    } catch {
+    let argv;
+    if (process.platform === 'win32') {
+      // `start` 是 cmd 内建命令, 不依赖 explorer 是否在 PATH 中。
+      argv = [process.env.ComSpec || 'cmd.exe', '/d', '/s', '/c', 'start', '""', LOGIN_URL];
+    } else {
+      let opener = 'open';
       try {
-        opener = 'xdg-open';
-        await subprocess.resolveExecutable('xdg-open');
-      } catch (err) {
-        console.error('ds-balance: no browser opener', err);
-        return { ok: false, error: 'no-opener' };
+        await subprocess.resolveExecutable('open');
+      } catch {
+        try {
+          opener = 'xdg-open';
+          await subprocess.resolveExecutable('xdg-open');
+        } catch (err) {
+          console.error('ds-balance: no browser opener', err);
+          return { ok: false, error: 'no-opener' };
+        }
       }
+      argv = [opener, LOGIN_URL];
     }
     const handle = subprocess.spawn({
-      argv: [opener, LOGIN_URL],
+      argv,
       cwd: sandboxPolicy.workspaceRoot,
       stdio: {
         stdin: 'ignore',
@@ -425,7 +459,7 @@ export function apply(ctx) {
         stderr: { maxBytes: 8192 },
       },
       graceMs: 2000,
-      env: { DSH_PLAYWRIGHT_PATH: GLOBAL_NODE_MODULES + '/playwright' },
+      env: { DSH_PLAYWRIGHT_PATH: resolvePlaywrightModule(GLOBAL_NODE_MODULES) },
     });
     handle.done.then((outcome) => {
       const stdout = handle.collected.stdout;
@@ -473,6 +507,12 @@ export function apply(ctx) {
     path: '/ds-balance/api',
     handler: async (req, res) => {
       if (!isTrustedRequest(req)) {
+        writeJson(res, 403, { ok: false, error: 'forbidden' });
+        return;
+      }
+      // 自定义头用于阻止跨站“简单请求”CSRF: 同源 client 会带上,
+      // 跨域网页无法在 Simple Request 中携带该头, 必须先过 preflight。
+      if (req.headers['x-dsh-plugin'] !== '1') {
         writeJson(res, 403, { ok: false, error: 'forbidden' });
         return;
       }

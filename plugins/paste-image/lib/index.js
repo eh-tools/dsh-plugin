@@ -17,6 +17,7 @@
  */
 
 import { mkdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 
 export const name = 'dsh-paste-image';
 
@@ -24,6 +25,12 @@ export const inject = ['webServer', 'sessions'];
 
 export function apply(ctx) {
   const MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+  const EXT_BY_MEDIA = {
+    'image/png': 'png',
+    'image/jpeg': 'jpg',
+    'image/webp': 'webp',
+    'image/gif': 'gif',
+  };
   const MAX_IMAGE_BYTES = 30 * 1024 * 1024;
   // base64 文本体积 ≈ 原始字节 × 4/3, 留一点 JSON 结构余量。
   const MAX_BODY_BYTES = 45 * 1024 * 1024;
@@ -82,10 +89,16 @@ export function apply(ctx) {
     }
     const cwd = session.header.cwd;
     const dir = cwd + '/attachments';
-    const safeName =
+    let safeName =
       typeof name === 'string' && name !== ''
         ? name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 64)
-        : 'paste.png';
+        : 'paste';
+    const mediaExt = EXT_BY_MEDIA[mediaType];
+    const currentExt = path.extname(safeName).slice(1).toLowerCase();
+    if (currentExt === '') safeName += '.' + mediaExt;
+    else if (currentExt !== mediaExt) {
+      safeName = safeName.slice(0, -currentExt.length - 1) + '.' + mediaExt;
+    }
     const file = Date.now() + '-' + safeName;
     const target = dir + '/' + file;
 
@@ -104,6 +117,12 @@ export function apply(ctx) {
     path: '/paste-image/api',
     handler: async (req, res) => {
       if (!isTrustedRequest(req)) {
+        writeJson(res, 403, { ok: false, error: 'forbidden' });
+        return;
+      }
+      // 自定义头用于阻止跨站“简单请求”CSRF: 同源 client 会带上,
+      // 跨域网页无法在 Simple Request 中携带该头, 必须先过 preflight。
+      if (req.headers['x-dsh-plugin'] !== '1') {
         writeJson(res, 403, { ok: false, error: 'forbidden' });
         return;
       }

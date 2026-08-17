@@ -7,8 +7,39 @@
 
 // playwright 模块路径由 host 通过环境变量 DSH_PLAYWRIGHT_PATH 提供
 // (DSH_ 前缀保证在子进程环境清理后保留), 避免依赖 NODE_PATH/PATH。
-const PW_PATH = process.env.DSH_PLAYWRIGHT_PATH || 'playwright';
-const { chromium } = require(PW_PATH);
+// 这里再兜底探测几个常见全局安装位置, 防止 host 给的路径不准确。
+const path = require('node:path');
+
+function resolvePlaywright() {
+    const explicit = process.env.DSH_PLAYWRIGHT_PATH;
+    const candidates = explicit ? [explicit] : [];
+    candidates.push(
+        'playwright',
+        path.join(process.env.APPDATA || '', 'npm', 'node_modules', 'playwright'),
+        path.join(
+            process.env.APPDATA || '',
+            'npm',
+            'node_modules',
+            '@playwright',
+            'test',
+            'node_modules',
+            'playwright',
+        ),
+    );
+    for (const candidate of candidates) {
+        try {
+            return require.resolve(candidate);
+        } catch {
+            // try next candidate
+        }
+    }
+    throw new Error(
+        'Cannot find playwright module. Install it globally with `npm i -g playwright`, ' +
+            'or set DSH_PLAYWRIGHT_PATH to the playwright module directory.',
+    );
+}
+
+const { chromium } = require(resolvePlaywright());
 
 const LOGIN_URL = 'https://platform.deepseek.com';
 const TIMEOUT_MS = 10 * 60 * 1000;

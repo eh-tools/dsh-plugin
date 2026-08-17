@@ -29,6 +29,12 @@ window.__ModuleLoader__.load({
           }
         }
         if (files.length === 0) return;
+        // 槽位尚未注入时 sessionId/inputActions 不可用, 此时不拦截,
+        // 避免发一个必然失败的请求; 正常页面加载后槽位会很快就绪。
+        if (!sessionId || !inputActions) {
+          console.warn('paste-image: not ready yet, skipping paste capture');
+          return;
+        }
         event.preventDefault();
         event.stopPropagation();
         for (var j = 0; j < files.length; j++) {
@@ -41,12 +47,17 @@ window.__ModuleLoader__.load({
       };
 
       // 读 File -> base64 data URL -> 发给 host -> 路径插入 draft。
+      var MAX_IMAGE_BYTES = 30 * 1024 * 1024;
       async function intake(file) {
+        if (file.size > MAX_IMAGE_BYTES) {
+          alert('图片超过 30MB，无法粘贴: ' + (file.name || '未命名图片'));
+          return;
+        }
         var dataUrl = await readAsDataURL(file);
         var base64 = dataUrl.split(',')[1];
         var res = await fetch('/paste-image/api/save', {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
+          headers: { 'content-type': 'application/json', 'x-dsh-plugin': '1' },
           body: JSON.stringify({
             sessionId: sessionId,
             name: file.name || '',

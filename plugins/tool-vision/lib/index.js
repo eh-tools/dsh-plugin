@@ -467,7 +467,40 @@ async function readImage(imagePath, maxImageBytes) {
     );
   }
   const buffer = await readFile(imagePath);
+  assertImageSignature(buffer, mime);
   return { dataUrl: `data:${mime};base64,${buffer.toString('base64')}`, mime };
+}
+
+/**
+ * Verify the decoded file starts with the expected magic bytes for its
+ * extension/MIME, so a renamed or corrupt file fails fast instead of being
+ * forwarded to the vision backend with a misleading content type.
+ */
+function assertImageSignature(buffer, mime) {
+  const len = buffer.length;
+  const ascii = (start, end) => buffer.toString('ascii', start, end);
+  const ok =
+    (mime === 'image/png' &&
+      len >= 8 &&
+      buffer[0] === 0x89 &&
+      buffer[1] === 0x50 &&
+      buffer[2] === 0x4e &&
+      buffer[3] === 0x47 &&
+      buffer[4] === 0x0d &&
+      buffer[5] === 0x0a &&
+      buffer[6] === 0x1a &&
+      buffer[7] === 0x0a) ||
+    (mime === 'image/jpeg' &&
+      len >= 3 &&
+      buffer[0] === 0xff &&
+      buffer[1] === 0xd8 &&
+      buffer[2] === 0xff) ||
+    (mime === 'image/webp' && len >= 12 && ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WEBP') ||
+    (mime === 'image/bmp' && len >= 2 && buffer[0] === 0x42 && buffer[1] === 0x4d) ||
+    (mime === 'image/gif' && len >= 6 && (ascii(0, 6) === 'GIF87a' || ascii(0, 6) === 'GIF89a'));
+  if (!ok) {
+    throw new Error(`vision: file content does not match image type "${mime}"`);
+  }
 }
 
 /**
