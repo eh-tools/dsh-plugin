@@ -1,7 +1,7 @@
 {
   "kind": "dynamic",
   "idPrefix": "dsbal",
-  "name": "DeepSeek 余额状态栏",
-  "purpose": "在官方 stats 状态栏同一行显示 DeepSeek API 余额,每 5 分钟刷新一次。",
+  "name": "DeepSeek 余额/调用量状态栏",
+  "purpose": "在官方 stats 状态栏下方显示 DeepSeek 余额 + 今日/本月调用量(需 DEEPSEEK_USER_TOKEN),每 5 分钟刷新;非官方 API 或未配置 key 时整行隐藏。",
   "files": ["host.js", "client.js"]
 }

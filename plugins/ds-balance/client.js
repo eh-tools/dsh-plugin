@@ -1,8 +1,11 @@
-// DeepSeek 余额状态栏 — Client 端
+// DeepSeek 余额/调用量状态栏 — Client 端
 // 用法: 作为 cordis_define 的 code.client 函数体使用(见 README.md)。
-// 职责: 注册进官方 stats 行所在的 conversation.composer.dock 槽位, 以 priority:1
-//       接管官方 'stats' 单元格, 把余额并入官方那一行(DeepSeek ¥68.64 | 12 轮 · 3 步 | ...)。
-//       官方 stats 的统计逻辑为逐行复刻(deriveStats / formatTokens / ...)。
+// 职责: 在官方 stats 行之下注册独立第二行(conversation.composer.dock 的
+//       'ds-balance' 单元格, order:1 排在官方 stats 之后), 显示
+//       DeepSeek 余额 + 今日调用量 + 本月调用量。
+//       未配置 key 或 base URL 非官方时(host 返回 !ok / official:false),
+//       整行不渲染, 状态栏保持官方原样。
+//       未配置 userToken 时提供"打开登录页 / 保存 token"入口(半自动获取)。
 // 注意: 依赖动态插件的 client 内置符号(React / host / styles)与 timer 服务,
 //       本文件只能以动态插件方式运行。
 return {
@@ -11,87 +14,14 @@ return {
     const slots = ctx.get('slots')
     if (slots === undefined) return
 
-    // ---- pure helpers copied from the shipped StatsLine (ui-conversation) ----
-    function assistantStepReading(node) {
-      const timing = node.timing
-      const ttftMs = timing !== undefined && timing.stepStartTime !== null && timing.firstTokenTime !== null
-        ? Math.max(0, timing.firstTokenTime - timing.stepStartTime)
-        : null
-      const decodeMs = timing !== undefined && timing.firstTokenTime !== null
-        ? Math.max(0, timing.completedTime - timing.firstTokenTime)
-        : null
-      let outputTokens = null
-      const usage = node.usage
-      if (typeof usage === 'object' && usage !== null
-        && typeof usage.outputTokens === 'number'
-        && Number.isFinite(usage.outputTokens) && usage.outputTokens >= 0) {
-        outputTokens = usage.outputTokens
-      }
-      return { ttftMs, decodeMs, outputTokens }
-    }
-
-    function deriveStats(nodes) {
-      const turns = new Set()
-      let steps = 0
-      let llmMs = 0
-      let toolMs = 0
-      let ttftMs = 0
-      let ttftSteps = 0
-      let decodeMs = 0
-      let decodeTokens = 0
-      for (const node of nodes) {
-        if (node.kind === 'tool-result') {
-          if (node.callTime !== null) toolMs += Math.max(0, node.time - node.callTime)
-          continue
-        }
-        if (node.kind !== 'assistant') continue
-        turns.add(node.turn)
-        steps += 1
-        if (node.timing !== undefined && node.timing.stepStartTime !== null) {
-          llmMs += Math.max(0, node.timing.completedTime - node.timing.stepStartTime)
-        }
-        const reading = assistantStepReading(node)
-        if (reading.ttftMs !== null) {
-          ttftMs += reading.ttftMs
-          ttftSteps += 1
-        }
-        if (reading.decodeMs !== null && reading.outputTokens !== null) {
-          decodeMs += reading.decodeMs
-          decodeTokens += reading.outputTokens
-        }
-      }
-      return { turns: turns.size, steps, llmMs, toolMs, ttftMs, ttftSteps, decodeMs, decodeTokens }
-    }
-
     function formatTokens(n) {
       const scaled = (v) => (v >= 100 ? String(Math.round(v)) : String(Math.round(v * 10) / 10))
       if (n < 1000) return String(n)
       if (n < 1000000) return scaled(n / 1000) + 'K'
-      return scaled(n / 1000000) + 'M'
+      if (n < 1000000000) return scaled(n / 1000000) + 'M'
+      return scaled(n / 1000000000) + 'B'
     }
 
-    function formatDuration(ms) {
-      const s = ms / 1000
-      if (s < 60) return String(Math.round(s * 10) / 10) + 's'
-      const whole = Math.round(s)
-      return Math.floor(whole / 60) + 'm' + (whole % 60) + 's'
-    }
-
-    function formatTokensPerSecond(tps) {
-      const clamped = Math.max(0, tps)
-      return clamped >= 10 ? String(Math.round(clamped)) : String(Math.round(clamped * 10) / 10)
-    }
-
-    function billedInputTokens(usage) {
-      return usage.uncachedInputTokens + usage.cacheReadTokens + usage.cacheWriteTokens
-    }
-
-    function cacheHitPercent(usage) {
-      const denominator = billedInputTokens(usage)
-      return denominator === 0 ? null : Math.round(usage.cacheReadTokens / denominator * 100)
-    }
-
-    // ---- balance display helpers ----
     function formatMoney(n) {
       return n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     }
@@ -102,41 +32,39 @@ return {
       return '¥'
     }
 
-    function balanceGroup(balance) {
-      if (balance.ok) {
-        const symbol = currencySymbol(balance.currency)
-        const parts = ['总余额 ' + symbol + formatMoney(balance.total)]
-        if (balance.granted !== null) parts.push('赠送 ' + symbol + formatMoney(balance.granted))
-        if (balance.toppedUp !== null) parts.push('充值 ' + symbol + formatMoney(balance.toppedUp))
-        return {
-          text: 'DeepSeek ' + symbol + formatMoney(balance.total),
-          title: 'DeepSeek ' + parts.join(' · '),
-        }
-      }
-      if (balance.error === 'no-key') {
-        return { text: 'DeepSeek 未配置 Key', title: '未检测到 DEEPSEEK_API_KEY' }
-      }
-      return { text: 'DeepSeek 余额 --', title: '余额查询失败，将自动重试' }
-    }
-
-    function DockLine(props) {
-      const { useSession, useProjection, t } = props
-      const settledNodes = useSession((s) => s.chat.legacy.nodes)
-      const usage = useProjection('tokenUsage')
-      const projected = useProjection('sessionStats')
-      const stats = React.useMemo(() => projected ?? deriveStats(settledNodes), [projected, settledNodes])
-
-      const [balance, setBalance] = React.useState(null)
+    function BalanceLine() {
+      const [snapshot, setSnapshot] = React.useState(null)
       const [loaded, setLoaded] = React.useState(false)
       const busyRef = React.useRef(false)
+      // loginPending 时正在等待 Playwright 浏览器登录; loginError 记录失败原因。
+      const [loginPending, setLoginPending] = React.useState(false)
+      const [loginError, setLoginError] = React.useState(null)
 
       const refresh = React.useCallback(() => {
         if (busyRef.current) return
         busyRef.current = true
         host.call('ds-balance/query')
-          .then((result) => { setBalance(result); setLoaded(true) })
-          .catch(() => { setBalance({ ok: false, error: 'failed' }); setLoaded(true) })
+          .then((result) => {
+            setSnapshot(result)
+            setLoaded(true)
+            if (result && result.hasToken) setLoginPending(false)
+          })
+          .catch(() => { setSnapshot(null); setLoaded(true) })
           .finally(() => { busyRef.current = false })
+      }, [])
+
+      // Playwright 一键登录: 弹出浏览器, 用户登录后自动保存。
+      const browserLogin = React.useCallback(() => {
+        setLoginError(null)
+        setLoginPending(true)
+        host.call('ds-balance/browser-login')
+          .then((result) => {
+            if (result && !result.ok) {
+              setLoginPending(false)
+              setLoginError(result.error || 'failed')
+            }
+          })
+          .catch(() => { setLoginPending(false); setLoginError('rpc-failed') })
       }, [])
 
       React.useEffect(() => {
@@ -144,82 +72,114 @@ return {
         return ctx.interval(refresh, 5 * 60 * 1000)
       }, [refresh])
 
-      const parts = []
-      let balanceTitle = undefined
-      if (loaded && balance !== null) {
-        const bg = balanceGroup(balance)
-        parts.push({ text: bg.text, kind: 'balance' })
-        balanceTitle = bg.title
-      }
-      if (stats.steps > 0) {
-        parts.push({ text: t('stats.counts', { turns: stats.turns, steps: stats.steps }), kind: 'stats' })
-        const durations = []
-        if (stats.llmMs > 0) durations.push(t('stats.llm', { duration: formatDuration(stats.llmMs) }))
-        if (stats.toolMs > 0) durations.push(t('stats.toolCall', { duration: formatDuration(stats.toolMs) }))
-        if (durations.length > 0) parts.push({ text: durations.join(' · '), kind: 'stats' })
-        const speeds = []
-        if (stats.ttftSteps > 0) {
-          speeds.push(t('stats.ttftAverage', { duration: formatDuration(stats.ttftMs / stats.ttftSteps) }))
-        }
-        if (stats.decodeMs > 0) {
-          speeds.push(t('stats.tokensPerSecond', {
-            throughput: formatTokensPerSecond(stats.decodeTokens / (stats.decodeMs / 1000)),
-          }))
-        }
-        if (speeds.length > 0) parts.push({ text: speeds.join(' · '), kind: 'stats' })
-      }
-      if (usage !== undefined && (billedInputTokens(usage) > 0 || usage.outputTokens > 0)) {
-        const cacheHit = cacheHitPercent(usage)
-        if (cacheHit !== null) parts.push({ text: t('stats.cacheHit', { percent: cacheHit }), kind: 'stats' })
-        parts.push({ text: t('stats.tokens', {
-          input: formatTokens(billedInputTokens(usage)),
-          output: formatTokens(usage.outputTokens),
-        }), kind: 'stats' })
-      }
-      const line = parts.map((p) => p.text).join(' | ')
-      const title = balanceTitle !== undefined ? balanceTitle + ' | ' + line : line
+      // 等待浏览器登录: 轮询 host 的登录状态(不走 query 缓存), 完成后自动恢复。
+      const checkLogin = React.useCallback(() => {
+        host.call('ds-balance/login-status').then((st) => {
+          if (!st) return
+          if (st.state === 'saved') {
+            setLoginPending(false)
+            refresh()
+          } else if (st.state === 'failed') {
+            setLoginPending(false)
+            setLoginError(st.error || 'failed')
+          }
+        }).catch(() => {})
+      }, [refresh])
 
-      const rootRef = React.useRef(null)
-      const [truncated, setTruncated] = React.useState(false)
       React.useEffect(() => {
-        const el = rootRef.current
-        if (el === null) return
-        const measure = () => { setTruncated(el.scrollWidth > el.clientWidth) }
-        measure()
-        if (typeof ResizeObserver === 'undefined') return
-        const observer = new ResizeObserver(measure)
-        observer.observe(el)
-        return () => { observer.disconnect() }
-      }, [line])
+        if (!loginPending) return
+        return ctx.interval(checkLogin, 2000)
+      }, [loginPending, checkLogin])
 
-      // Early return AFTER every hook so the hook order stays stable across
-      // renders (the official StatsLine declares its hooks first too).
-      if (parts.length === 0) return null
+      // 所有 hooks 都在早退之前, hook 顺序保持稳定。
+      // 诊断版: 失败路径渲染一行可见状态(正式版恢复整行隐藏)。
+      if (!loaded) return null
+      if (snapshot === null) {
+        return React.createElement('div', { className: 'dsbalance-line' }, 'DeepSeek 余额: host 调用失败')
+      }
+      if (!snapshot.ok) {
+        return React.createElement('div', { className: 'dsbalance-line' }, 'DeepSeek 余额不可用: ' + String(snapshot.error))
+      }
+      if (!snapshot.official) {
+        return React.createElement('div', { className: 'dsbalance-line' }, 'DeepSeek 余额(非官方网关, 已隐藏): ' + String(snapshot.base))
+      }
+
+      const symbol = currencySymbol(snapshot.currency)
+      const cells = [{ text: 'DeepSeek ' + symbol + formatMoney(snapshot.total), balance: true }]
+      if (snapshot.usage !== null && snapshot.usage !== undefined) {
+        const { today, month } = snapshot.usage
+        const tokens = (u) => u.promptCacheHit + u.promptCacheMiss + u.response
+        // usage/amount 接口不返回调用次数(requests 为 null), 此时省略"次"。
+        const usageCell = (label, u) => u.requests === null
+          ? label + ' ' + formatTokens(tokens(u)) + ' tok'
+          : label + ' ' + u.requests + ' 次 · ' + formatTokens(tokens(u)) + ' tok'
+        cells.push({ text: usageCell('今日', today) })
+        cells.push({ text: usageCell('本月', month) })
+      }
+      // 未配置 userToken 时提供一键登录入口。
+      if (!snapshot.hasToken) {
+        cells.push({ text: '浏览器登录', kind: 'link', onClick: browserLogin })
+      }
+
+      const detail = ['DeepSeek 总余额 ' + symbol + formatMoney(snapshot.total)]
+      if (snapshot.granted !== null) detail.push('赠送 ' + symbol + formatMoney(snapshot.granted))
+      if (snapshot.toppedUp !== null) detail.push('充值 ' + symbol + formatMoney(snapshot.toppedUp))
+      if (snapshot.usage !== null && snapshot.usage !== undefined) {
+        const day = (u) => '输入(缓存命中 ' + formatTokens(u.promptCacheHit)
+          + ' / 未命中 ' + formatTokens(u.promptCacheMiss)
+          + ') · 输出 ' + formatTokens(u.response)
+        const count = (u) => u.requests === null ? '' : u.requests + ' 次: '
+        detail.push('今日 ' + count(snapshot.usage.today) + day(snapshot.usage.today))
+        detail.push('本月 ' + count(snapshot.usage.month) + day(snapshot.usage.month))
+      }
+      const title = detail.join('\n')
+
+      // 等待浏览器登录: 提示用户在弹出的窗口登录, 登录后自动保存并恢复。
+      if (loginPending) {
+        return React.createElement('div', { className: 'dsbalance-line' },
+          React.createElement('span', null, loginError !== null
+            ? '浏览器登录失败: ' + loginError + '，'
+            : '请在弹出的浏览器窗口中登录 platform.deepseek.com，登录后自动保存… '),
+          React.createElement('span', { className: 'dsbalance-link', onClick: () => setLoginPending(false) }, '取消'),
+        )
+      }
+
       return React.createElement(
         'div',
-        { ref: rootRef, className: 'dsbalance-line', title: truncated ? title : undefined },
-        parts.map((part, i) => i === 0
-          ? React.createElement('span', { key: part.text, className: 'dsbalance-balance' }, part.text)
-          : React.createElement(React.Fragment, { key: part.text },
-              React.createElement('span', { className: 'dsbalance-sep', 'aria-hidden': true }, '|'),
-              ' ',
-              React.createElement('span', null, part.text),
-            )),
+        { className: 'dsbalance-line', title },
+        cells.map((cell, i) => {
+          const content = cell.kind === 'link'
+            ? React.createElement('span', { className: 'dsbalance-link', onClick: cell.onClick }, cell.text)
+            : cell.text
+          return i === 0
+            ? React.createElement('span', {
+                key: 'c' + i,
+                className: cell.balance ? 'dsbalance-balance' : undefined,
+              }, content)
+            : React.createElement(React.Fragment, { key: 'c' + i },
+                React.createElement('span', { className: 'dsbalance-sep', 'aria-hidden': true }, '|'),
+                ' ',
+                content,
+              )
+        }),
       )
     }
 
     styles.insert(
       '.dsbalance-line{display:block;text-align:center;max-width:var(--dsh-chat-content-width);'
-      + 'width:100%;margin:0 auto;box-sizing:border-box;padding:4px calc(var(--dsh-composer-side-clearance) + 16px) 0;'
+      + 'width:100%;margin:0 auto;box-sizing:border-box;padding:0 calc(var(--dsh-composer-side-clearance) + 16px) 4px;'
       + 'font-size:12px;line-height:20px;color:var(--dsw-alias-label-tertiary);white-space:nowrap;'
       + 'overflow:hidden;text-overflow:ellipsis}'
       + '.dsbalance-line .dsbalance-balance{color:var(--dsw-alias-label-secondary)}'
-      + '.dsbalance-line .dsbalance-sep{color:inherit;margin:0 10px}',
+      + '.dsbalance-line .dsbalance-sep{color:inherit;margin:0 10px}'
+      + '.dsbalance-link{cursor:pointer;text-decoration:underline;color:var(--dsw-alias-label-secondary)}'
+      + '.dsbalance-link:hover{color:var(--dsw-alias-label-primary)}',
     )
 
     slots.inject('conversation.composer.dock', () => slots.register(
-      { name: 'conversation.composer.dock', id: 'stats', order: 0, priority: 1, locale: 'conversation' },
-      DockLine,
+      // 独立单元格, 不接管官方 stats; order:1 让本行排在官方 stats 行之下。
+      { name: 'conversation.composer.dock', id: 'ds-balance', order: 1, priority: 0, locale: 'conversation' },
+      BalanceLine,
     ))
   },
 }
