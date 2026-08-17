@@ -16,12 +16,14 @@
  *   config:
  *     baseUrl: http://127.0.0.1:8080/v1
  *     model: ''            # '' auto-detects the first model from /v1/models
+ *     apiKey: ''           # 云服务认证:直接填 sk-xxx, 或 env:MY_VISION_KEY 读环境变量
  *     defaultPrompt: 用中文简要描述这张图片的内容
  *     maxTokens: 1024
  *     timeoutMs: 120000
  *     maxImageBytes: 31457280
  *     autoStart: false     # true = 服务不可达时自动拉起 llama-server
- *     serverCommand: ''    # 拉起命令;留空用默认(基于 baseUrl 的 qwen3.5-9b)
+ *     serverCommand: ''    # 拉起命令;留空用默认(基于 baseUrl 的 qwen3.5-9b,
+ *                          # 路径按 os.homedir() 解析,已适配 Windows)
  *     keepAliveMs: 0       # 0 = 用完即退;>0 = 闲置 keepAliveMs 毫秒后退出
  *     startupTimeoutMs: 120000
  * ```
@@ -30,6 +32,7 @@
 
 import { spawn } from 'node:child_process';
 import { readFile, stat } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 
 /** Plugin name: loader row identity and log label. */
@@ -58,6 +61,9 @@ export function apply(ctx, config = {}) {
     config.model === undefined || config.model === null || config.model === ''
       ? ''
       : assertString(config.model, 'model');
+  // 云服务认证: '' = 无认证(本地服务); 直接填 key; 或 env:NAME 读环境变量,
+  // 避免把密钥明文写进 agent.cordis.yml / 提交到 git。
+  const apiKey = resolveApiKey(config.apiKey);
   const defaultPrompt =
     config.defaultPrompt === undefined || config.defaultPrompt === ''
       ? '用中文简要描述这张图片的内容'
@@ -90,7 +96,23 @@ export function apply(ctx, config = {}) {
     const proc = child;
     child = null;
     if (!proc || proc.exitCode !== null) return;
-    // detached + process group: kill the whole tree (shell + llama-server).
+    if (process.platform === 'win32') {
+      // Windows has no process-group signals. `shell: true` means the child is
+      // cmd.exe with llama-server underneath it; plain proc.kill() would only
+      // terminate the shell and orphan the server. taskkill /T walks the whole
+      // tree and /F force-kills, so no grace timer is needed.
+      try {
+        spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], {
+          stdio: 'ignore',
+          windowsHide: true,
+        });
+      } catch {
+        // Last resort: kill the shell only (llama-server may leak).
+        proc.kill('SIGTERM');
+      }
+      return;
+    }
+    // POSIX: detached + process group — kill the whole tree (shell + llama-server).
     try {
       process.kill(-proc.pid, 'SIGTERM');
     } catch {
@@ -112,6 +134,7 @@ export function apply(ctx, config = {}) {
     const proc = spawn(command, {
       shell: true,
       detached: true,
+      windowsHide: true, // no console window flashing on Windows
       stdio: ['ignore', 'ignore', 'pipe'],
     });
     child = proc;
@@ -129,7 +152,7 @@ export function apply(ctx, config = {}) {
           }`,
         );
       }
-      if (await ping(baseUrl, 1500)) return;
+      if (await ping(baseUrl, 1500, apiKey)) return;
       await sleep(500);
     }
     stopServer();
@@ -141,7 +164,7 @@ export function apply(ctx, config = {}) {
   };
 
   const ensureServer = async () => {
-    if (await ping(baseUrl, 1500)) return;
+    if (await ping(baseUrl, 1500, apiKey)) return;
     if (!autoStart) return;
     if (!starting) {
       starting = startServer().finally(() => {
@@ -248,7 +271,8 @@ export function apply(ctx, config = {}) {
         await ensureServer();
         const startedAt = Date.now();
         const { dataUrl, mime } = await readImage(imagePath, maxImageBytes);
-        const modelId = model === '' ? await resolveModel(baseUrl, timeoutMs, exec.signal) : model;
+        const modelId =
+          model === '' ? await resolveModel(baseUrl, timeoutMs, exec.signal, apiKey) : model;
         const text = await chatCompletion({
           baseUrl,
           model: modelId,
@@ -258,6 +282,7 @@ export function apply(ctx, config = {}) {
           maxTokens: tokenCap,
           timeoutMs,
           signal: exec.signal,
+          apiKey,
         });
         return { text, model: modelId, durationMs: Date.now() - startedAt };
       } finally {
@@ -312,8 +337,47 @@ function nonNegativeInt(value, fallback, key) {
 }
 
 /**
+ * Resolve `config.apiKey`: `''` (default) means no authentication (local
+ * llama-server); a raw string is used verbatim; `env:NAME` reads the key from
+ * environment variable NAME so secrets never have to sit in agent.cordis.yml.
+ * Unset env vars fail loud (config error should never be silent).
+ * @returns {string} the bearer token, or '' when no auth is configured.
+ */
+function resolveApiKey(value) {
+  if (value === undefined || value === null || value === '') return '';
+  const raw = assertString(value, 'apiKey');
+  if (raw.startsWith('env:')) {
+    const envName = raw.slice(4);
+    if (envName === '') {
+      throw new Error('tool-vision: config.apiKey env:NAME requires a variable name');
+    }
+    const fromEnv = process.env[envName];
+    if (fromEnv === undefined || fromEnv === '') {
+      throw new Error(`tool-vision: env var "${envName}" referenced by config.apiKey is not set`);
+    }
+    return fromEnv;
+  }
+  return raw;
+}
+
+/**
+ * Authorization header for OpenAI-compatible endpoints. Returns an empty
+ * object when no key is configured, so local llama-server keeps working
+ * without any auth.
+ * @param {string} apiKey - resolved bearer token ('' = no auth).
+ */
+function authHeaders(apiKey) {
+  return apiKey === '' ? {} : { authorization: 'Bearer ' + apiKey };
+}
+
+/**
  * The default llama-server command, derived from `baseUrl` so a custom port in
  * the config is honored. Override via `config.serverCommand`.
+ *
+ * Portable across macOS/Linux and Windows: the model directory is resolved
+ * through `os.homedir()` (cmd.exe does not expand `~`) and every path is
+ * quoted with the platform's quote character so spaces in the home directory
+ * do not break the command.
  * @param {string} baseUrl - normalized endpoint, e.g. `http://127.0.0.1:8080/v1`.
  * @returns {string} a shell command that starts llama-server with qwen3.5-9b.
  */
@@ -321,12 +385,19 @@ function defaultServerCommand(baseUrl) {
   const url = new URL(baseUrl);
   const host = url.hostname || '127.0.0.1';
   const port = url.port || '8080';
+  const isWin = process.platform === 'win32';
+  const quote = isWin ? '"' : "'";
+  // cmd.exe does not expand ~; sh expands $HOME but not ~ inside quotes.
+  const home = isWin ? process.env.USERPROFILE || os.homedir() : os.homedir();
+  const modelDir = path.join(home, 'models', 'qwen3.5-9b');
+  const model = `${quote}${path.join(modelDir, 'Qwen3.5-9B-Q4_K_M.gguf')}${quote}`;
+  const mmproj = `${quote}${path.join(modelDir, 'mmproj-F16.gguf')}${quote}`;
   return [
     'llama-server',
     '-m',
-    '~/models/qwen3.5-9b/Qwen3.5-9B-Q4_K_M.gguf',
+    model,
     '--mmproj',
-    '~/models/qwen3.5-9b/mmproj-F16.gguf',
+    mmproj,
     '--host',
     host,
     '--port',
@@ -343,10 +414,13 @@ function defaultServerCommand(baseUrl) {
 }
 
 /** Probe whether the endpoint answers GET /v1/models. */
-async function ping(baseUrl, timeoutMs) {
+async function ping(baseUrl, timeoutMs, apiKey = '') {
   const abort = abortSignal(timeoutMs, undefined);
   try {
-    const response = await fetch(`${baseUrl}/models`, { signal: abort.signal });
+    const response = await fetch(`${baseUrl}/models`, {
+      headers: authHeaders(apiKey),
+      signal: abort.signal,
+    });
     return response.ok;
   } catch {
     return false;
@@ -400,10 +474,11 @@ async function readImage(imagePath, maxImageBytes) {
  * Resolve the model id: query GET {baseUrl}/models and use the first entry, or
  * fall back to `local` when the server does not advertise one.
  */
-async function resolveModel(baseUrl, timeoutMs, signal) {
+async function resolveModel(baseUrl, timeoutMs, signal, apiKey = '') {
   const abort = abortSignal(timeoutMs, signal);
   try {
     const response = await fetch(`${baseUrl}/models`, {
+      headers: authHeaders(apiKey),
       signal: abort.signal,
     });
     if (response.ok) {
@@ -432,13 +507,14 @@ async function chatCompletion({
   maxTokens,
   timeoutMs,
   signal,
+  apiKey = '',
 }) {
   const abort = abortSignal(timeoutMs, signal);
   let response;
   try {
     response = await fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...authHeaders(apiKey) },
       signal: abort.signal,
       body: JSON.stringify({
         model,

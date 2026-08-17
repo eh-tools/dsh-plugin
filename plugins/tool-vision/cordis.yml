@@ -5,16 +5,20 @@
 
 ```yaml
 - id: tool-vision
-  name: /Users/a1/workspace/dsh-plugin/plugins/tool-vision/lib/index.js
+  name: <repo-abs-path>/plugins/tool-vision/lib/index.js
   config:
     baseUrl: http://127.0.0.1:8080/v1
     model: ''            # 留空 = 自动探测 /v1/models 的第一个模型 id
+    # apiKey: ''         # 云服务认证:直接填 sk-xxx, 或 env:MY_VISION_KEY 读环境变量
+                         # (留空 = 无认证, 本地 llama-server 场景不用配)
     defaultPrompt: 用中文简要描述这张图片的内容
     maxTokens: 1024
     timeoutMs: 120000
     maxImageBytes: 31457280   # 30 MiB
     # autoStart: true        # 服务不可达时自动拉起 llama-server(见下方说明)
-    # serverCommand: ''      # 拉起命令;留空用默认(基于 baseUrl 的 qwen3.5-9b)
+    # serverCommand: ''      # 拉起命令;留空用默认(基于 baseUrl 的 qwen3.5-9b)。
+    #                        # Windows 上建议显式配置:cmd 不展开 ~,且 llama-server
+    #                        # 需在 PATH 里或用完整路径(示例见插件 README)
     # keepAliveMs: 0         # 0 = 用完即退;>0 = 闲置 N 毫秒后退出
     # startupTimeoutMs: 120000
 ```
@@ -23,14 +27,15 @@
 
 | 键 | 默认值 | 说明 |
 |---|---|---|
-| `baseUrl` | `http://127.0.0.1:8080/v1` | llama-server 的 OpenAI 兼容 API 地址(带 `/v1`) |
-| `model` | `''` | 请求里携带的模型 id;留空自动探测,也可固定为 `qwen3.5-9b` 等 |
+| `baseUrl` | `http://127.0.0.1:8080/v1` | 任意 OpenAI 兼容视觉服务的 API 地址(带 `/v1`):llama-server / LM Studio / Ollama / vLLM / 云端都行 |
+| `model` | `''` | 请求里携带的模型 id;留空自动探测,也可固定为 `qwen3.5-9b`、`gpt-4o` 等 |
+| `apiKey` | `''` | **云服务认证**(本地服务不用配):直接填 `sk-xxx`,或 `env:MY_VISION_KEY` 从环境变量读取(推荐,避免明文入库);留空 = 不发送 `Authorization` 头 |
 | `defaultPrompt` | `用中文简要描述这张图片的内容` | 调用方未传 `prompt` 时使用的指令 |
 | `maxTokens` | `1024` | 单次生成的最大 token 数 |
 | `timeoutMs` | `120000` | 单次请求超时(毫秒) |
 | `maxImageBytes` | `31457280` | 图片体积上限(字节),超出报错 |
-| `autoStart` | `false` | 服务不可达时自动 `spawn` llama-server(on-demand 模式) |
-| `serverCommand` | `''` | 拉起命令;留空用默认命令(从 `baseUrl` 推导 host/port,模型固定 qwen3.5-9b) |
+| `autoStart` | `false` | 服务不可达时自动 `spawn` llama-server(on-demand 模式);**云端服务请保持 `false`** |
+| `serverCommand` | `''` | 拉起命令;留空用默认命令(从 `baseUrl` 推导 host/port,模型固定 qwen3.5-9b;路径按 `os.homedir()` 解析,已适配 Windows)。Windows 上建议显式配置完整命令 |
 | `keepAliveMs` | `0` | `0` = 请求结束立即退出;`>0` = 闲置该毫秒数后退出 |
 | `startupTimeoutMs` | `120000` | on-demand 模式下等待服务就绪的超时(毫秒) |
 
@@ -43,6 +48,29 @@
 先探测 `baseUrl`,不可达就用 `serverCommand`(默认命令)拉起 llama-server,请求完成
 后按 `keepAliveMs` 退出(`0` 即用完就退,不占内存);如果外部已有服务在跑,优先
 用外部服务,不会重复拉起。插件卸载(dispose)时也会停掉自己拉起的进程。
+
+## 接入云端视觉模型(OpenAI 兼容 + API key)
+
+不想跑本地模型时,把 `baseUrl` 指到任何 **OpenAI 兼容的云服务**、填 `model` 和
+`apiKey` 即可(`autoStart` 保持 `false`,插件不会去拉起本地服务):
+
+```yaml
+- id: tool-vision
+  name: <repo-abs-path>/plugins/tool-vision/lib/index.js
+  config:
+    baseUrl: https://api.openai.com/v1      # 换成你的服务地址(带 /v1)
+    model: gpt-4o                           # 换成服务支持的视觉模型 id
+    apiKey: env:MY_VISION_API_KEY           # 或直接填 sk-xxx;env: 引用环境变量更安全
+    autoStart: false                        # 云端无需自动拉起
+```
+
+- **key 放哪**:两种方式——直接填明文(方便但会进 `agent.cordis.yml`,注意别提交到
+  git);或 `env:变量名` 从环境变量读取(推荐,密钥不落盘)。`env:` 引用的变量未设置
+  时,插件会在加载时直接报错,方便排查。
+- **注意**:DeepSeek 官方 API **不支持图片输入**,不能当 vision 后端;请用支持视觉
+  的 OpenAI 兼容服务(OpenAI GPT-4o、智谱 GLM-4V、阿里 qwen-vl、OpenRouter 等)。
+- 探测模型列表、聊天补全都会带 `Authorization: Bearer <key>`,云端鉴权没问题;
+  401/403 通常是 key 不对或服务不支持视觉模型。
 
 ## 工具参数(模型可见)
 

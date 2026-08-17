@@ -30,7 +30,7 @@ function startMockServer({ failWith }) {
             return;
         }
         if (req.url === '/v1/chat/completions' && req.method === 'POST') {
-            lastRequest = { url: req.url, body: JSON.parse(body) };
+            lastRequest = { url: req.url, headers: req.headers, body: JSON.parse(body) };
             if (failWith) {
                 res.writeHead(failWith.status, { 'content-type': 'application/json' });
                 res.end(JSON.stringify(failWith.body ?? { error: { message: failWith.message } }));
@@ -337,6 +337,54 @@ async function main() {
             await mock.close();
         }
         console.log('ok 12 — external server takes precedence over autoStart');
+    }
+
+    // 13. apiKey (raw string) is sent as `Authorization: Bearer` on every request.
+    {
+        const mock = await startMockServer({});
+        try {
+            const ctx = fakeCtx();
+            apply(ctx, { baseUrl: mock.url, model: 'gpt-4o', apiKey: 'sk-test-123' });
+            await ctx.registered.execute(
+                { image: TEST_IMAGE, prompt: '描述' },
+                { signal: signal() },
+            );
+            assert.equal(mock.lastRequest.headers.authorization, 'Bearer sk-test-123');
+            // Auto-detection path must authenticate too: /v1/models got the header.
+            const ctx2 = fakeCtx();
+            apply(ctx2, { baseUrl: mock.url, apiKey: 'sk-test-456' });
+            await ctx2.registered.execute({ image: TEST_IMAGE }, { signal: signal() });
+            assert.equal(mock.lastRequest.headers.authorization, 'Bearer sk-test-456');
+        } finally {
+            await mock.close();
+        }
+        console.log('ok 13 — apiKey sent as Authorization: Bearer');
+    }
+
+    // 14. apiKey via env:NAME reference; missing env fails loud at apply().
+    {
+        const mock = await startMockServer({});
+        try {
+            process.env.VISION_TEST_API_KEY = 'sk-env-789';
+            try {
+                const ctx = fakeCtx();
+                apply(ctx, { baseUrl: mock.url, apiKey: 'env:VISION_TEST_API_KEY' });
+                await ctx.registered.execute(
+                    { image: TEST_IMAGE, prompt: '描述' },
+                    { signal: signal() },
+                );
+                assert.equal(mock.lastRequest.headers.authorization, 'Bearer sk-env-789');
+            } finally {
+                delete process.env.VISION_TEST_API_KEY;
+            }
+            assert.throws(
+                () => apply(fakeCtx(), { apiKey: 'env:VISION_TEST_API_KEY' }),
+                /env var "VISION_TEST_API_KEY" .* is not set/,
+            );
+        } finally {
+            await mock.close();
+        }
+        console.log('ok 14 — apiKey env:NAME reference + missing-env fail loud');
     }
 
     console.log('\nall smoke tests passed');
