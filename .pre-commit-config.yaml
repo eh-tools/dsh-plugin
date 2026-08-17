@@ -74,9 +74,6 @@ repos:
         language: system
         stages: [pre-push]
         files: \.m?js$
-        # host.js/client.js 是旧动态插件的函数体片段(顶层 return),
-        # 不是可独立执行的 Node 脚本, 语法检查应跳过。
-        exclude: ^plugins/[^/]+/(host|client)\.js$
       - id: smoke
         name: 冒烟测试 (tool-vision)
         entry: node plugins/tool-vision/tests/smoke.mjs

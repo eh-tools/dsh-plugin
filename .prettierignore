@@ -4,8 +4,3 @@ pnpm-lock.yaml
 .worktrees/
 # 挂载示例文档:markdown 内容, 并非 YAML 文件, prettier 会解析失败
 plugins/tool-vision/cordis.yml
-# 动态插件源码: cordis_define 的函数体, 顶层 return 不是合法模块语法
-plugins/ds-balance/host.js
-plugins/ds-balance/client.js
-plugins/paste-image/host.js
-plugins/paste-image/client.js

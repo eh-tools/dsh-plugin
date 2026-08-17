@@ -1,9 +1,8 @@
 // ds-balance host 逻辑冒烟测试(无网络):
-// 在 mock 环境里执行 host.js 的 apply, 校验余额/用量解析、official 判定、
+// 直接 import 静态双半插件的 lib/index.js, 用 mock ctx 挂载, 再经注册的
+// HTTP 路由(POST /ds-balance/api/query)校验余额/用量解析、official 判定、
 // 失败回退与缓存行为。Run: node scripts/verify-ds-balance.mjs
-import fs from 'node:fs';
-
-const src = fs.readFileSync(new URL('../plugins/ds-balance/host.js', import.meta.url), 'utf8');
+import { apply } from '../plugins/ds-balance/lib/index.js';
 
 // --- 余额响应(官方真实结构) ---
 const BALANCE_OK = JSON.stringify({
@@ -76,14 +75,7 @@ function makeEnv({
     balanceFails = false,
     base = 'https://api.deepseek.com',
 } = {}) {
-    let calls = [];
-    const handlers = {};
-    const harness = {
-        handle(method, fn) {
-            this.handlers[method] = fn;
-        },
-        handlers,
-    };
+    const routes = [];
     const credentials = {
         async resolve(ref) {
             if (ref === 'DEEPSEEK_API_KEY') return { value: 'sk-test-123' };
@@ -94,6 +86,11 @@ function makeEnv({
         },
     };
     const ctx = {
+        webServer: {
+            register(spec) {
+                routes.push(spec);
+            },
+        },
         get(name) {
             if (name === 'credentials') return credentials;
             if (name === 'sandboxPolicy') return { workspaceRoot: '/tmp' };
@@ -103,7 +100,6 @@ function makeEnv({
                         return '/usr/bin/curl';
                     },
                     spawn(spec) {
-                        calls.push(spec);
                         let out;
                         if (spec.argv[2].includes('/user/balance')) {
                             if (balanceFails)
@@ -138,17 +134,36 @@ function makeEnv({
             return undefined;
         },
     };
-    // host.js 是函数体, 包一层 function 执行
-    const factory = new Function('harness', src);
-    const plugin = factory(harness);
-    plugin.apply(ctx);
-    return { call: () => harness.handlers['ds-balance/query'](), calls };
+    apply(ctx);
+    const spec = routes.find((r) => r.kind === 'prefix' && r.path === '/ds-balance/api');
+    if (spec === undefined) throw new Error('route /ds-balance/api not registered');
+    // 走 HTTP 路由入口: POST /ds-balance/api/<method>(本测试只用 query)。
+    return async (method = 'query') => {
+        let status = 0;
+        let body = '';
+        const res = {
+            writeHead(s) {
+                status = s;
+            },
+            end(payload) {
+                body = payload;
+            },
+        };
+        const req = {
+            method: 'POST',
+            url: '/ds-balance/api/' + method,
+            headers: { host: '127.0.0.1:3080' },
+        };
+        await spec.handler(req, res);
+        if (status !== 200) throw new Error('route status ' + status + ': ' + body);
+        return JSON.parse(body);
+    };
 }
 
 // 1. 官方 base: 余额 + 用量 都解析成功
 {
-    const env = makeEnv();
-    const r = await env.call();
+    const call = makeEnv();
+    const r = await call();
     console.log('1 official ok:', JSON.stringify(r, null, 0));
     if (!r.ok) throw new Error('expected ok');
     if (!r.official) throw new Error('expected official');
@@ -165,8 +180,8 @@ function makeEnv({
 
 // 2. 非官方 base: official=false, usage=null
 {
-    const env = makeEnv({ base: 'https://gateway.example.com/v1' });
-    const r = await env.call();
+    const call = makeEnv({ base: 'https://gateway.example.com/v1' });
+    const r = await call();
     if (!r.ok) throw new Error('expected ok');
     if (r.official !== false) throw new Error('expected official=false');
     if (r.usage !== null) throw new Error('expected usage=null');
@@ -175,8 +190,8 @@ function makeEnv({
 
 // 3. 用量接口失败(40003): ok=true, official=true, usage=null(只显示余额)
 {
-    const env = makeEnv({ usageFails: true });
-    const r = await env.call();
+    const call = makeEnv({ usageFails: true });
+    const r = await call();
     if (!r.ok) throw new Error('expected ok');
     if (r.official !== true) throw new Error('expected official');
     if (r.usage !== null) throw new Error('expected usage=null on failure');
@@ -185,36 +200,34 @@ function makeEnv({
 
 // 4. 用量响应结构不符: usage=null
 {
-    const env = makeEnv({
+    const call = makeEnv({
         usageBody: () => '{"code":0,"data":{"biz_code":0,"biz_data":{"nope":true}}}',
     });
-    const r = await env.call();
+    const r = await call();
     if (r.usage !== null) throw new Error('expected usage=null on shape mismatch');
     console.log('4 usage shape mismatch → usage=null ok');
 }
 
 // 5. 余额失败: 整体失败, 不缓存
 {
-    const env = makeEnv({ balanceFails: true });
-    const r = await env.call();
+    const call = makeEnv({ balanceFails: true });
+    const r = await call();
     if (r.ok) throw new Error('expected !ok on balance failure');
     if (r.error !== 'http') throw new Error('expected error=http, got ' + r.error);
-    const r2 = await env.call();
+    const r2 = await call();
     if (r2.error !== 'http') throw new Error('expected retry (failure not cached)');
     console.log('5 balance failure → {error:"http"}, retried ok');
 }
 
 // 6. no-key: resolve 返回 undefined
 {
-    const src2 = fs.readFileSync(new URL('../plugins/ds-balance/host.js', import.meta.url), 'utf8');
-    const handlers = {};
-    const harness = {
-        handle(m, fn) {
-            this.handlers[m] = fn;
-        },
-        handlers,
-    };
+    const routes = [];
     const ctx = {
+        webServer: {
+            register(spec) {
+                routes.push(spec);
+            },
+        },
         get(name) {
             if (name === 'credentials')
                 return {
@@ -225,10 +238,27 @@ function makeEnv({
             return undefined;
         },
     };
-    const factory = new Function('harness', src2);
-    factory(harness).apply(ctx);
-    const r = await harness.handlers['ds-balance/query']();
-    if (!(r.error === 'no-key')) throw new Error('expected no-key, got ' + JSON.stringify(r));
+    apply(ctx);
+    const spec = routes.find((r) => r.kind === 'prefix' && r.path === '/ds-balance/api');
+    let status = 0;
+    let body = '';
+    const res = {
+        writeHead(s) {
+            status = s;
+        },
+        end(payload) {
+            body = payload;
+        },
+    };
+    const req = {
+        method: 'POST',
+        url: '/ds-balance/api/query',
+        headers: { host: 'localhost' },
+    };
+    await spec.handler(req, res);
+    if (status !== 200) throw new Error('route status ' + status + ': ' + body);
+    const r = JSON.parse(body);
+    if (!(r.error === 'no-key')) throw new Error('expected no-key, got ' + body);
     console.log('6 no-key → {error:"no-key"} ok');
 }
 
