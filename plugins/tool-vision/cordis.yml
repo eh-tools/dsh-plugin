@@ -1,0 +1,35 @@
+# 挂载示例:把 tool-vision 加进任意 agent preset
+
+把下面这一段加进目标 preset 的 `agent.cordis.yml`(例如
+`~/.dsh/.agent-presets/<id>/agent.cordis.yml`),保存后重启/新建会话即可生效。
+
+```yaml
+- id: tool-vision
+  name: /Users/a1/workspace/dsh-plugin/plugins/tool-vision/lib/index.js
+  config:
+    baseUrl: http://127.0.0.1:8080/v1
+    model: ''            # 留空 = 自动探测 /v1/models 的第一个模型 id
+    defaultPrompt: 用中文简要描述这张图片的内容
+    maxTokens: 1024
+    timeoutMs: 120000
+    maxImageBytes: 31457280   # 30 MiB
+```
+
+## 配置项
+
+| 键 | 默认值 | 说明 |
+|---|---|---|
+| `baseUrl` | `http://127.0.0.1:8080/v1` | llama-server 的 OpenAI 兼容 API 地址(带 `/v1`) |
+| `model` | `''` | 请求里携带的模型 id;留空自动探测,也可固定为 `qwen3.5-9b` 等 |
+| `defaultPrompt` | `用中文简要描述这张图片的内容` | 调用方未传 `prompt` 时使用的指令 |
+| `maxTokens` | `1024` | 单次生成的最大 token 数 |
+| `timeoutMs` | `120000` | 单次请求超时(毫秒) |
+| `maxImageBytes` | `31457280` | 图片体积上限(字节),超出报错 |
+
+## 工具参数(模型可见)
+
+- `image`(必填):图片路径,绝对路径优先,相对路径按进程工作目录解析。
+- `prompt`(可选):本次调用的指令,覆盖 `defaultPrompt`。
+- `maxTokens`(可选):本次调用的生成上限,覆盖 `maxTokens`。
+
+工具名:`vision`。支持格式:PNG / JPEG / WebP / BMP / GIF。

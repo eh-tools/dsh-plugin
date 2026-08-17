@@ -1,0 +1,29 @@
+# ---- OS ----
+.DS_Store
+Thumbs.db
+
+# ---- 编辑器 ----
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# ---- 环境变量(真值不入库) ----
+.env
+.env.local
+
+# ---- worktree 工作区 ----
+.worktrees/
+
+# ---- Claude Code 本地状态 ----
+.claude/settings.local.json
+
+# ---- 通用产物 ----
+dist/
+coverage/
+
+# ---- Node ----
+node_modules/
+*.tsbuildinfo
+test-results/
+playwright-report/

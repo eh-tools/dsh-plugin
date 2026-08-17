@@ -1,0 +1,7 @@
+{
+  "kind": "dynamic",
+  "idPrefix": "dsbal",
+  "name": "DeepSeek 余额状态栏",
+  "purpose": "在官方 stats 状态栏同一行显示 DeepSeek API 余额,每 5 分钟刷新一次。",
+  "files": ["host.js", "client.js"]
+}
