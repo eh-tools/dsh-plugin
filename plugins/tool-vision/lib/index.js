@@ -20,10 +20,15 @@
  *     maxTokens: 1024
  *     timeoutMs: 120000
  *     maxImageBytes: 31457280
+ *     autoStart: false     # true = 服务不可达时自动拉起 llama-server
+ *     serverCommand: ''    # 拉起命令;留空用默认(基于 baseUrl 的 qwen3.5-9b)
+ *     keepAliveMs: 0       # 0 = 用完即退;>0 = 闲置 keepAliveMs 毫秒后退出
+ *     startupTimeoutMs: 120000
  * ```
  * @module tool-vision
  */
 
+import { spawn } from 'node:child_process';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -60,6 +65,112 @@ export function apply(ctx, config = {}) {
   const maxTokens = positiveInt(config.maxTokens, 1024, 'maxTokens');
   const timeoutMs = positiveInt(config.timeoutMs, 120000, 'timeoutMs');
   const maxImageBytes = positiveInt(config.maxImageBytes, 30 * 1024 * 1024, 'maxImageBytes');
+  const autoStart = config.autoStart === true;
+  const serverCommand =
+    config.serverCommand === undefined ||
+    config.serverCommand === null ||
+    config.serverCommand === ''
+      ? ''
+      : assertString(config.serverCommand, 'serverCommand');
+  const keepAliveMs = nonNegativeInt(config.keepAliveMs, 0, 'keepAliveMs');
+  const startupTimeoutMs = positiveInt(config.startupTimeoutMs, 120000, 'startupTimeoutMs');
+
+  // Managed llama-server subprocess (only when autoStart is on). One per apply
+  // instance, so concurrent vision calls share a single startup/teardown.
+  let child = null;
+  let starting = null;
+  let idleTimer = null;
+  let active = 0;
+
+  const stopServer = () => {
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+      idleTimer = null;
+    }
+    const proc = child;
+    child = null;
+    if (!proc || proc.exitCode !== null) return;
+    // detached + process group: kill the whole tree (shell + llama-server).
+    try {
+      process.kill(-proc.pid, 'SIGTERM');
+    } catch {
+      proc.kill('SIGTERM');
+    }
+    // SIGTERM grace; escalate so a stuck server cannot leak.
+    const killer = setTimeout(() => {
+      try {
+        process.kill(-proc.pid, 'SIGKILL');
+      } catch {
+        // Already gone.
+      }
+    }, 5000);
+    killer.unref?.();
+  };
+
+  const startServer = async () => {
+    const command = serverCommand || defaultServerCommand(baseUrl);
+    const proc = spawn(command, {
+      shell: true,
+      detached: true,
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
+    child = proc;
+    let stderrTail = '';
+    proc.stderr?.on('data', (chunk) => {
+      stderrTail = (stderrTail + chunk.toString()).slice(-2000);
+    });
+    const deadline = Date.now() + startupTimeoutMs;
+    while (Date.now() < deadline) {
+      if (proc.exitCode !== null) {
+        stopServer();
+        throw new Error(
+          `vision: auto-started server exited early (code ${proc.exitCode})${
+            stderrTail ? ` — ${stderrTail}` : ''
+          }`,
+        );
+      }
+      if (await ping(baseUrl, 1500)) return;
+      await sleep(500);
+    }
+    stopServer();
+    throw new Error(
+      `vision: auto-started server did not become ready within ${startupTimeoutMs}ms${
+        stderrTail ? ` — ${stderrTail}` : ''
+      }`,
+    );
+  };
+
+  const ensureServer = async () => {
+    if (await ping(baseUrl, 1500)) return;
+    if (!autoStart) return;
+    if (!starting) {
+      starting = startServer().finally(() => {
+        starting = null;
+      });
+    }
+    await starting;
+  };
+
+  /**
+   * One call finished. Stop the auto-started server immediately (keepAliveMs 0)
+   * or arm the idle timer, but only once no other call is in flight.
+   */
+  const releaseServer = () => {
+    active--;
+    if (active > 0 || !child) return;
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+      idleTimer = null;
+    }
+    if (keepAliveMs <= 0) {
+      stopServer();
+      return;
+    }
+    idleTimer = setTimeout(stopServer, keepAliveMs);
+    idleTimer.unref?.();
+  };
+
+  ctx.on('dispose', stopServer);
 
   ctx.tools.register({
     name: 'vision',
@@ -98,20 +209,21 @@ export function apply(ctx, config = {}) {
         properties: {
           text: {
             type: 'string',
-            required: true,
             description: "The vision model's description of the image.",
           },
           model: {
             type: 'string',
-            required: true,
             description: 'The model id that produced the description.',
           },
           durationMs: {
             type: 'integer',
-            required: true,
             description: 'Wall-clock time of the model request in milliseconds.',
           },
         },
+        // JSON-Schema form: `required` is an object-level array. Per-property
+        // `required: true` is NOT part of the runtime's supported subset and
+        // makes `tools.register` reject the schema at mount time.
+        required: ['text', 'model', 'durationMs'],
         additionalProperties: false,
       },
       render: (_args, value) => [{ type: 'text', text: value.text }],
@@ -131,20 +243,26 @@ export function apply(ctx, config = {}) {
           ? maxTokens
           : positiveInt(args.maxTokens, maxTokens, 'maxTokens');
 
-      const { dataUrl, mime } = await readImage(imagePath, maxImageBytes);
-      const modelId = model === '' ? await resolveModel(baseUrl, timeoutMs, exec.signal) : model;
-      const startedAt = Date.now();
-      const text = await chatCompletion({
-        baseUrl,
-        model: modelId,
-        dataUrl,
-        mime,
-        instruction,
-        maxTokens: tokenCap,
-        timeoutMs,
-        signal: exec.signal,
-      });
-      return { text, model: modelId, durationMs: Date.now() - startedAt };
+      active++;
+      try {
+        await ensureServer();
+        const startedAt = Date.now();
+        const { dataUrl, mime } = await readImage(imagePath, maxImageBytes);
+        const modelId = model === '' ? await resolveModel(baseUrl, timeoutMs, exec.signal) : model;
+        const text = await chatCompletion({
+          baseUrl,
+          model: modelId,
+          dataUrl,
+          mime,
+          instruction,
+          maxTokens: tokenCap,
+          timeoutMs,
+          signal: exec.signal,
+        });
+        return { text, model: modelId, durationMs: Date.now() - startedAt };
+      } finally {
+        releaseServer();
+      }
     },
   });
 }
@@ -180,6 +298,66 @@ function positiveInt(value, fallback, key) {
     );
   }
   return value;
+}
+
+/** Non-negative integer config value (0 allowed), falling back when undefined. */
+function nonNegativeInt(value, fallback, key) {
+  if (value === undefined || value === null || value === '') return fallback;
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error(
+      `tool-vision: config.${key} must be a non-negative integer (got ${JSON.stringify(value)})`,
+    );
+  }
+  return value;
+}
+
+/**
+ * The default llama-server command, derived from `baseUrl` so a custom port in
+ * the config is honored. Override via `config.serverCommand`.
+ * @param {string} baseUrl - normalized endpoint, e.g. `http://127.0.0.1:8080/v1`.
+ * @returns {string} a shell command that starts llama-server with qwen3.5-9b.
+ */
+function defaultServerCommand(baseUrl) {
+  const url = new URL(baseUrl);
+  const host = url.hostname || '127.0.0.1';
+  const port = url.port || '8080';
+  return [
+    'llama-server',
+    '-m',
+    '~/models/qwen3.5-9b/Qwen3.5-9B-Q4_K_M.gguf',
+    '--mmproj',
+    '~/models/qwen3.5-9b/mmproj-F16.gguf',
+    '--host',
+    host,
+    '--port',
+    port,
+    '-c',
+    '4096',
+    '-ngl',
+    '99',
+    '--image-min-tokens',
+    '1024',
+    '--alias',
+    'qwen3.5-9b',
+  ].join(' ');
+}
+
+/** Probe whether the endpoint answers GET /v1/models. */
+async function ping(baseUrl, timeoutMs) {
+  const abort = abortSignal(timeoutMs, undefined);
+  try {
+    const response = await fetch(`${baseUrl}/models`, { signal: abort.signal });
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    abort.cleanup();
+  }
+}
+
+/** Promise sleep; never rejects. */
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** The `image` argument must be a non-empty string path. */
@@ -223,9 +401,10 @@ async function readImage(imagePath, maxImageBytes) {
  * fall back to `local` when the server does not advertise one.
  */
 async function resolveModel(baseUrl, timeoutMs, signal) {
+  const abort = abortSignal(timeoutMs, signal);
   try {
     const response = await fetch(`${baseUrl}/models`, {
-      signal: abortSignal(timeoutMs, signal),
+      signal: abort.signal,
     });
     if (response.ok) {
       const json = await response.json();
@@ -234,6 +413,8 @@ async function resolveModel(baseUrl, timeoutMs, signal) {
     }
   } catch {
     // The model field is advisory for llama-server; fall back below.
+  } finally {
+    abort.cleanup();
   }
   return 'local';
 }
@@ -252,12 +433,13 @@ async function chatCompletion({
   timeoutMs,
   signal,
 }) {
+  const abort = abortSignal(timeoutMs, signal);
   let response;
   try {
     response = await fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      signal: abortSignal(timeoutMs, signal),
+      signal: abort.signal,
       body: JSON.stringify({
         model,
         stream: false,
@@ -277,6 +459,8 @@ async function chatCompletion({
     throw new Error(
       `vision: failed to reach the vision server at ${baseUrl} (${error.message}) — is llama-server running?`,
     );
+  } finally {
+    abort.cleanup();
   }
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
@@ -299,7 +483,21 @@ async function chatCompletion({
   );
 }
 
-/** Combine caller cancellation with a wall-clock timeout. */
+/**
+ * Combine caller cancellation with a wall-clock timeout.
+ *
+ * Avoids `AbortSignal.any`/`AbortSignal.timeout` (Node ≥ 20.3 only) so the
+ * plugin keeps working on the repo's declared `node >= 20`. The returned
+ * `cleanup()` must run (finally) so the timer does not keep the process alive.
+ * @returns {{ signal: AbortSignal, cleanup: () => void }}
+ */
 function abortSignal(timeoutMs, callerSignal) {
-  return AbortSignal.any([callerSignal, AbortSignal.timeout(timeoutMs)]);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  if (callerSignal?.aborted) controller.abort();
+  else callerSignal?.addEventListener('abort', () => controller.abort(), { once: true });
+  return {
+    signal: controller.signal,
+    cleanup: () => clearTimeout(timer),
+  };
 }

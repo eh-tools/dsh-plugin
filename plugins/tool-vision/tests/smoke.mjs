@@ -65,6 +65,7 @@ function startMockServer({ failWith }) {
 /** Minimal registrant context: just enough of `ctx.tools` for apply(). */
 function fakeCtx() {
     let registered = null;
+    const disposers = [];
     return {
         tools: {
             register(definition) {
@@ -74,6 +75,12 @@ function fakeCtx() {
                 };
             },
         },
+        on(event, handler) {
+            if (event === 'dispose') disposers.push(handler);
+        },
+        dispose() {
+            for (const fn of disposers.splice(0)) fn();
+        },
         get registered() {
             return registered;
         },
@@ -81,6 +88,32 @@ function fakeCtx() {
 }
 
 const signal = () => new AbortController().signal;
+
+/** Reserve a free TCP port and release it (race window acceptable in tests). */
+async function freePort() {
+    const probe = http.createServer();
+    await new Promise((resolve) => probe.listen(0, '127.0.0.1', resolve));
+    const { port } = probe.address();
+    await new Promise((resolve) => probe.close(resolve));
+    return port;
+}
+
+/** Poll GET /v1/models until it stops answering, or fail after timeoutMs. */
+async function waitForPortClosed(port, timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        try {
+            const response = await fetch(`http://127.0.0.1:${port}/v1/models`, {
+                signal: AbortSignal.timeout(500),
+            });
+            if (!response.ok) return;
+        } catch {
+            return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error(`port ${port} still answering after ${timeoutMs}ms`);
+}
 
 async function main() {
     // 1. Registration + schema shape.
@@ -93,6 +126,18 @@ async function main() {
         assert.equal(ctx.registered.parameters.additionalProperties, false);
         assert.equal(typeof ctx.registered.execute, 'function');
         assert.equal(typeof ctx.registered.output.render, 'function');
+        // The output schema must use JSON-Schema form. Per-property
+        // `required: true` is outside the runtime's supported subset and makes
+        // the real `ctx.tools.register` throw at mount time — the fake registry
+        // here would silently accept it, so assert the shape explicitly.
+        assert.deepEqual(ctx.registered.output.schema.required, ['text', 'model', 'durationMs']);
+        for (const [name, prop] of Object.entries(ctx.registered.output.schema.properties)) {
+            assert.ok(
+                !Object.hasOwn(prop, 'required'),
+                `output property "${name}" must not declare per-property required`,
+            );
+        }
+        assert.equal(ctx.registered.output.schema.additionalProperties, false);
         console.log('ok 1 — registration + schema');
     }
 
@@ -209,6 +254,89 @@ async function main() {
             /failed to reach the vision server/,
         );
         console.log('ok 8 — unreachable server error');
+    }
+
+    // 9. autoStart spawns a missing server, the call succeeds, and the child
+    //    exits after the call when keepAliveMs is 0.
+    {
+        const port = await freePort();
+        const mockServer = path.join(ROOT, 'fixtures', 'mock-server-ondemand.mjs');
+        const ctx = fakeCtx();
+        apply(ctx, {
+            baseUrl: `http://127.0.0.1:${port}/v1`,
+            autoStart: true,
+            serverCommand: `VISION_TEST_PORT=${port} node ${mockServer}`,
+            keepAliveMs: 0,
+            startupTimeoutMs: 10000,
+        });
+        const result = await ctx.registered.execute(
+            { image: TEST_IMAGE, prompt: '描述' },
+            { signal: signal() },
+        );
+        assert.equal(result.text, 'ondemand 描述');
+        assert.equal(result.model, 'ondemand-vision');
+        await waitForPortClosed(port, 5000);
+        console.log('ok 9 — autoStart spawn + exit after use');
+    }
+
+    // 10. keepAliveMs keeps the auto-started server alive across calls; the
+    //     plugin dispose stops it even while kept alive.
+    {
+        const port = await freePort();
+        const mockServer = path.join(ROOT, 'fixtures', 'mock-server-ondemand.mjs');
+        const ctx = fakeCtx();
+        apply(ctx, {
+            baseUrl: `http://127.0.0.1:${port}/v1`,
+            autoStart: true,
+            serverCommand: `VISION_TEST_PORT=${port} node ${mockServer}`,
+            keepAliveMs: 60000,
+            startupTimeoutMs: 10000,
+        });
+        const result = await ctx.registered.execute({ image: TEST_IMAGE }, { signal: signal() });
+        assert.equal(result.text, 'ondemand 描述');
+        // Still up because keepAliveMs is large.
+        const response = await fetch(`http://127.0.0.1:${port}/v1/models`);
+        assert.ok(response.ok, 'auto-started server should survive while keepAliveMs > 0');
+        // A second call reuses the running server.
+        await ctx.registered.execute({ image: TEST_IMAGE }, { signal: signal() });
+        ctx.dispose();
+        await waitForPortClosed(port, 5000);
+        console.log('ok 10 — keepAliveMs retention + dispose cleanup');
+    }
+
+    // 11. autoStart with a broken command fails loud (exited early) instead of
+    //     hanging until the startup timeout.
+    {
+        const port = await freePort();
+        const ctx = fakeCtx();
+        apply(ctx, {
+            baseUrl: `http://127.0.0.1:${port}/v1`,
+            autoStart: true,
+            serverCommand: 'node /no/such/mock-server.mjs',
+            startupTimeoutMs: 10000,
+        });
+        await assert.rejects(
+            ctx.registered.execute({ image: TEST_IMAGE }, { signal: signal() }),
+            /auto-started server exited early/,
+        );
+        console.log('ok 11 — broken autoStart command fails loud');
+    }
+
+    // 12. autoStart off + reachable external server: no spawn, works as before.
+    {
+        const mock = await startMockServer({});
+        try {
+            const ctx = fakeCtx();
+            apply(ctx, { baseUrl: mock.url, autoStart: true });
+            const result = await ctx.registered.execute(
+                { image: TEST_IMAGE },
+                { signal: signal() },
+            );
+            assert.equal(result.text, '图中有一个红色圆形和一个蓝色正方形。');
+        } finally {
+            await mock.close();
+        }
+        console.log('ok 12 — external server takes precedence over autoStart');
     }
 
     console.log('\nall smoke tests passed');
