@@ -40,8 +40,8 @@ DSH 输入框原生支持粘贴图片(显示缩略图草稿),但发送时 host �
 自动挂载,无 Run 卡批准,重启不丢;client 改动走 HMR 热更新,host 改动才需重启。
 
 ```sh
-# 在仓库根目录执行(link: 本地安装, 无需发布到 npm)
-dsh plugin --profile web add link:/Users/a1/workspace/dsh-plugin/plugins/paste-image
+# 在仓库根目录执行(link: 本地安装, 无需发布到 npm;<repo-abs-path> 换成仓库绝对路径)
+dsh plugin --profile web add link:<repo-abs-path>/plugins/paste-image
 ```
 
 装完**重启 DSH 并硬刷新浏览器**(Cmd/Ctrl+Shift+R)。
@@ -52,17 +52,14 @@ dsh plugin --profile web add link:/Users/a1/workspace/dsh-plugin/plugins/paste-i
 - 原理: 包声明了 `dsh.bundle.patch`,CLI 的 bundle 协调会自动把它加进 profile
   的 `dsh.profile.bundles`,profile boot 时合并本包的 `cordis.patch.yml` 挂载行;
   `dsh.client` 声明让 clientModules 把浏览器半编入 `__DSH_BOOT__` 图。
-- 旧的动态加载方式(用 `host.js`/`client.js` 走 `cordis_define`/`cordis_run`)
-  已废弃,仅保留文件作参考;两者不要混用。
 
-| 文件                    | 内容                                                                                       |
-| ----------------------- | ------------------------------------------------------------------------------------------ |
-| `lib/index.js`          | **Host 半(静态)** — 校验 + node:fs 落盘, `ctx.webServer` 暴露 `POST /paste-image/api/save` |
-| `lib/client.js`         | **Client 半(静态 bundle)** — capture 拦截粘贴, fetch 上传, 路径写入 draft                  |
-| `package.json`          | npm 包声明(`dsh.bundle.patch` + `dsh.client`)                                              |
-| `cordis.patch.yml`      | 挂载层(profile boot 时自动合并)                                                            |
-| `host.js` / `client.js` | (已废弃) 旧动态插件函数体, 仅供对比参考                                                    |
-| `manifest.json`         | kind / files / install, 供重建使用                                                         |
+| 文件               | 内容                                                                                       |
+| ------------------ | ------------------------------------------------------------------------------------------ |
+| `lib/index.js`     | **Host 半(静态)** — 校验 + node:fs 落盘, `ctx.webServer` 暴露 `POST /paste-image/api/save` |
+| `lib/client.js`    | **Client 半(静态 bundle)** — capture 拦截粘贴, fetch 上传, 路径写入 draft                  |
+| `package.json`     | npm 包声明(`dsh.bundle.patch` + `dsh.client`)                                              |
+| `cordis.patch.yml` | 挂载层(profile boot 时自动合并)                                                            |
+| `manifest.json`    | kind / files / install, 供重建使用                                                         |
 
 ## 备注
 

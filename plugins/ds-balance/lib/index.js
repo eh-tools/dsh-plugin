@@ -20,6 +20,8 @@
  * 流程, 无 Run 卡批准, 重启不丢。
  */
 
+import { fileURLToPath } from 'node:url';
+
 export const name = 'dsh-ds-balance';
 
 /** webServer 是唯一硬依赖; credentials/subprocess/sandboxPolicy 走可选访问。 */
@@ -42,13 +44,14 @@ export function apply(ctx) {
   ].join(' ');
   const BALANCE_HEADERS =
     '-H "Accept: application/json" -H "Authorization: Bearer $DSH_BALANCE_KEY"';
-  // Playwright 一键登录脚本(绝对路径; 移动插件目录时同步修改)。
-  const LOGIN_SCRIPT =
-    '/Users/a1/workspace/dsh-plugin/plugins/ds-balance/scripts/deepseek-login.cjs';
+  // Playwright 一键登录脚本(随包相对解析, 移动/克隆仓库无需改路径)。
+  const LOGIN_SCRIPT = fileURLToPath(new URL('../scripts/deepseek-login.cjs', import.meta.url));
   // 全局 node_modules 位置(npm root -g), 供脚本解析 playwright。
-  const GLOBAL_NODE_MODULES = '/opt/homebrew/lib/node_modules';
-  // node 绝对路径回退(scrubbed PATH 可能不含 homebrew bin)。
-  const NODE_BIN = '/opt/homebrew/bin/node';
+  // 默认值面向本机, 其他机器可用环境变量覆盖。
+  const GLOBAL_NODE_MODULES =
+    process.env.DSH_DS_BALANCE_PLAYWRIGHT_PATH ?? '/opt/homebrew/lib/node_modules';
+  // node 绝对路径回退(scrubbed PATH 可能不含 homebrew bin), 可用环境变量覆盖。
+  const NODE_BIN = process.env.DSH_DS_BALANCE_NODE_BIN ?? '/opt/homebrew/bin/node';
   let cachedAt = 0;
   let cachedResult = null;
   let inFlight = null;

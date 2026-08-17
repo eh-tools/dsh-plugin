@@ -2,13 +2,6 @@
   "kind": "static",
   "name": "dsh-paste-image",
   "purpose": "粘贴图片即保存到会话工作目录 attachments/, 路径写入草稿, 供本地 tool-vision 识别。静态双半 npm 包,随 web profile 启动自动加载。",
-  "files": [
-    "package.json",
-    "cordis.patch.yml",
-    "lib/index.js",
-    "lib/client.js",
-    "host.js",
-    "client.js"
-  ],
-  "install": "dsh plugin --profile web add link:/Users/a1/workspace/dsh-plugin/plugins/paste-image"
+  "files": ["package.json", "cordis.patch.yml", "lib/index.js", "lib/client.js"],
+  "install": "dsh plugin --profile web add link:<repo-abs-path>/plugins/paste-image"
 }

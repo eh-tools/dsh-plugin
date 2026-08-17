@@ -68,8 +68,10 @@ platform.deepseek.com,用户手动登录后脚本自动读取 localStorage 里�
 全程只多一步"登录"。
 
 前置:系统装有 Google Chrome(本机没有时才需要 `npx playwright install chromium`
-下载 playwright 自带浏览器);脚本路径与全局模块路径见 `host.js` 顶部的
-`LOGIN_SCRIPT` / `GLOBAL_NODE_MODULES` 常量。
+下载 playwright 自带浏览器);脚本路径自动按包相对解析,无需手动配置;
+playwright 的全局模块位置(`GLOBAL_NODE_MODULES`)与 node 回退路径(`NODE_BIN`)
+可用环境变量 `DSH_DS_BALANCE_PLAYWRIGHT_PATH` / `DSH_DS_BALANCE_NODE_BIN` 覆盖
+(默认值见 `lib/index.js` 顶部常量)。
 
 ## 安装与自动加载(随 DSH 启动自动挂载)
 
@@ -79,8 +81,8 @@ platform.deepseek.com,用户手动登录后脚本自动读取 localStorage 里�
 自动挂载,无 Run 卡批准,重启不丢;client 改动走 HMR 热更新,host 改动才需重启。
 
 ```sh
-# 在仓库根目录执行(link: 本地安装, 无需发布到 npm)
-dsh plugin --profile web add link:/Users/a1/workspace/dsh-plugin/plugins/ds-balance
+# 在仓库根目录执行(link: 本地安装, 无需发布到 npm;<repo-abs-path> 换成仓库绝对路径)
+dsh plugin --profile web add link:<repo-abs-path>/plugins/ds-balance
 ```
 
 装完**重启 DSH 并硬刷新浏览器**(Cmd/Ctrl+Shift+R),状态栏下方即显示第二行。
@@ -91,19 +93,16 @@ dsh plugin --profile web add link:/Users/a1/workspace/dsh-plugin/plugins/ds-bala
 - 原理: 包声明了 `dsh.bundle.patch`,CLI 的 bundle 协调会自动把它加进 profile
   的 `dsh.profile.bundles`,profile boot 时合并本包的 `cordis.patch.yml` 挂载行;
   `dsh.client` 声明让 clientModules 把浏览器半编入 `__DSH_BOOT__` 图。
-- 旧的动态加载方式(用 `host.js`/`client.js` 走 `cordis_define`/`cordis_run`)
-  已废弃,仅保留文件作参考;两者不要混用。
 
 ## 文件
 
-| 文件                    | 内容                                                                                                                                                                                                                                                                                                                         |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `lib/index.js`          | **Host 半(静态)** — 解析 `DEEPSEEK_API_KEY` / `DEEPSEEK_USER_TOKEN`(credentials 服务), curl 请求余额 + 用量接口(`usage/amount`, userToken 认证), 经 `ctx.webServer` 暴露 `POST /ds-balance/api/{query,open-login,browser-login,login-status}`;带 60s 缓存 + 并发去重;非官方 host 判定;密钥走显式 env opt-in, 不进进程 argv。 |
-| `lib/client.js`         | **Client 半(静态 bundle)** — 注册 `conversation.composer.dock` 的独立 `ds-balance` 单元格(order:1, 排在官方 stats 之下);非官方/无 key 时整行不渲染;`fetch` 调 host 路由(替代动态的 `host.call`)。                                                                                                                            |
-| `package.json`          | npm 包声明(`dsh.bundle.patch` + `dsh.client`)                                                                                                                                                                                                                                                                                |
-| `cordis.patch.yml`      | 挂载层(profile boot 时自动合并)                                                                                                                                                                                                                                                                                              |
-| `host.js` / `client.js` | (已废弃) 旧动态插件函数体, 仅供对比参考                                                                                                                                                                                                                                                                                      |
-| `manifest.json`         | kind / files / install, 供重建使用                                                                                                                                                                                                                                                                                           |
+| 文件               | 内容                                                                                                                                                                                                                                                                                                                         |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lib/index.js`     | **Host 半(静态)** — 解析 `DEEPSEEK_API_KEY` / `DEEPSEEK_USER_TOKEN`(credentials 服务), curl 请求余额 + 用量接口(`usage/amount`, userToken 认证), 经 `ctx.webServer` 暴露 `POST /ds-balance/api/{query,open-login,browser-login,login-status}`;带 60s 缓存 + 并发去重;非官方 host 判定;密钥走显式 env opt-in, 不进进程 argv。 |
+| `lib/client.js`    | **Client 半(静态 bundle)** — 注册 `conversation.composer.dock` 的独立 `ds-balance` 单元格(order:1, 排在官方 stats 之下);非官方/无 key 时整行不渲染;`fetch` 调 host 路由(替代动态的 `host.call`)。                                                                                                                            |
+| `package.json`     | npm 包声明(`dsh.bundle.patch` + `dsh.client`)                                                                                                                                                                                                                                                                                |
+| `cordis.patch.yml` | 挂载层(profile boot 时自动合并)                                                                                                                                                                                                                                                                                              |
+| `manifest.json`    | kind / files / install, 供重建使用                                                                                                                                                                                                                                                                                           |
 
 ## 备注
 

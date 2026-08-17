@@ -3,6 +3,11 @@
   "version": "0.1.0",
   "description": "DeepSeek Harness 插件集合(多插件 monorepo)",
   "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/eh-tools/dsh-plugin.git"
+  },
   "type": "module",
   "packageManager": "pnpm@10.33.0",
   "engines": {

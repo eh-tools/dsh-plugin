@@ -2,13 +2,6 @@
   "kind": "static",
   "name": "dsh-ds-balance",
   "purpose": "在官方 stats 状态栏下方显示 DeepSeek 余额 + 今日/本月调用量(需 DEEPSEEK_USER_TOKEN),每 5 分钟刷新;非官方 API 或未配置 key 时整行隐藏。静态双半 npm 包,随 web profile 启动自动加载。",
-  "files": [
-    "package.json",
-    "cordis.patch.yml",
-    "lib/index.js",
-    "lib/client.js",
-    "host.js",
-    "client.js"
-  ],
-  "install": "dsh plugin --profile web add link:/Users/a1/workspace/dsh-plugin/plugins/ds-balance"
+  "files": ["package.json", "cordis.patch.yml", "lib/index.js", "lib/client.js"],
+  "install": "dsh plugin --profile web add link:<repo-abs-path>/plugins/ds-balance"
 }

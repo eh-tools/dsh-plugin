@@ -22,6 +22,10 @@ Thumbs.db
 dist/
 coverage/
 
+# ---- 运行时产物 ----
+# paste-image 插件落盘目录(会话 cwd 下的 attachments/ 由插件自建,这里防根目录误提交)
+attachments/
+
 # ---- Node ----
 node_modules/
 *.tsbuildinfo
