@@ -1,0 +1,5 @@
+{
+  "idPrefix": "pstimg",
+  "name": "paste-image",
+  "purpose": "粘贴图片即保存到会话工作目录, 供本地 vision 插件识别"
+}

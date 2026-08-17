@@ -7,3 +7,5 @@ plugins/tool-vision/cordis.yml
 # 动态插件源码: cordis_define 的函数体, 顶层 return 不是合法模块语法
 plugins/ds-balance/host.js
 plugins/ds-balance/client.js
+plugins/paste-image/host.js
+plugins/paste-image/client.js
