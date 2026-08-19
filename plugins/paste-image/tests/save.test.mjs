@@ -1,276 +1,210 @@
 /**
  * Regression tests for the paste-image host half (lib/index.js).
  *
- * Drives the REAL route handler the browser hits (POST /paste-image/api/save)
- * through a fake ctx. The fake `ctx.shell` is wired to reproduce the exact
- * production failure — the agent sandbox denies the write (seatbelt read-only
- * mkdir EPERM: "Operation not permitted") — so a host half that routes its
- * write through `ctx.shell` fails here. The fixed host half writes with
- * node:fs directly and never touches the shell.
+ * The host wraps `apiProxy.sessions.prompt`: when the gate rejects an image
+ * prompt with MODEL_DOES_NOT_SUPPORT_IMAGES (text-only model), it saves the
+ * image through `attachments.saveImage` and replaces image blocks with
+ * `[已粘贴图片: sha256:…]` text markers, then retries the prompt.
  *
  * Run: node plugins/paste-image/tests/save.test.mjs
  */
 
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
 import { apply } from '../lib/index.js';
 
-/** A fake ctx.shell that reproduces the production read-only sandbox denial. */
-function denyingShell() {
-    const calls = [];
-    return {
-        resolve: (spec) => spec,
-        async run(spec) {
-            calls.push(spec);
+/** Build the fake ctx: mock apiProxy.sessions.prompt + attachments service. */
+function fakeCtx({ promptImpl }) {
+    const saveCalls = [];
+    const mockAttachments = {
+        imageLimits: {
+            mediaTypes: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'],
+            maxImageBytes: 30 * 1024 * 1024,
+        },
+        async validateImage() {},
+        async saveImage(input) {
+            saveCalls.push(input);
             return {
-                exitCode: 1,
-                stderr: { text: 'mkdir: /x/attachments: Operation not permitted' },
+                attachmentId: 'sha256:mock' + '0'.repeat(58),
+                mediaType: input.mediaType,
+                bytes: input.data.byteLength,
+                width: 4,
+                height: 4,
+                ...(input.name !== undefined ? { name: input.name } : {}),
             };
         },
-        get calls() {
-            return calls;
+        async readImage(ref) {
+            return { ref, data: new Uint8Array(0) };
         },
     };
+    const promptCalls = [];
+    const sessions = {
+        async prompt(request) {
+            promptCalls.push(JSON.parse(JSON.stringify(request)));
+            if (typeof promptImpl === 'function') return promptImpl(request);
+            return { rpcId: request.rpcId, result: { ok: true, value: { accepted: true } } };
+        },
+    };
+    const ctx = {
+        apiProxy: { sessions },
+        attachments: mockAttachments,
+        get(key) {
+            if (key === 'attachments') return mockAttachments;
+            if (key === 'apiProxy') return { sessions };
+            return undefined;
+        },
+        get saveCalls() {
+            return saveCalls;
+        },
+        get promptCalls() {
+            return promptCalls;
+        },
+        get sessions() {
+            return sessions;
+        },
+    };
+    return ctx;
 }
 
-/** Build the fake ctx and capture the registered route handler entry. */
-function fakeCtx({ cwd, shell }) {
-    let entry = null;
+/** A MODEL_DOES_NOT_SUPPORT_IMAGES rejection shaped like apiproxy's err(). */
+function modelDoesNotSupportImages(request) {
     return {
-        webServer: {
-            register(route) {
-                entry = route;
+        rpcId: request.rpcId,
+        result: {
+            ok: false,
+            error: {
+                code: 'attachment-error',
+                message: 'Model "glm-5.2" does not support image input.',
+                details: { reason: 'MODEL_DOES_NOT_SUPPORT_IMAGES' },
             },
         },
-        sessions: {
-            get(id) {
-                return id === 's1' ? { header: { cwd } } : undefined;
-            },
-        },
-        shell,
-        get route() {
-            return entry;
-        },
     };
 }
 
-/** A minimal IncomingMessage stand-in: headers/method/url + async body chunks. */
-function jsonRequest({ url, body, host = '127.0.0.1:3080', method = 'POST', headers = {} }) {
-    const chunks = [Buffer.from(JSON.stringify(body))];
+function imagePrompt({
+    text = '看看这张图',
+    mediaType = 'image/png',
+    data = 'aGVsbG8=',
+    name,
+} = {}) {
     return {
-        method,
-        url,
-        headers: { host, 'x-dsh-plugin': '1', ...headers },
-        [Symbol.asyncIterator]: async function* () {
-            for (const chunk of chunks) yield chunk;
+        rpcId: 'rpc-1',
+        payload: {
+            sessionId: 's1',
+            mode: 'queue',
+            content: [
+                { type: 'text', text },
+                { type: 'image', mediaType, data, ...(name !== undefined ? { name } : {}) },
+            ],
         },
     };
 }
-
-/** A minimal ServerResponse stand-in capturing status and payload. */
-function fakeRes() {
-    let status = 0;
-    let payload = '';
-    return {
-        writeHead(code) {
-            status = code;
-        },
-        end(text) {
-            payload = text;
-        },
-        get status() {
-            return status;
-        },
-        get json() {
-            return payload ? JSON.parse(payload) : null;
-        },
-    };
-}
-
-/** A tiny but real PNG-ish byte payload (any non-empty bytes will do). */
-const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02, 0x03]);
 
 async function main() {
-    const tmp = await mkdtemp(path.join(tmpdir(), 'paste-image-test-'));
-    try {
-        const shell = denyingShell();
-        const ctx = fakeCtx({ cwd: tmp, shell });
+    // 1. Text-only model: first attempt rejected → images converted to markers
+    //    → retried with text-only content → success returned.
+    {
+        const ctx = fakeCtx({
+            promptImpl(request) {
+                const hasImage = request.payload.content.some((p) => p.type === 'image');
+                return hasImage
+                    ? modelDoesNotSupportImages(request)
+                    : { rpcId: request.rpcId, result: { ok: true, value: { accepted: true } } };
+            },
+        });
         apply(ctx, {});
-        assert.ok(ctx.route, 'apply() must register a route');
-        assert.equal(ctx.route.kind, 'prefix');
-        assert.equal(ctx.route.path, '/paste-image/api');
-        const handler = ctx.route.handler;
-
-        // 1. Happy path: the image lands at <cwd>/attachments/<ts>-<name> with
-        //    the exact decoded bytes — even though ctx.shell would deny it.
-        {
-            const res = fakeRes();
-            await handler(
-                jsonRequest({
-                    url: '/paste-image/api/save',
-                    body: {
-                        sessionId: 's1',
-                        name: 'shot (1).png',
-                        mediaType: 'image/png',
-                        data: PNG_BYTES.toString('base64'),
-                    },
-                }),
-                res,
-            );
-            assert.equal(res.status, 200);
-            const saved = res.json;
-            assert.ok(saved.path.startsWith(`${tmp}/attachments/`), `path in cwd: ${saved.path}`);
-            assert.ok(saved.path.endsWith('-shot__1_.png'), `sanitized name: ${saved.path}`);
-            assert.deepEqual(await readFile(saved.path), PNG_BYTES);
-            const entries = await readdir(path.join(tmp, 'attachments'));
-            assert.equal(entries.length, 1);
-            assert.equal(shell.calls.length, 0, 'write must NOT go through ctx.shell');
-            console.log('ok 1 — happy path writes via node:fs despite sandbox-denying shell');
-        }
-
-        // 2. Untrusted Host header is rejected before any handling.
-        {
-            const res = fakeRes();
-            await handler(
-                jsonRequest({
-                    url: '/paste-image/api/save',
-                    host: 'evil.example',
-                    body: { sessionId: 's1', name: 'a.png', mediaType: 'image/png', data: 'x' },
-                }),
-                res,
-            );
-            assert.equal(res.status, 403);
-            assert.equal(res.json.ok, false);
-            console.log('ok 2 — untrusted Host rejected (403)');
-        }
-
-        // 3. Non-POST method rejected.
-        {
-            const res = fakeRes();
-            await handler(
-                jsonRequest({ url: '/paste-image/api/save', method: 'GET', body: {} }),
-                res,
-            );
-            assert.equal(res.status, 405);
-            console.log('ok 3 — non-POST rejected (405)');
-        }
-
-        // 4. Unknown subroute rejected.
-        {
-            const res = fakeRes();
-            await handler(jsonRequest({ url: '/paste-image/api/other', body: {} }), res);
-            assert.equal(res.status, 404);
-            console.log('ok 4 — unknown route rejected (404)');
-        }
-
-        // 5. Validation errors surface as 400 with a readable message.
-        {
-            const res = fakeRes();
-            await handler(
-                jsonRequest({
-                    url: '/paste-image/api/save',
-                    body: { sessionId: 's1', name: 'a.png', mediaType: 'image/tiff', data: 'x' },
-                }),
-                res,
-            );
-            assert.equal(res.status, 400);
-            assert.match(res.json.error, /unsupported media type/);
-            console.log('ok 5 — unsupported media type rejected (400)');
-        }
-        {
-            const res = fakeRes();
-            await handler(
-                jsonRequest({
-                    url: '/paste-image/api/save',
-                    body: { sessionId: 's1', name: 'a.png', mediaType: 'image/png', data: '' },
-                }),
-                res,
-            );
-            assert.equal(res.status, 400);
-            assert.match(res.json.error, /empty image data/);
-            console.log('ok 6 — empty image data rejected (400)');
-        }
-        {
-            const res = fakeRes();
-            await handler(
-                jsonRequest({
-                    url: '/paste-image/api/save',
-                    body: { sessionId: 'nope', name: 'a.png', mediaType: 'image/png', data: 'x' },
-                }),
-                res,
-            );
-            assert.equal(res.status, 400);
-            assert.match(res.json.error, /unknown session/);
-            console.log('ok 7 — unknown session rejected (400)');
-        }
-
-        // 6. Oversized image (base64 of 30MiB+1 byte) rejected before writing.
-        {
-            const big = Buffer.alloc(30 * 1024 * 1024 + 1, 0x61);
-            const res = fakeRes();
-            await handler(
-                jsonRequest({
-                    url: '/paste-image/api/save',
-                    body: {
-                        sessionId: 's1',
-                        name: 'big.png',
-                        mediaType: 'image/png',
-                        data: big.toString('base64'),
-                    },
-                }),
-                res,
-            );
-            assert.equal(res.status, 400);
-            assert.match(res.json.error, /image too large/);
-            const entries = await readdir(path.join(tmp, 'attachments'));
-            assert.equal(entries.length, 1, 'oversized image must not be written');
-            console.log('ok 8 — oversized image rejected (400), nothing written');
-        }
-
-        // 7. Missing CSRF header is rejected before any handling.
-        {
-            const res = fakeRes();
-            await handler(
-                jsonRequest({
-                    url: '/paste-image/api/save',
-                    headers: { 'x-dsh-plugin': undefined },
-                    body: { sessionId: 's1', name: 'a.png', mediaType: 'image/png', data: 'x' },
-                }),
-                res,
-            );
-            assert.equal(res.status, 403);
-            assert.equal(res.json.ok, false);
-            console.log('ok 9 — missing CSRF header rejected (403)');
-        }
-
-        // 8. Default filename extension follows mediaType when name is empty.
-        {
-            const res = fakeRes();
-            await handler(
-                jsonRequest({
-                    url: '/paste-image/api/save',
-                    body: {
-                        sessionId: 's1',
-                        name: '',
-                        mediaType: 'image/webp',
-                        data: PNG_BYTES.toString('base64'),
-                    },
-                }),
-                res,
-            );
-            assert.equal(res.status, 200);
-            const saved = res.json;
-            assert.ok(saved.path.endsWith('.webp'), `expected .webp, got ${saved.path}`);
-            assert.deepEqual(await readFile(saved.path), PNG_BYTES);
-            console.log('ok 10 — empty name uses mediaType extension (.webp)');
-        }
-
-        console.log('\nall paste-image host tests passed');
-    } finally {
-        await rm(tmp, { recursive: true, force: true });
+        const request = imagePrompt({ name: 'shot.png' });
+        const result = await ctx.sessions.prompt(request);
+        assert.equal(result.result.ok, true, 'retry must succeed');
+        // saveImage was called with the decoded bytes + mediaType + name.
+        assert.equal(ctx.saveCalls.length, 1);
+        assert.equal(ctx.saveCalls[0].mediaType, 'image/png');
+        assert.equal(ctx.saveCalls[0].name, 'shot.png');
+        assert.equal(Buffer.from(ctx.saveCalls[0].data).toString('base64'), 'aGVsbG8=');
+        // The retried request has the marker text instead of the image block.
+        const retried = ctx.promptCalls[1];
+        assert.equal(retried.payload.content.length, 2);
+        assert.equal(retried.payload.content[0].type, 'text');
+        assert.equal(retried.payload.content[1].type, 'text');
+        assert.match(retried.payload.content[1].text, /^\[已粘贴图片: sha256:mock0+\]$/);
+        console.log('ok 1 — image converted to marker, retry succeeds');
     }
+
+    // 2. Model supports images: first attempt succeeds → no conversion, no retry.
+    {
+        const ctx = fakeCtx({
+            promptImpl(request) {
+                return { rpcId: request.rpcId, result: { ok: true, value: { accepted: true } } };
+            },
+        });
+        apply(ctx, {});
+        const request = imagePrompt();
+        const result = await ctx.sessions.prompt(request);
+        assert.equal(result.result.ok, true);
+        assert.equal(ctx.saveCalls.length, 0, 'no save when model accepts images');
+        assert.equal(ctx.promptCalls.length, 1, 'no retry when model accepts images');
+        console.log('ok 2 — image-capable model: no conversion');
+    }
+
+    // 3. Non-image rejection (e.g. too large) is NOT converted/retried.
+    {
+        const ctx = fakeCtx({
+            promptImpl(request) {
+                return {
+                    rpcId: request.rpcId,
+                    result: {
+                        ok: false,
+                        error: {
+                            code: 'attachment-error',
+                            message: 'Image exceeds the configured byte limit.',
+                            details: { reason: 'IMAGE_TOO_LARGE' },
+                        },
+                    },
+                };
+            },
+        });
+        apply(ctx, {});
+        const request = imagePrompt();
+        const result = await ctx.sessions.prompt(request);
+        assert.equal(result.result.ok, false);
+        assert.equal(result.result.error.details.reason, 'IMAGE_TOO_LARGE');
+        assert.equal(ctx.saveCalls.length, 0);
+        assert.equal(ctx.promptCalls.length, 1, 'must not retry on non-model rejection');
+        console.log('ok 3 — other rejections pass through untouched');
+    }
+
+    // 4. saveImage failure surfaces a PASTE_IMAGE_SAVE_FAILED error, no retry.
+    {
+        const ctx = fakeCtx({
+            promptImpl(request) {
+                return modelDoesNotSupportImages(request);
+            },
+        });
+        ctx.attachments.saveImage = async () => {
+            throw new Error('boom');
+        };
+        apply(ctx, {});
+        const request = imagePrompt();
+        const result = await ctx.sessions.prompt(request);
+        assert.equal(result.result.ok, false);
+        assert.equal(result.result.error.details.reason, 'PASTE_IMAGE_SAVE_FAILED');
+        assert.match(result.result.error.message, /boom/);
+        assert.equal(ctx.promptCalls.length, 1, 'no retry after save failure');
+        console.log('ok 4 — save failure surfaces clear error');
+    }
+
+    // 5. No apiProxy mounted: apply() exits silently without throwing.
+    {
+        const ctx = {
+            apiProxy: undefined,
+            get() {
+                return undefined;
+            },
+        };
+        assert.doesNotThrow(() => apply(ctx, {}));
+        console.log('ok 5 — missing apiProxy handled gracefully');
+    }
+
+    console.log('\nall paste-image host tests passed');
 }
 
 main().catch((error) => {

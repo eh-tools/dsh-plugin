@@ -1,7 +1,43 @@
-# tool-vision:本地识图工具
+# tool-vision:本地识图工具(粘贴图片)
 
-把本地图片发给本地 llama-server(OpenAI 兼容接口)上的多模态模型,返回模型对图片的描述。
-工具名 `vision`,供 DSH agent 调用(读图、OCR、版面理解、精细视觉描述)。
+把**粘贴在会话里的图片**(附件 id)发给本地 llama-server(OpenAI 兼容接口)或云端视觉
+模型,返回模型对图片的描述。工具名 `vision`,供 DSH agent 调用(读图、OCR、版面理解、
+精细视觉描述)。
+
+> **与旧版的区别**:旧版接受图片文件路径;新版改为接受**粘贴图片的附件 id**
+> (`sha256:…`),图片通过 DSH 的附件服务(`dsh-attachment-local`)读取,不再需要文件路径。
+
+## 工作原理
+
+```
+用户粘贴图片 ──▶ dsh-host-apiproxy 准入闸门(模型需声明 input: [text, image])
+                         │ 通过
+                         ▼
+              attachments 服务持久化(sha256 内容寻址)
+                         │
+                         ▼
+              会话日志记录 image block(含 attachmentId)
+                         │
+                         ▼
+              模型看到 image block,把 attachmentId 传给 vision 工具
+                         │
+                         ▼
+              工具:session.events 查 ref → attachments.readImage(ref)
+                  → base64 data URI → 视觉模型 → 文本描述
+```
+
+**关键前提**:当前模型必须在 `settings.yaml` 声明 `input: [text, image]`,否则宿主在
+持久化之前就拒绝粘贴,附件不会落盘,工具也就拿不到 attachmentId。
+
+```yaml
+# settings.yaml 示例
+llm-pi-ai:
+  providers:
+    tk-kimi:
+      models:
+        - id: kimi-k3
+          input: [text, image] # ← 关键:让粘贴通过准入闸门
+```
 
 ## 前置
 
@@ -42,7 +78,7 @@
 
 **on-demand 单次调用(低频 / 想省内存)**:配置 `autoStart: true`,不手动起服务。
 插件在每次调用前探测 `baseUrl`,不可达时用 `serverCommand` 自动拉起 llama-server,
-请求完成后按 `keepAliveMs` 退出(`0` = 用完即退,进程与内存随之释放;`>0` =
+请求完成后按 `keepAliveMs` 退出(`0` = 用完就退,进程与内存随之释放;`>0` =
 闲置 N 毫秒后退出,适合连续多次调用)。外部已有服务时优先复用,不重复拉起;
 插件 dispose 时会停掉自己拉起的进程。完整配置项见 `cordis.yml`。
 
@@ -116,7 +152,7 @@
 ## 开发与测试
 
 ```bash
-# 冒烟测试(内置 mock 服务器 + mock on-demand 拉起,无需真实模型)
+# 冒烟测试(内置 mock 服务器 + mock on-demand 拉起 + mock 附件服务,无需真实模型)
 pnpm test          # 或 node plugins/tool-vision/tests/smoke.mjs
 
 # 真实模型 e2e(两种模式)
@@ -129,9 +165,12 @@ just check
 
 ## 实现说明
 
-- **零依赖**:只用 Node 内置模块(`node:fs/promises`、`node:path`)与全局 `fetch`,
-  直接 `ctx.tools.register({...})` 原始注册,不 import 任何 `@deepseek-ai/*`,
-  因此可以从任意绝对路径挂载,不需要装依赖。
+- **零依赖**:只用 Node 内置模块与全局 `fetch`,直接 `ctx.tools.register({...})`
+  原始注册,不 import 任何 `@deepseek-ai/*`,因此可以从任意绝对路径挂载,不需要装依赖。
+- **附件读取**:`execute` 时在 `exec.agent.session.events` 中搜索匹配 `attachmentId`
+  的 image block,恢复完整的 `ImageAttachmentRef`(mediaType / bytes / width / height),
+  再调用 `ctx.get('attachments').readImage(ref, signal)` 读取经过校验的图片字节。
+  附件服务不可用时给出明确错误。
 - 请求体为 OpenAI `chat/completions` 格式:文本指令 + `image_url` data URI(base64 内联),
   `stream: false`;响应取 `choices[0].message.content`(兼容字符串与分块数组)。
 - `apiKey` 非空时,探测/模型列表/聊天补全请求都带 `Authorization: Bearer <key>`;
@@ -146,5 +185,7 @@ just check
 
 ## 已知限制
 
-- 图片体积上限默认 30 MiB(可配 `maxImageBytes`);单图路径入参,不支持 URL。
+- 图片来源仅限**会话中已粘贴的附件**(attachmentId);不再支持文件路径。如需分析磁盘
+  文件,先用 `read_image` 工具将文件读入会话,再调用 `vision`。
+- 粘贴图片要求当前模型声明 `input: [text, image]`;纯文本模型会被宿主闸门拒绝。
 - 每次调用是独立请求,llama-server 侧无会话记忆;多轮讨论需由 agent 自己带上下文。

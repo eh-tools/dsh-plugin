@@ -1,7 +1,7 @@
 {
   "name": "dsh-paste-image",
   "version": "0.1.0",
-  "description": "粘贴图片即保存到会话工作目录 — 静态双半插件(client 拦截粘贴 + host 落盘)",
+  "description": "让纯文本模型也能粘贴图片 — 宿主包装 apiProxy.sessions.prompt, 把 image block 转成附件 id 文本标记, 客户端保持原生粘贴",
   "type": "module",
   "main": "lib/index.js",
   "exports": {

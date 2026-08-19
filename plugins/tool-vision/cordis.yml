@@ -23,6 +23,29 @@
     # startupTimeoutMs: 120000
 ```
 
+## 工作原理:粘贴图片 → 附件 id → 视觉模型
+
+本工具不再接受图片文件路径,而是接受**粘贴图片的附件 id**。完整链路:
+
+1. **用户在 GUI 粘贴图片** → `dsh-host-apiproxy` 通过 `attachments` 服务
+   (`dsh-attachment-local`,sha256 内容寻址)持久化图片,在会话日志里记一条
+   携带 `ImageAttachmentRef`(attachmentId / mediaType / bytes / width / height)
+   的 image block。
+2. **准入闸门**:当前模型必须在 `settings.yaml` 声明 `input: [text, image]`,
+   否则宿主在持久化之前就拒绝粘贴。**只有声明了图片输入的模型才会让粘贴通过。**
+3. **模型看到 image block**(含 attachmentId)→ 把 `attachmentId` 传给 `vision` 工具。
+4. **工具执行**:
+   - 在 `exec.agent.session.events` 里搜索匹配 `attachmentId` 的 image block,
+     恢复完整的 `ImageAttachmentRef`;
+   - 调用 `ctx.attachments.readImage(ref)` 读取经过校验的图片字节;
+   - 把字节转成 base64 data URI,发给配置的视觉模型(本地 llama-server 或云端);
+   - 返回模型的文本描述。
+
+> **为什么需要声明 `input: [text, image]`?** 粘贴图片的准入由宿主闸门控制,
+> 与本插件无关。模型不声明图片输入时,粘贴在第一步就被拒绝,附件不会落盘,
+> 工具也就拿不到 attachmentId。声明后,图片进上下文 + 工具可用 attachmentId
+> 绕路到专用视觉模型,两条路都通。
+
 ## 配置项
 
 | 键 | 默认值 | 说明 |
@@ -74,8 +97,9 @@
 
 ## 工具参数(模型可见)
 
-- `image`(必填):图片路径,绝对路径优先,相对路径按进程工作目录解析。
+- `attachmentId`(必填):粘贴图片的附件 id(`sha256:…` 字符串)。图片必须已在当前
+  会话中(用户粘贴后产生)。
 - `prompt`(可选):本次调用的指令,覆盖 `defaultPrompt`。
 - `maxTokens`(可选):本次调用的生成上限,覆盖 `maxTokens`。
 
-工具名:`vision`。支持格式:PNG / JPEG / WebP / BMP / GIF。
+工具名:`vision`。支持的图片格式取决于附件服务(默认 PNG / JPEG / WebP / GIF)。

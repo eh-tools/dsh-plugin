@@ -1,12 +1,29 @@
 /**
  * Local vision tool for DeepSeek Harness.
  *
- * Registers one model-facing tool, `vision`, that sends a local image file to a
- * locally running llama-server (OpenAI-compatible chat completions endpoint) and
- * returns the vision model's description. The plugin is deliberately
- * dependency-free: it imports only Node builtins and the global `fetch`, and
- * registers the tool definition directly on `ctx.tools` (no `@deepseek-ai/*`
- * runtime imports), so it can be mounted from any location by absolute path.
+ * Registers one model-facing tool, `vision`, that takes an **attachment id**
+ * (from a pasted image) and sends the image bytes to a locally running or
+ * cloud OpenAI-compatible vision model, returning the model's description.
+ *
+ * ## Two paste paths — both produce an attachmentId the tool can read
+ *
+ * **Path A — image-capable model** (declares `input: [text, image]`):
+ * User pastes an image → DSH host admits it → `attachments.saveImage()`
+ * stores it → an image block with `attachmentId` enters the conversation.
+ * The tool finds the ref in `exec.agent.session.events` and reads verified
+ * bytes via `attachments.readImage(ref)`.
+ *
+ * **Path B — text-only model** (no image input declared):
+ * The `paste-image` plugin intercepts the paste in the browser capture phase
+ * (bypassing the host gate), saves the image through `attachments.saveImage()`,
+ * and inserts `[已粘贴图片: sha256:…]` as a text marker into the draft.  The
+ * model sees the marker, extracts the attachmentId, and passes it to this tool.
+ * Since no image block exists in session events, the tool falls back to reading
+ * the content-addressed file directly from the attachment store
+ * (`DSH_HOME/attachments/v1/objects/<hash[:2]>/<hash>`), detecting MIME from
+ * magic bytes.
+ *
+ * In both cases the agent only needs the attachmentId — never a file path.
  *
  * Mounting (inside any agent preset's `agent.cordis.yml`):
  *
@@ -31,7 +48,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { readFile, stat } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -40,16 +57,6 @@ export const name = 'tool-vision';
 
 /** The tool registry service must exist before this plugin activates. */
 export const inject = ['tools'];
-
-/** Image extension → MIME type, for the `image_url` data URI. */
-const MIME_BY_EXT = {
-  png: 'image/png',
-  jpg: 'image/jpeg',
-  jpeg: 'image/jpeg',
-  webp: 'image/webp',
-  bmp: 'image/bmp',
-  gif: 'image/gif',
-};
 
 /** Default endpoint of llama-server's OpenAI-compatible API. */
 const DEFAULT_BASE_URL = 'http://127.0.0.1:8080/v1';
@@ -198,19 +205,24 @@ export function apply(ctx, config = {}) {
   ctx.tools.register({
     name: 'vision',
     description:
-      'Analyze a local image file with the locally running vision model ' +
-      '(an OpenAI-compatible llama-server endpoint) and return its description. ' +
-      'Pass the path to the image and an optional instruction; the result is the ' +
-      "model's description of the image, suitable for understanding pictures, " +
+      'Analyze an image that was pasted into the conversation. ' +
+      'Pass the attachment id (the `sha256:…` value shown on the pasted image) ' +
+      'and an optional instruction; the image is sent to a vision model ' +
+      '(an OpenAI-compatible llama-server or cloud endpoint) and the result is ' +
+      "the model's description of the image, suitable for understanding pictures, " +
       'reading text inside images (OCR), layout analysis, and fine-grained visual detail. ' +
-      'Supported formats: PNG, JPEG, WebP, BMP, GIF.',
+      'Works with both image-capable models (image enters context natively) and ' +
+      'text-only models (the paste-image plugin saves the image to the attachment ' +
+      'store and inserts the attachment id as text).',
     parameters: {
       type: 'object',
       properties: {
-        image: {
+        attachmentId: {
           type: 'string',
           description:
-            'Absolute path to the image file to analyze. A relative path resolves against the process working directory.',
+            'The attachment id of a pasted image already in this conversation ' +
+            '(a `sha256:…` string). The image is read from the durable attachment ' +
+            'store and sent to the vision model.',
         },
         prompt: {
           type: 'string',
@@ -223,7 +235,7 @@ export function apply(ctx, config = {}) {
             "Optional cap on generated tokens for this call. Defaults to the plugin's maxTokens setting.",
         },
       },
-      required: ['image'],
+      required: ['attachmentId'],
       additionalProperties: false,
     },
     output: {
@@ -255,10 +267,10 @@ export function apply(ctx, config = {}) {
       card: 'generic',
       title: 'Analyze image',
       kind: 'other',
-      rawInput: typeof args.image === 'string' ? args.image : undefined,
+      rawInput: typeof args.attachmentId === 'string' ? args.attachmentId : undefined,
     }),
     async execute(args, exec) {
-      const imagePath = assertImagePath(args.image);
+      const attachmentId = assertAttachmentId(args.attachmentId);
       const instruction =
         typeof args.prompt === 'string' && args.prompt.trim() !== '' ? args.prompt : defaultPrompt;
       const tokenCap =
@@ -270,14 +282,13 @@ export function apply(ctx, config = {}) {
       try {
         await ensureServer();
         const startedAt = Date.now();
-        const { dataUrl, mime } = await readImage(imagePath, maxImageBytes);
+        const { dataUrl } = await readAttachmentImage(ctx, exec, attachmentId, maxImageBytes);
         const modelId =
           model === '' ? await resolveModel(baseUrl, timeoutMs, exec.signal, apiKey) : model;
         const text = await chatCompletion({
           baseUrl,
           model: modelId,
           dataUrl,
-          mime,
           instruction,
           maxTokens: tokenCap,
           timeoutMs,
@@ -291,6 +302,228 @@ export function apply(ctx, config = {}) {
     },
   });
 }
+
+// ---------------------------------------------------------------------------
+// Attachment resolution: pasted image → verified bytes → data URI
+// ---------------------------------------------------------------------------
+
+/**
+ * The `attachmentId` argument must be a non-empty string (typically
+ * `sha256:<64 hex chars>`).
+ */
+function assertAttachmentId(value) {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new Error('vision: `attachmentId` must be a non-empty string (e.g. "sha256:…")');
+  }
+  return value.trim();
+}
+
+/**
+ * Search one content-block array for an image block whose `attachmentId`
+ * matches `targetId`, also descending into nested `tool-result` blocks.
+ * @returns the `ImageAttachmentRef` object, or `undefined`.
+ */
+function imageBlockIn(content, targetId) {
+  if (!Array.isArray(content)) return undefined;
+  for (const block of content) {
+    if (typeof block !== 'object' || block === null || Array.isArray(block)) continue;
+    if (
+      block.type === 'image' &&
+      typeof block.attachment === 'object' &&
+      block.attachment !== null
+    ) {
+      if (String(block.attachment.attachmentId) === targetId) return block.attachment;
+    }
+    if (block.type === 'tool-result') {
+      const nested = imageBlockIn(block.content, targetId);
+      if (nested !== undefined) return nested;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Search every event carrier that can own model-visible content (direct
+ * `data.content`, `data.message.content`, and `data.inserted[]`) for an image
+ * block matching `targetId`.
+ * @returns the `ImageAttachmentRef`, or `undefined`.
+ */
+function imageInEvent(event, targetId) {
+  const data = event?.data;
+  if (data === undefined || data === null) return undefined;
+  const direct = imageBlockIn(data.content, targetId);
+  if (direct !== undefined) return direct;
+  if (data.message !== undefined) {
+    const wrapped = imageBlockIn(data.message.content, targetId);
+    if (wrapped !== undefined) return wrapped;
+  }
+  if (Array.isArray(data.inserted)) {
+    for (const message of data.inserted) {
+      const inserted = imageBlockIn(message.content, targetId);
+      if (inserted !== undefined) return inserted;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Resolve a pasted-image attachment id to its verified bytes and data URI.
+ *
+ * Two paths:
+ *
+ * 1. **Native flow** (image-capable model): the image entered the conversation
+ *    as an image block.  Search `exec.agent.session.events` for the matching
+ *    `ImageAttachmentRef`, then call `attachments.readImage(ref)` for verified
+ *    bytes.
+ *
+ * 2. **paste-image plugin flow** (text-only model): the paste-image plugin
+ *    intercepted the paste (bypassing the host gate), saved the image through
+ *    `attachments.saveImage()`, and inserted the attachmentId as a text marker.
+ *    The image is in the DSH attachment store but NOT in session events.  Fall
+ *    back to reading the content-addressed file directly from the store path
+ *    (`DSH_HOME/attachments/v1/objects/<hash[:2]>/<hash>`), detecting the MIME
+ *    type from magic bytes.
+ *
+ * @param {object} ctx - plugin context (for `ctx.get('attachments')`).
+ * @param {object} exec - tool execution context (for `exec.agent.session.events`).
+ * @param {string} attachmentId - the `sha256:…` id.
+ * @param {number} maxImageBytes - byte cap from plugin config.
+ * @returns {Promise<{ dataUrl: string, mediaType: string }>}
+ */
+async function readAttachmentImage(ctx, exec, attachmentId, maxImageBytes) {
+  const targetId = String(attachmentId);
+
+  // 1. Try the native flow: find the full ref from session events.
+  const agent = exec?.agent;
+  const events = agent?.session?.events;
+  let ref = undefined;
+  if (Array.isArray(events)) {
+    for (const event of events) {
+      ref = imageInEvent(event, targetId);
+      if (ref !== undefined) break;
+    }
+  }
+
+  if (ref !== undefined) {
+    // Native flow: use the attachments service to read verified bytes.
+    if (typeof ref.bytes === 'number' && ref.bytes > maxImageBytes) {
+      throw new Error(`vision: image too large: ${ref.bytes} bytes (limit ${maxImageBytes})`);
+    }
+    const attachments = ctx.get('attachments');
+    if (attachments === undefined) {
+      throw new Error('vision: no attachment service is mounted; cannot read pasted images.');
+    }
+    const stored = await attachments.readImage(ref, exec?.signal);
+    const mediaType = ref.mediaType || stored.ref?.mediaType || 'image/png';
+    const dataUrl = `data:${mediaType};base64,${Buffer.from(stored.data).toString('base64')}`;
+    return { dataUrl, mediaType };
+  }
+
+  // 2. Fallback: the paste-image plugin saved the image to the attachment
+  //    store but no image block exists in session events.  Read the
+  //    content-addressed file directly.
+  return readFromStore(ctx, targetId, maxImageBytes, exec?.signal);
+}
+
+/**
+ * Read an image directly from the DSH attachment store by content hash.
+ *
+ * The store layout is `<root>/objects/<sha256[:2]>/<sha256>` where `<root>` is
+ * `DSH_HOME/attachments/v1`.  We try `attachments.root` (LocalAttachmentStore
+ * exposes it) first, then fall back to resolving DSH_HOME from the environment.
+ *
+ * @returns {Promise<{ dataUrl: string, mediaType: string }>}
+ */
+async function readFromStore(ctx, attachmentId, maxImageBytes, signal) {
+  const hash = extractSha256(attachmentId);
+  if (hash === null) {
+    throw new Error(
+      `vision: attachment "${attachmentId}" is not in this session and does not ` +
+        'look like a valid sha256 attachment id.',
+    );
+  }
+
+  // Resolve the store root.
+  const attachments = ctx.get('attachments');
+  let root = undefined;
+  if (attachments !== undefined && typeof attachments.root === 'string') {
+    root = attachments.root;
+  } else {
+    const dshHome = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
+    root = path.join(dshHome, 'attachments', 'v1');
+  }
+  const filePath = path.join(root, 'objects', hash.slice(0, 2), hash);
+
+  let buffer;
+  try {
+    buffer = await readFile(filePath, { signal });
+  } catch (error) {
+    const code = error?.code;
+    if (code === 'ENOENT') {
+      throw new Error(
+        `vision: attachment "${attachmentId}" not found in the attachment store ` +
+          `(${filePath}). The image may not have been saved, or the store path is wrong.`,
+      );
+    }
+    throw new Error(`vision: failed to read attachment "${attachmentId}": ${error.message}`);
+  }
+
+  if (buffer.byteLength > maxImageBytes) {
+    throw new Error(`vision: image too large: ${buffer.byteLength} bytes (limit ${maxImageBytes})`);
+  }
+
+  const mediaType = detectImageMime(buffer);
+  if (mediaType === null) {
+    throw new Error(
+      `vision: attachment "${attachmentId}" is not a recognized image format ` +
+        '(expected PNG / JPEG / WebP / BMP / GIF).',
+    );
+  }
+
+  const dataUrl = `data:${mediaType};base64,${buffer.toString('base64')}`;
+  return { dataUrl, mediaType };
+}
+
+/**
+ * Extract the 64-char hex sha256 hash from an attachment id string.
+ * @returns {string|null} the hash, or null when the format is wrong.
+ */
+function extractSha256(attachmentId) {
+  const match = /^sha256:([a-f0-9]{64})$/i.exec(String(attachmentId));
+  return match ? match[1].toLowerCase() : null;
+}
+
+/** Image magic-byte signatures for MIME detection (fallback store read). */
+function detectImageMime(buf) {
+  const len = buf.length;
+  if (len >= 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
+    return 'image/png';
+  }
+  if (len >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) {
+    return 'image/jpeg';
+  }
+  if (
+    len >= 12 &&
+    buf.toString('ascii', 0, 4) === 'RIFF' &&
+    buf.toString('ascii', 8, 12) === 'WEBP'
+  ) {
+    return 'image/webp';
+  }
+  if (
+    len >= 6 &&
+    (buf.toString('ascii', 0, 6) === 'GIF87a' || buf.toString('ascii', 0, 6) === 'GIF89a')
+  ) {
+    return 'image/gif';
+  }
+  if (len >= 2 && buf[0] === 0x42 && buf[1] === 0x4d) {
+    return 'image/bmp';
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Config helpers
+// ---------------------------------------------------------------------------
 
 /** Trim trailing slashes and require an http(s) URL. */
 function normalizeBaseUrl(value) {
@@ -370,6 +603,10 @@ function authHeaders(apiKey) {
   return apiKey === '' ? {} : { authorization: 'Bearer ' + apiKey };
 }
 
+// ---------------------------------------------------------------------------
+// Server management (autoStart / on-demand llama-server)
+// ---------------------------------------------------------------------------
+
 /**
  * The default llama-server command, derived from `baseUrl` so a custom port in
  * the config is honored. Override via `config.serverCommand`.
@@ -434,74 +671,9 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** The `image` argument must be a non-empty string path. */
-function assertImagePath(value) {
-  if (typeof value !== 'string' || value.trim() === '') {
-    throw new Error('vision: `image` must be a non-empty path to an image file');
-  }
-  return path.resolve(value);
-}
-
-/**
- * Read and size-check the image, returning its data URI and MIME type.
- * @returns {Promise<{ dataUrl: string, mime: string }>}
- */
-async function readImage(imagePath, maxImageBytes) {
-  let info;
-  try {
-    info = await stat(imagePath);
-  } catch {
-    throw new Error(`vision: image not found: ${imagePath}`);
-  }
-  if (!info.isFile()) {
-    throw new Error(`vision: not a file: ${imagePath}`);
-  }
-  if (info.size > maxImageBytes) {
-    throw new Error(`vision: image too large: ${info.size} bytes (limit ${maxImageBytes})`);
-  }
-  const ext = path.extname(imagePath).slice(1).toLowerCase();
-  const mime = MIME_BY_EXT[ext];
-  if (!mime) {
-    throw new Error(
-      `vision: unsupported image type ".${ext}" (supported: ${Object.keys(MIME_BY_EXT).join(', ')})`,
-    );
-  }
-  const buffer = await readFile(imagePath);
-  assertImageSignature(buffer, mime);
-  return { dataUrl: `data:${mime};base64,${buffer.toString('base64')}`, mime };
-}
-
-/**
- * Verify the decoded file starts with the expected magic bytes for its
- * extension/MIME, so a renamed or corrupt file fails fast instead of being
- * forwarded to the vision backend with a misleading content type.
- */
-function assertImageSignature(buffer, mime) {
-  const len = buffer.length;
-  const ascii = (start, end) => buffer.toString('ascii', start, end);
-  const ok =
-    (mime === 'image/png' &&
-      len >= 8 &&
-      buffer[0] === 0x89 &&
-      buffer[1] === 0x50 &&
-      buffer[2] === 0x4e &&
-      buffer[3] === 0x47 &&
-      buffer[4] === 0x0d &&
-      buffer[5] === 0x0a &&
-      buffer[6] === 0x1a &&
-      buffer[7] === 0x0a) ||
-    (mime === 'image/jpeg' &&
-      len >= 3 &&
-      buffer[0] === 0xff &&
-      buffer[1] === 0xd8 &&
-      buffer[2] === 0xff) ||
-    (mime === 'image/webp' && len >= 12 && ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WEBP') ||
-    (mime === 'image/bmp' && len >= 2 && buffer[0] === 0x42 && buffer[1] === 0x4d) ||
-    (mime === 'image/gif' && len >= 6 && (ascii(0, 6) === 'GIF87a' || ascii(0, 6) === 'GIF89a'));
-  if (!ok) {
-    throw new Error(`vision: file content does not match image type "${mime}"`);
-  }
-}
+// ---------------------------------------------------------------------------
+// Vision model communication
+// ---------------------------------------------------------------------------
 
 /**
  * Resolve the model id: query GET {baseUrl}/models and use the first entry, or

@@ -15,15 +15,29 @@
  */
 
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { apply } from '../lib/index.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const TEST_IMAGE = path.join(ROOT, 'fixtures', 'vision_test.png');
+const TEST_ATTACHMENT_ID = 'sha256:e2e' + '0'.repeat(58);
 
 const ondemand = process.argv.includes('--ondemand');
 const baseUrl = process.argv.find((arg) => arg.startsWith('http')) ?? 'http://127.0.0.1:8080/v1';
+
+// Load the test image once and expose it through a mock attachment store + a
+// synthetic session event, mirroring how a pasted image reaches the tool at
+// runtime.
+const imageData = new Uint8Array(await readFile(TEST_IMAGE));
+const imageRef = {
+    attachmentId: TEST_ATTACHMENT_ID,
+    mediaType: 'image/png',
+    bytes: imageData.byteLength,
+    width: 4,
+    height: 4,
+};
 
 let registered;
 const disposers = [];
@@ -42,6 +56,20 @@ const ctx = {
     dispose() {
         for (const fn of disposers.splice(0)) fn();
     },
+    get(key) {
+        if (key === 'attachments') {
+            return {
+                imageLimits: {
+                    mediaTypes: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'],
+                    maxImageBytes: 30 * 1024 * 1024,
+                },
+                async readImage(ref) {
+                    return { ref, data: imageData };
+                },
+            };
+        }
+        return undefined;
+    },
 };
 
 apply(ctx, {
@@ -50,9 +78,29 @@ apply(ctx, {
     ...(ondemand ? { autoStart: true, keepAliveMs: 0, startupTimeoutMs: 180000 } : {}),
 });
 
+const exec = {
+    signal: new AbortController().signal,
+    agent: {
+        session: {
+            events: [
+                {
+                    type: 'user/message',
+                    seq: 0,
+                    data: {
+                        content: [
+                            { type: 'text', text: '请识别这张图片' },
+                            { type: 'image', attachment: imageRef },
+                        ],
+                    },
+                },
+            ],
+        },
+    },
+};
+
 const result = await registered.execute(
-    { image: TEST_IMAGE, prompt: '用中文简要描述这张图片的内容' },
-    { signal: new AbortController().signal },
+    { attachmentId: TEST_ATTACHMENT_ID, prompt: '用中文简要描述这张图片的内容' },
+    exec,
 );
 
 assert.equal(typeof result.text, 'string');

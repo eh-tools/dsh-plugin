@@ -1,68 +1,52 @@
-# paste-image:粘贴图片即存文件(DSH 静态双半插件)
+# paste-image:让纯文本模型也能粘贴图片(DSH 静态双半插件)
 
-在输入框 **Cmd+V / Ctrl+V 粘贴图片**(截图等)时,自动把图片字节保存到
-**当前会话工作目录的 `attachments/` 文件夹**,并把绝对路径追加进输入框草稿,
-形如:
-
-```
-[已粘贴图片: /Users/a1/workspace/xxx/attachments/1760000000000-shot.png]
-```
-
-这样 agent 看到路径后,就可以用本地 `tool-vision` 插件直接传该路径识别——
-完全绕开 DSH 主模型(DeepSeek)的 `inputModalities: ['text']` 图片检查。
+用户粘贴图片时,**输入框显示原生图片预览**(与支持图片的模型完全一致的体验),
+发送后图片自动进入 DSH 附件存储,模型收到的是 `[已粘贴图片: sha256:…]` 文本
+标记,可调用 `tool-vision` 插件把图片发给本地/云端视觉模型识别。
 
 ## 为什么需要它
 
 DSH 输入框原生支持粘贴图片(显示缩略图草稿),但发送时 host 会检查当前模型
-是否声明支持图片输入;DeepSeek 适配器只声明 `['text']`,所以带图消息在落盘前
-就被拒绝("当前模型不支持图片,请切换支持图片的模型")。粘贴的图片从未真正
-进入 DSH 附件存储。本插件在粘贴瞬间就把图片落盘成文件,让本地 vision 插件
-能读。
+是否声明支持图片输入(`input: [text, image]`)。纯文本模型(如 DeepSeek、
+glm-5.2)只声明文本,所以带图消息在落盘前就被拒绝
+(`MODEL_DOES_NOT_SUPPORT_IMAGES`)。
+
+本插件让纯文本模型也能粘贴图片:**客户端完全走原生粘贴**,宿主端负责转换。
 
 ## 工作流程
 
-1. 用户在输入框粘贴图片(文档级 capture 监听,优先于官方草稿处理)。
-2. 拦截默认行为,图片**不进入**官方草稿栏(避免发送时被模型检查拒绝)。
-3. 图片以 base64 经 `fetch POST /paste-image/api/save` 发给 Host(静态插件的
-   HTTP JSON 路由,替代动态插件的 `host.call` 私有 RPC)。
-4. Host 校验类型(png/jpeg/webp/gif)与大小(≤30MB),经 **node:fs 直写**落盘到
-   `<会话cwd>/attachments/<时间戳>-<文件名>`(不走代理沙箱的 `ctx.shell`——
-   那会以默认 read-only 模式运行, mkdir 被 seatbelt 以 EPERM 拒绝)。
-5. 返回绝对路径,Client 用 `inputActions.setDraft` 追加到草稿。
-6. agent 看到路径,调用 `tool-vision` 识别(需要 `vision` preset 或已挂载
-   tool-vision)。
+1. 用户粘贴图片 → DSH 原生输入框显示图片预览(**无任何文本标记**)。
+2. 用户发送 → 客户端以 image block 走 `session.prompt` RPC。
+3. 宿主闸门检查模型能力:
+   - **模型支持图片** → 图片以原生 image block 进入会话, 不做转换。
+   - **模型不支持图片** → 闸门返回 `MODEL_DOES_NOT_SUPPORT_IMAGES`。
+4. 本插件包装的 `apiProxy.sessions.prompt` 检测到该拒绝后:
+   - 把 image block 通过 `attachments.saveImage()` 持久化到 DSH 附件存储
+     (sha256 内容寻址, 与原生粘贴同一条存储路径);
+   - 把 image block 替换成 `[已粘贴图片: sha256:…]` 文本标记;
+   - 重试 prompt → 这次全是文本, 闸门放行。
+5. 模型看到文本标记, 把 attachmentId 传给 `tool-vision` 工具 → 工具从附件
+   存储读取图片字节 → 发给本地 llama-server / 云端视觉模型 → 返回描述。
 
-## 安装与自动加载(随 DSH 启动自动挂载)
+## 客户端为什么是空壳
 
-本插件已从动态插件改造为**静态双半 npm 包**(`dsh-paste-image`):host 半在
-`lib/index.js`,client 半在 `lib/client.js`(浏览器 bundle),包自带
-`cordis.patch.yml` 挂载层。安装后无需任何手动加载步骤,`dsh web` 每次启动
-自动挂载,无 Run 卡批准,重启不丢;client 改动走 HMR 热更新,host 改动才需重启。
+旧版 client 在文档捕获阶段拦截粘贴, 把图片存成文件、往草稿插路径文本。
+新版不再拦截: 原生粘贴流程已经能显示图片预览, 拦截反而破坏体验。
+转换逻辑全部在宿主端, 客户端保持原生。
 
-```sh
-# 在仓库根目录执行(link: 本地安装, 无需发布到 npm;<repo-abs-path> 换成仓库绝对路径)
+## 挂载
+
+```bash
 dsh plugin --profile web add link:<repo-abs-path>/plugins/paste-image
 ```
 
-装完**重启 DSH 并硬刷新浏览器**(Cmd/Ctrl+Shift+R)。
+挂载后随 web profile 启动自动加载, 无需动态插件流程。
 
-- 更新: `git pull` 后重跑上面同一命令(CLI 会把已安装的 link 依赖重新链接);
-  只改 `lib/client.js` 时刷新浏览器即可,改 `lib/index.js` 才需要重启。
-- 卸载: `dsh plugin --profile web remove dsh-paste-image`。
-- 原理: 包声明了 `dsh.bundle.patch`,CLI 的 bundle 协调会自动把它加进 profile
-  的 `dsh.profile.bundles`,profile boot 时合并本包的 `cordis.patch.yml` 挂载行;
-  `dsh.client` 声明让 clientModules 把浏览器半编入 `__DSH_BOOT__` 图。
+## 开发与测试
 
-| 文件               | 内容                                                                                       |
-| ------------------ | ------------------------------------------------------------------------------------------ |
-| `lib/index.js`     | **Host 半(静态)** — 校验 + node:fs 落盘, `ctx.webServer` 暴露 `POST /paste-image/api/save` |
-| `lib/client.js`    | **Client 半(静态 bundle)** — capture 拦截粘贴, fetch 上传, 路径写入 draft                  |
-| `package.json`     | npm 包声明(`dsh.bundle.patch` + `dsh.client`)                                              |
-| `cordis.patch.yml` | 挂载层(profile boot 时自动合并)                                                            |
-| `manifest.json`    | kind / files / install, 供重建使用                                                         |
+```bash
+node plugins/paste-image/tests/save.test.mjs
+```
 
-## 备注
-
-- 落盘目录固定在会话 cwd 的 `attachments/`,文件名带时间戳防冲突。
-- 文本粘贴不受影响(无图片文件时不拦截)。
-- 移除: `dsh plugin --profile web remove dsh-paste-image` 后重启 DSH。
+覆盖: 文本模型转换+重试、视觉模型不转换、非模型类拒绝透传、
+保存失败报错、apiProxy 缺失时优雅退出。
