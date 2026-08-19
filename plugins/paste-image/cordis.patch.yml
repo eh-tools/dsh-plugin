@@ -1,5 +1,11 @@
 # dsh-paste-image bundle patch(本包自带的挂载层)
 #
+# 让纯文本模型也能粘贴图片:
+#   - 客户端不拦截粘贴, 完全走 DSH 原生粘贴(图片预览 + 原生发送)。
+#   - 宿主端包装 apiProxy.sessions.prompt: 当模型不支持图片输入时, 把 image
+#     block 持久化到附件存储并替换成 [已粘贴图片: sha256:…] 文本标记后重试,
+#     模型看到标记后调用 tool-vision 识图。
+#
 # 用官方 CLI 安装后 ——
 #
 #   dsh plugin --profile web add link:<本目录绝对路径>
