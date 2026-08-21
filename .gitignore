@@ -26,6 +26,9 @@ coverage/
 # paste-image 插件落盘目录(会话 cwd 下的 attachments/ 由插件自建,这里防根目录误提交)
 attachments/
 
+# ---- Firecrawl 抓取产物 ----
+.firecrawl/
+
 # ---- Node ----
 node_modules/
 *.tsbuildinfo
