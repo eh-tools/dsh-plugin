@@ -1,0 +1,13 @@
+# dsh-file-git-explorer bundle patch(本包自带的挂载层)
+#
+# 安装 ——
+#
+#   dsh plugin --profile web add link:<本目录绝对路径>
+#
+# CLI 会协调 dsh.profile.bundles, 发现本包声明了 dsh.bundle.patch 后把它追加进
+# bundle 栈; profile boot 时本文件作为一个 patch 层合并(与手动在
+# ~/.dsh/profiles/web/cordis.patch.yml 写挂载行等价), host 半随 DSH 启动自动挂载。
+# 不要同时再手动挂载本插件, 否则会双挂载(两个 Node 半)。
+- insert:
+    - id: file-git-explorer
+      name: 'dsh-file-git-explorer'

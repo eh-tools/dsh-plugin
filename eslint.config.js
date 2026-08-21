@@ -18,6 +18,7 @@ export default [
       // require / module 不在 node globals 里, no-undef 检查无意义)
       'plugins/ds-balance/lib/client.js',
       'plugins/paste-image/lib/client.js',
+      'plugins/file-git-explorer/lib/client.js',
     ],
   },
   js.configs.recommended,

@@ -76,6 +76,7 @@ function makeEnv({
     usageFails = false,
     balanceFails = false,
     base = 'https://api.deepseek.com',
+    userToken,
 } = {}) {
     const routes = [];
     globalThis.fetch = async (url) => {
@@ -99,6 +100,9 @@ function makeEnv({
             if (ref === 'DEEPSEEK_API_KEY') return { value: 'sk-test-123' };
             if (ref === 'DEEPSEEK_BASE_URL') {
                 return base === 'https://api.deepseek.com' ? undefined : { value: base };
+            }
+            if (ref === 'DEEPSEEK_USER_TOKEN') {
+                return userToken === undefined ? undefined : { value: userToken };
             }
             return undefined;
         },
@@ -326,6 +330,64 @@ function makeEnv({
     if (r.usage.month.requests !== null) throw new Error('month.requests should be null');
     if (r.usage.today.response !== 1500) throw new Error('today.response != 1500');
     console.log('7 usage without REQUEST → requests=null ok');
+}
+
+// 8. usage/amount(userToken)路径: days[].date 按 UTC 切天, today 按当前 UTC 日匹配
+//    (回归: 此前用本地日期匹配, UTC+8 用户每天本地 00:00~08:00 显示今日 0)
+{
+    const utcDay = (d) => d.toISOString().slice(0, 10);
+    const todayU = utcDay(new Date());
+    const yestU = utcDay(new Date(Date.now() - 86400000));
+    const call = makeEnv({
+        userToken: 'tok-abc',
+        usageBody: () =>
+            JSON.stringify({
+                code: 0,
+                msg: 'success',
+                data: {
+                    biz_code: 0,
+                    biz_msg: 'success',
+                    biz_data: {
+                        total: [],
+                        days: [
+                            {
+                                date: yestU,
+                                data: [
+                                    {
+                                        model: 'm',
+                                        usage: [
+                                            { type: 'REQUEST', amount: '300' },
+                                            { type: 'RESPONSE_TOKEN', amount: '50' },
+                                        ],
+                                    },
+                                ],
+                            },
+                            {
+                                date: todayU,
+                                data: [
+                                    {
+                                        model: 'm',
+                                        usage: [
+                                            { type: 'REQUEST', amount: '10' },
+                                            { type: 'PROMPT_CACHE_HIT_TOKEN', amount: '100' },
+                                        ],
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                },
+            }),
+    });
+    const r = await call();
+    if (!r.ok) throw new Error('expected ok (usage/amount path)');
+    if (r.usage === null) throw new Error('expected usage');
+    if (r.usage.today.requests !== 10)
+        throw new Error('today.requests != 10, got ' + r.usage.today.requests);
+    if (r.usage.today.promptCacheHit !== 100) throw new Error('today.hit != 100');
+    if (r.usage.month.requests !== 310)
+        throw new Error('month.requests != 310, got ' + r.usage.month.requests);
+    console.log('8 usage/amount(userToken) → today matched by UTC date ok');
 }
 
 console.log('\nALL HOST LOGIC CHECKS PASSED');

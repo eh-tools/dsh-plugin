@@ -14,6 +14,8 @@ test:
     node plugins/tool-vision/tests/smoke.mjs
     node plugins/paste-image/tests/save.test.mjs
     node scripts/verify-ds-balance.mjs
+    node plugins/file-git-explorer/tests/git.test.mjs
+    node plugins/file-git-explorer/tests/verify.mjs
 
 # ---- E2E (需真实 llama-server, 仅手动) ----
 e2e:
