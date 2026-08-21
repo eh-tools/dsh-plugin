@@ -162,7 +162,7 @@ agent 会自动调用;支持 PNG / JPEG / WebP / BMP / GIF。
 
 **左右树演示:**
 
-<video controls width="100%" src="png/tree.mp4"></video>
+![左右树演示](png/tree.mp4)
 
 ## 常见问题速查
 
