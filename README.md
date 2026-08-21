@@ -162,7 +162,7 @@ agent 会自动调用;支持 PNG / JPEG / WebP / BMP / GIF。
 
 **左右树演示:**
 
-![左右树演示](png/tree.mp4)
+<video controls width="100%" src="https://github.com/eh-tools/dsh-plugin/raw/main/png/tree.mp4"></video>
 
 ## 常见问题速查
 
