@@ -1,0 +1,30 @@
+/* ---------- 鲸鱼层（注册在 shell.overlay 内，frame-wide 浮层） ---------- */
+.dsh-deepseek-whale {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.dsh-deepseek-whale-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* 粒子鲸鱼淡入 */
+@keyframes dsh-deepseek-enter {
+  0% { opacity: 0; filter: blur(20px); }
+  100% { opacity: 1; filter: blur(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dsh-deepseek-whale { animation: none; }
+}

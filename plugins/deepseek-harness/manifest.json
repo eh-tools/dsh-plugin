@@ -1,0 +1,7 @@
+{
+  "kind": "static",
+  "name": "dsh-deepseek-harness",
+  "purpose": "复刻 deepseek.com/harness 设计语言：官方 WebGL2 粒子鲸鱼 + 主题 token 皮肤，设置面板一个主开关（跨重启持久化）。静态双半包，随 web profile 启动自动加载。",
+  "files": ["package.json", "cordis.patch.yml", "lib/index.js", "lib/client.js", "src/", "scripts/build.mjs"],
+  "install": "dsh plugin --profile web add link:<repo-abs-path>/plugins/deepseek-harness"
+}

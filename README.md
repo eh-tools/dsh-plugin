@@ -16,6 +16,7 @@ DSH 的插件生态还在早期,本仓库把几个日常高频缺口做成了独
 | `tool-vision`       | DeepSeek 模型不支持图片输入              | 本地识图工具,把图片交给本地视觉模型(llama-server / LM Studio / Ollama)描述 |
 | `paste-image`       | 粘贴图片发送会被"当前模型不支持图片"拒绝 | 粘贴瞬间把图片落盘成文件,路径写入草稿,配合 `tool-vision` 实现看图          |
 | `file-git-explorer` | 看不到项目文件和 git 状态                | 左右树浏览:左侧文件树(可见/隐藏/忽略三区)+ 右侧 git 树(分支/变更/diff)     |
+| `deepseek-harness`  | 想要粒子鲸鱼背景                | 蓝色粒子鲸鱼(DeepSeek 品牌蓝)默认开启,沿用官方明/暗/系统主题;`?dshtest=1` 隐藏式诊断面板 |
 
 > `tool-vision` + `paste-image` 合起来的效果:你在输入框粘贴一张截图,agent 就能"看到"并描述它——完全绕开 DeepSeek 模型的图片输入限制。
 
@@ -33,6 +34,7 @@ cd dsh-plugin
 dsh plugin --profile web add link:<repo-abs-path>/plugins/ds-balance
 dsh plugin --profile web add link:<repo-abs-path>/plugins/paste-image
 dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer
+dsh plugin --profile web add link:<repo-abs-path>/plugins/deepseek-harness
 ```
 
 装完**重启 DSH 并硬刷新浏览器**(Cmd/Ctrl+Shift+R)生效。
