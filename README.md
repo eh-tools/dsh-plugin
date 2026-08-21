@@ -28,10 +28,6 @@ DSH 的插件生态还在早期,本仓库把几个日常高频缺口做成了独
 
 ![主界面动效](png/home_page.gif)
 
-### 文件树 / Git 树演示
-
-<video controls width="100%" src="png/tree.mp4"></video>
-
 ## 快速上手
 
 前置:Node.js >= 20、已安装 DeepSeek Harness(`dsh` CLI)及 `web` profile。
@@ -163,6 +159,10 @@ agent 会自动调用;支持 PNG / JPEG / WebP / BMP / GIF。
 - 面板宽度 / 开合 / 上次查看分支按仓库根缓存,切回自动恢复。
 
 详见 `plugins/file-git-explorer/README.md`。
+
+**左右树演示:**
+
+<video controls width="100%" src="png/tree.mp4"></video>
 
 ## 常见问题速查
 
