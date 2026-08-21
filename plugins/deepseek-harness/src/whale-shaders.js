@@ -181,8 +181,8 @@
     "out vec4 fragColor;\n" +
     "void main() {\n" +
     "  float dist = length(vWorldPos.xy);\n" +
-    "  float glow = smoothstep(8.0, 0.0, dist) * 0.28 * vAssembly;\n" +
-    "  float baseAlpha = mix(0.52, 0.74, vAssembly);\n" +
+    "  float glow = smoothstep(8.0, 0.0, dist) * 0.22 * vAssembly;\n" +
+    "  float baseAlpha = mix(0.4, 0.58, vAssembly);\n" +
     "  float alpha = vOpacity * (baseAlpha + glow);\n" +
     "  float shimmer = sin(uTime * 1.5 + vWorldPos.x * 5.0 + vWorldPos.y * 3.0) * 0.08 + 0.92;\n" +
     "  alpha *= shimmer * clamp(vLight * 0.85 + 0.25, 0.3, 1.0);\n" +

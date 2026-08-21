@@ -95,14 +95,14 @@ function initWhale(shared) {
           px.push(sx + drift); py.push(sy);
         }
         // 邻近连线（简化）
-        g.strokeStyle = "rgba(103,153,254," + (0.07 * D).toFixed(3) + ")";
+        g.strokeStyle = "rgba(103,153,254," + (0.05 * D).toFixed(3) + ")";
         g.lineWidth = 0.5;
         for (var a = 0; a < px.length; a++) {
           for (var b = a + 1; b < px.length; b++) {
             var dx = px[a]-px[b], dy = py[a]-py[b];
             var d2 = dx*dx + dy*dy;
             if (d2 < 12000 && d2 > 1) {
-              var al = (1 - d2/12000) * 0.07 * D;
+              var al = (1 - d2/12000) * 0.05 * D;
               g.strokeStyle = "rgba(103,153,254," + al.toFixed(3) + ")";
               g.beginPath(); g.moveTo(px[a], py[a]); g.lineTo(px[b], py[b]); g.stroke();
             }
@@ -114,7 +114,7 @@ function initWhale(shared) {
           var md = Math.sqrt(mx*mx+my*my), PUSH = 80;
           var fx = px[k], fy = py[k];
           if (md < PUSH && md > 0.001) { var f = (PUSH-md)/PUSH; fx += (mx/md)*f*14; fy += (my/md)*f*14; }
-          g.fillStyle = "rgba(103,153,254," + (0.26 * D).toFixed(3) + ")";
+          g.fillStyle = "rgba(103,153,254," + (0.2 * D).toFixed(3) + ")";
           g.beginPath(); g.arc(fx, fy, 1.5 + Math.random()*0.8, 0, Math.PI*2); g.fill();
         }
       }
@@ -317,8 +317,8 @@ function initWhale(shared) {
       var ux = inv[0]*b.x + inv[4]*b.y + inv[12];
       var uy = inv[1]*b.x + inv[5]*b.y + inv[13];
       gl.uniform2f(u.uMouse, ux, uy);
-      // 颜色：DeepSeek 品牌蓝（#6799FE 附近），随组装进度 D 淡入，明暗主题皆可辨
-      gl.uniform3f(u.uColor, 0.30 * D, 0.55 * D, 1.0 * D);
+      // 颜色：DeepSeek 品牌蓝（稍暗一档），随组装进度 D 淡入，明暗主题皆可辨
+      gl.uniform3f(u.uColor, 0.26 * D, 0.47 * D, 0.9 * D);
       // 点尺寸：官方 BoxGeometry 0.065 单位 × 实例缩放 × 组缩放（提升粒子点阵清晰度）
       gl.uniform1f(u.uPointScale, 0.065 * scale * (canvas.height / (2 * HALF_H)));
 
