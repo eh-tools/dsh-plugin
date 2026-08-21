@@ -44,20 +44,23 @@ window.__ModuleLoader__.load({
       var STYLE_CSS =
         '.fge-wrap{position:absolute;width:0;height:0;pointer-events:none;font-family:var(--ds-font-family,system-ui);}' +
         '.fge-panel{position:fixed;pointer-events:auto;display:flex;flex-direction:column;box-sizing:border-box;' +
-        'background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);border-radius:10px;' +
+        'background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l2);border-radius:10px;' +
         'box-shadow:var(--dsw-shadow-lv2,rgba(0,0,0,.18)) 0 6px 24px;color:var(--dsw-alias-label-primary);' +
+        '--dsh-scrollbar-thumb:color-mix(in srgb,var(--dsw-alias-label-tertiary) 28%,transparent);' +
+        '--dsh-scrollbar-thumb-hover:color-mix(in srgb,var(--dsw-alias-label-tertiary) 45%,transparent);' +
         'font-size:12px;line-height:1.45;z-index:30;}' +
         '.fge-strip{position:fixed;pointer-events:auto;display:flex;align-items:center;justify-content:center;' +
-        'background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);border-radius:8px;' +
-        'box-shadow:var(--dsw-shadow-lv2,rgba(0,0,0,.18)) 0 4px 14px;color:var(--dsw-alias-label-secondary);' +
+        'background:transparent;border:0;color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));' +
         'cursor:pointer;z-index:30;}' +
-        '.fge-strip:hover{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-border-l2);}' +
+        '.fge-strip:hover{color:var(--dsw-alias-label-primary);}' +
         '.fge-panel-head{display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid var(--dsw-alias-border-l1);' +
         'flex:none;color:var(--dsw-alias-label-primary);font-weight:600;}' +
-        '.fge-panel-title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
-        '.fge-panel-sub{flex:none;color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));font-weight:400;' +
-        'font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px;}' +
-        '.fge-btn{flex:none;border:1px solid transparent;background:transparent;color:var(--dsw-alias-label-secondary);' +
+        '.fge-panel-title{flex:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:18px;}' +
+        '.fge-panel-sub{flex:1;min-width:0;color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));font-weight:400;' +
+        'font-size:11px;line-height:18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;}' +
+        '.fge-panel-sub:hover{color:var(--dsw-alias-label-primary);}' +
+        '.fge-panel-sub.fge-copied{color:var(--dsw-alias-state-success-primary);}' +
+        '.fge-btn{flex:none;display:inline-flex;align-items:center;justify-content:center;gap:4px;border:1px solid transparent;background:transparent;color:var(--dsw-alias-label-secondary);' +
         'border-radius:6px;padding:2px 6px;font-size:12px;cursor:pointer;line-height:1.4;}' +
         '.fge-btn:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);}' +
         '.fge-btn:disabled{opacity:.35;cursor:not-allowed;}' +
@@ -65,7 +68,12 @@ window.__ModuleLoader__.load({
         '.fge-section{display:flex;flex-direction:column;min-height:0;}' +
         '.fge-section-head{flex:none;padding:3px 8px;font-size:11px;color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));' +
         'border-top:1px solid var(--dsw-alias-border-l1);}' +
-        '.fge-section-body{flex:1;overflow:auto;min-height:0;padding:2px 0;}' +
+        '.fge-section-body{flex:1;overflow:auto;min-height:0;padding:2px 0;' +
+        'scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--dsw-alias-label-tertiary) 28%,transparent) transparent;}' +
+        '.fge-section-body::-webkit-scrollbar,.fge-changes::-webkit-scrollbar,.fge-float-body::-webkit-scrollbar{width:5px;height:5px;}' +
+        '.fge-section-body::-webkit-scrollbar-track,.fge-changes::-webkit-scrollbar-track,.fge-float-body::-webkit-scrollbar-track{background:transparent;}' +
+        '.fge-section-body::-webkit-scrollbar-thumb,.fge-changes::-webkit-scrollbar-thumb,.fge-float-body::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--dsw-alias-label-tertiary) 22%,transparent);border-radius:3px;}' +
+        '.fge-section-body::-webkit-scrollbar-thumb:hover,.fge-changes::-webkit-scrollbar-thumb:hover,.fge-float-body::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb,var(--dsw-alias-label-tertiary) 40%,transparent);}' +
         '.fge-tree{padding:0;}' +
         '.fge-node{display:flex;align-items:center;gap:4px;padding:2px 6px;cursor:pointer;white-space:nowrap;' +
         'color:var(--dsw-alias-label-secondary);border-radius:4px;}' +
@@ -81,7 +89,7 @@ window.__ModuleLoader__.load({
         '.fge-branch:hover{background:var(--dsw-alias-bg-layer-2);}' +
         '.fge-branch-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;}' +
         '.fge-branch-caret{color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));}' +
-        '.fge-branch-menu{position:absolute;left:6px;right:6px;top:30px;z-index:40;background:var(--dsw-alias-bg-overlay);' +
+        '.fge-branch-menu{position:absolute;right:calc(100% + 8px);top:30px;width:280px;max-width:60vw;z-index:40;background:var(--dsw-alias-bg-overlay);' +
         'border:1px solid var(--dsw-alias-border-l2);border-radius:8px;box-shadow:var(--dsw-shadow-lv2,rgba(0,0,0,.25)) 0 8px 28px;' +
         'max-height:220px;overflow:auto;padding:4px;}' +
         '.fge-branch-group{font-size:10px;color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));' +
@@ -92,7 +100,8 @@ window.__ModuleLoader__.load({
         '.fge-branch-item.fge-branch-current{color:var(--dsw-alias-brand-primary);font-weight:600;}' +
         '.fge-branch-item.fge-branch-viewed{color:var(--dsw-alias-state-warn-primary);}' +
         '.fge-branch-mark{margin-left:auto;font-size:10px;}' +
-        '.fge-changes{flex:1;overflow:auto;min-height:0;padding:2px 0;}' +
+        '.fge-changes{flex:1;overflow:auto;min-height:0;padding:2px 0;' +
+        'scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--dsw-alias-label-tertiary) 28%,transparent) transparent;}' +
         '.fge-change{display:flex;align-items:center;gap:6px;padding:2px 8px;cursor:pointer;white-space:nowrap;' +
         'color:var(--dsw-alias-label-secondary);border-radius:4px;}' +
         '.fge-change:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);}' +
@@ -109,10 +118,13 @@ window.__ModuleLoader__.load({
         '.fge-float{position:fixed;pointer-events:auto;display:flex;flex-direction:column;box-sizing:border-box;' +
         'background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l2);border-radius:10px;' +
         'box-shadow:var(--dsw-shadow-lv3,rgba(0,0,0,.3)) 0 12px 40px;color:var(--dsw-alias-label-primary);' +
+        '--dsh-scrollbar-thumb:color-mix(in srgb,var(--dsw-alias-label-tertiary) 28%,transparent);' +
+        '--dsh-scrollbar-thumb-hover:color-mix(in srgb,var(--dsw-alias-label-tertiary) 45%,transparent);' +
         'font-size:12px;overflow:hidden;z-index:40;}' +
         '.fge-float-head{display:flex;align-items:center;gap:6px;padding:6px 10px;border-bottom:1px solid var(--dsw-alias-border-l1);flex:none;}' +
         '.fge-float-title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;}' +
-        '.fge-float-body{flex:1;overflow:auto;min-height:0;padding:8px 10px;}' +
+        '.fge-float-body{flex:1;overflow:auto;min-height:0;padding:8px 10px;' +
+        'scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--dsw-alias-label-tertiary) 28%,transparent) transparent;}' +
         '.fge-pre{margin:0;font-family:Consolas,Menlo,monospace;font-size:12px;line-height:1.5;white-space:pre;' +
         'color:var(--dsw-alias-label-primary);}' +
         '.fge-ln{display:inline-block;width:3ch;text-align:right;margin-right:10px;user-select:none;' +
@@ -122,12 +134,15 @@ window.__ModuleLoader__.load({
         '.fge-tok-str{color:var(--dsw-alias-state-success-primary);}' +
         '.fge-tok-cmt{color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));font-style:italic;}' +
         '.fge-tok-num{color:var(--dsw-alias-state-warn-primary);}' +
+        '.fge-tok-fn{color:color-mix(in srgb,var(--dsw-alias-brand-primary) 55%,var(--dsw-alias-state-success-primary));}' +
+        '.fge-tok-type{color:color-mix(in srgb,var(--dsw-alias-state-success-primary) 55%,var(--dsw-alias-brand-primary));}' +
         '.fge-diff-add{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 12%,transparent);color:var(--dsw-alias-label-primary);}' +
         '.fge-diff-del{background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 12%,transparent);color:var(--dsw-alias-label-primary);}' +
-        '.fge-diff-hunk{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-brand-primary);}' +
+        '.fge-diff-hunk{background:color-mix(in srgb,var(--dsw-alias-bg-layer-2) 55%,transparent);color:var(--dsw-alias-brand-primary);}' +
         '.fge-diff-meta{color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));}' +
         '.fge-resize{position:absolute;top:0;bottom:0;width:6px;cursor:col-resize;z-index:35;}' +
-        '.fge-resize:hover{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 25%,transparent);}' +
+        '.fge-resize::after{content:"";position:absolute;top:0;bottom:0;left:50%;width:2px;margin-left:-1px;background:transparent;transition:background .15s;}' +
+        '.fge-resize:hover::after{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 14%,transparent);}' +
         '.fge-resize-left{right:-3px;}' +
         '.fge-resize-right{left:-3px;}';
       var styleTag = null;
@@ -185,16 +200,18 @@ window.__ModuleLoader__.load({
 
       // ---- 几何: 稳定 data 属性锚点 ----
       // top   = [data-conversation-scroll] 顶部(== header/tablist 边框线)
-      // bottom= [data-composer-card] 底部
+      // bottom= 滚动容器底边(对话列底, 统一基准):
+      //        会话态 composer 虽 sticky 于列底, 但其内层卡片自带 8px 底部留白,
+      //        若以它为底边会让面板上下边距不对称、整体偏上; 首页(hero)态同理。
+      //        面板因此以「列顶 + 对称边距 / 列底 - 对称边距」垂直居中。
       // left/right = 对话滚动容器左右缘(自动跟随应用侧边栏折叠与 details 列)
       // 对话列宽 = --dsh-chat-content-width(定义在会话根, 滚动容器可继承)
       function measureGeometry() {
         var scrollBody = document.querySelector('[data-conversation-scroll]');
         if (!scrollBody) return null;
-        var composer = document.querySelector('[data-composer-card="true"]');
         var rect = scrollBody.getBoundingClientRect();
         var top = rect.top;
-        var bottom = composer ? composer.getBoundingClientRect().bottom : window.innerHeight;
+        var bottom = rect.bottom;
         var contentW =
           parseFloat(getComputedStyle(scrollBody).getPropertyValue('--dsh-chat-content-width')) ||
           748;
@@ -246,15 +263,35 @@ window.__ModuleLoader__.load({
 
       // ---- 迷你语法高亮(逐行扫描, 不跨行) ----
       var KEYWORD_SET = {};
+      var TYPE_SET = {};
       (function () {
-        var words = (
+        // 关键字(控制流 / 声明 / 操作符词): 覆盖常见语言
+        var kw = (
           'const let var function return if else for while do switch case break continue new class extends ' +
-          'import export from default async await try catch finally throw typeof instanceof in of this null true false ' +
-          'undefined def lambda fn pub struct enum impl trait type interface namespace package public private protected ' +
-          'static readonly yield delete void super get set as is where None True False self cls print require module ' +
-          'exports describe it test expect and or not def match use move borrow loop match async mut ref fn'
+          'import export from default async await yield try catch finally throw typeof instanceof in of this ' +
+          'void delete super get set as is where null true false undefined ' +
+          'def lambda fn pub struct enum impl trait type interface namespace package public private protected ' +
+          'static readonly match use move borrow loop mut ref impl ' +
+          'None True False self cls ' +
+          'func defer go chan select map range goroutine ' +
+          'public protected static final abstract synchronized throws extends implements new ' +
+          'echo print include require exit die ' +
+          'SELECT FROM WHERE INSERT INTO UPDATE DELETE CREATE TABLE JOIN INNER LEFT RIGHT GROUP BY ORDER HAVING LIMIT ' +
+          'if else fi then elif do done esac ' +
+          'and or not in is'
         ).split(' ');
-        for (var i = 0; i < words.length; i++) KEYWORD_SET[words[i]] = true;
+        // 常见内建/类类型
+        var types = (
+          'String Number Boolean Object Array Function Promise Map Set Date Error RegExp Symbol BigInt ' +
+          'Buffer Stream EventEmitter ' +
+          'Num Bool Char Vec Option Result ' +
+          'i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 usize isize ' +
+          'Integer Float BigDecimal ' +
+          'any unknown never Record Partial Required Omit Pick ' +
+          'HttpRequest HttpResponse ObjectId Decimal'
+        ).split(' ');
+        for (var i = 0; i < kw.length; i++) KEYWORD_SET[kw[i]] = true;
+        for (var j = 0; j < types.length; j++) TYPE_SET[types[j]] = true;
       })();
 
       function tokenizeLine(line) {
@@ -304,13 +341,38 @@ window.__ModuleLoader__.load({
           if (/[A-Za-z_$]/.test(ch)) {
             var m2 = /^[A-Za-z_$][A-Za-z0-9_$]*/.exec(line.slice(i));
             var word = m2 ? m2[0] : ch;
-            segs.push({ t: KEYWORD_SET[word] ? 'kw' : 'plain', v: word });
+            // 分类: 内建/大写类型 > 关键字 > 函数调用(后接 `(`) > 普通标识符
+            var t = 'plain';
+            if (TYPE_SET[word]) {
+              t = 'type';
+            } else if (KEYWORD_SET[word]) {
+              t = 'kw';
+            } else if (/[A-Z]/.test(word.charAt(0))) {
+              t = 'type'; // 大写开头 → 类/类型
+            } else {
+              var look = i + word.length;
+              while (look < n && /\s/.test(line[look])) look++;
+              if (line[look] === '(') t = 'fn'; // 小写标识符后接 `(` → 函数调用
+            }
+            segs.push({ t: t, v: word });
             i += word.length;
             continue;
           }
-          var rest = line.slice(i, i + 4);
-          segs.push({ t: 'plain', v: rest });
-          i += rest.length;
+          // 运算符/分隔符/空白: 连续消费, 但不吞掉下一个 token 的开头字符
+          // (否则 `class Foo` 会把 `Foo` 一并划进普通文本, 导致高亮丢失)
+          var j = i;
+          while (j < n) {
+            var cc = line[j];
+            if (cc === '"' || cc === "'" || cc === '`') break; // 字符串
+            if (cc === '#') break; // 注释
+            if (cc === '/' && (line[j + 1] === '/' || line[j + 1] === '*')) break; // 注释
+            if (/[A-Za-z0-9_$]/.test(cc)) break; // 标识符/数字紧邻
+            if (cc === '.' && /[0-9]/.test(line[j + 1] || '')) break; // `.5` 数字
+            j++;
+          }
+          if (j === i) j = i + 1;
+          segs.push({ t: 'plain', v: line.slice(i, j) });
+          i = j;
         }
         return segs;
       }
@@ -347,8 +409,6 @@ window.__ModuleLoader__.load({
           var line = lines[i];
           var cls = '';
           if (line.slice(0, 4) === '@@ ') cls = 'fge-diff-hunk';
-          else if (line.slice(0, 1) === '+') cls = 'fge-diff-add';
-          else if (line.slice(0, 1) === '-') cls = 'fge-diff-del';
           else if (
             line.slice(0, 10) === 'diff --git' ||
             line.slice(0, 6) === 'index ' ||
@@ -360,12 +420,23 @@ window.__ModuleLoader__.load({
             line.slice(0, 12) === 'rename from ' ||
             line.slice(0, 10) === 'rename to ' ||
             line.slice(0, 13) === 'old mode 100' ||
-            line.slice(0, 13) === 'new mode 100'
+            line.slice(0, 13) === 'new mode 100' ||
+            line.slice(0, 13) === 'Binary files '
           )
             cls = 'fge-diff-meta';
-          else if (line.slice(0, 13) === 'Binary files ') cls = 'fge-diff-meta';
-          if (cls === '') html += escapeHtml(line);
-          else html += '<span class="' + cls + '">' + escapeHtml(line) + '</span>';
+          else if (line.slice(0, 1) === '+') cls = 'fge-diff-add';
+          else if (line.slice(0, 1) === '-') cls = 'fge-diff-del';
+
+          if (cls === 'fge-diff-add' || cls === 'fge-diff-del') {
+            // 剥离 +/- 前缀, 内容做代码高亮(保留增删背景色)
+            html +=
+              '<span class="' + cls + '">' + line.charAt(0) + lineToHtml(line.slice(1)) + '</span>';
+          } else if (cls === 'fge-diff-hunk' || cls === 'fge-diff-meta') {
+            html += '<span class="' + cls + '">' + escapeHtml(line) + '</span>';
+          } else {
+            // 上下文行(空格或无前缀)也做代码高亮
+            html += lineToHtml(line);
+          }
           if (i < lines.length - 1) html += '\n';
         }
         return html;
@@ -377,10 +448,78 @@ window.__ModuleLoader__.load({
         return String(Math.round((n / 1048576) * 10) / 10) + ' MB';
       }
 
+      // 路径中间省略: 保头保尾, 中间用省略号; 超过 max 才截断
+      function middleEllipsis(s, max) {
+        if (!s || s.length <= max) return s;
+        var head = Math.max(3, Math.round(max * 0.42));
+        var tail = Math.max(3, max - head - 1);
+        return s.slice(0, head) + '…' + s.slice(s.length - tail);
+      }
+
+      // 复制文本到剪贴板(navigator.clipboard + 非安全上下文 execCommand 回退)
+      function copyText(text) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).catch(function () {});
+          return true;
+        }
+        try {
+          var ta = document.createElement('textarea');
+          ta.value = text;
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+          return true;
+        } catch (e) {
+          return false;
+        }
+      }
+
+      // 延迟收起(张顿一点): 鼠标离开后用 delay(ms) 宽限, 期间移回则取消。
+      // keepOnFloatOnly=true(侧栏): 只有移到悬浮栏才豁免收起(与悬浮栏联动);
+      //                =false(悬浮栏): 移到任意 fge 元素都豁免(避免悬浮栏关闭其源侧栏)。
+      function useDampedHide(ms, onHide, keepOnFloatOnly) {
+        var ref = React.useRef(null);
+        function clear() {
+          if (ref.current) {
+            clearTimeout(ref.current);
+            ref.current = null;
+          }
+        }
+        function enter() {
+          clear();
+        }
+        function leave(e) {
+          var to = e && e.relatedTarget;
+          if (to && to.closest) {
+            var inFloat = to.closest('.fge-float');
+            var inRoot = to.closest('[data-fge-root]');
+            if (keepOnFloatOnly ? inFloat : inRoot) {
+              clear();
+              return;
+            }
+          }
+          clear();
+          ref.current = setTimeout(function () {
+            ref.current = null;
+            onHide();
+          }, ms);
+        }
+        React.useEffect(function () {
+          return function () {
+            clear();
+          };
+        }, []);
+        return { enter: enter, leave: leave };
+      }
+
       // ---- 懒加载树(每个分区一棵) ----
-      // props: mode, refreshTick, onFileClick(rel, name, type)
+      // props: mode, root, refreshTick, onFileClick(rel, name, type)
       function LazyTree(props) {
         var mode = props.mode;
+        var root = props.root;
         var cacheState = React.useState({});
         var cache = cacheState[0];
         var setCache = cacheState[1];
@@ -397,7 +536,7 @@ window.__ModuleLoader__.load({
 
         var loadChildren = function (rel, reveal) {
           setLoading(rel);
-          api('tree', { path: rel, mode: mode, reveal: reveal })
+          api('tree', { root: root, path: rel, mode: mode, reveal: reveal })
             .then(function (res) {
               if (!mounted.current) return;
               setLoading(null);
@@ -425,7 +564,8 @@ window.__ModuleLoader__.load({
               mounted.current = false;
             };
           },
-          [props.refreshTick],
+          // 根变化(工作区切换)时同样作废整棵树
+          [props.refreshTick, root],
         );
 
         var revealFor = function (e) {
@@ -506,19 +646,144 @@ window.__ModuleLoader__.load({
         return children;
       }
 
+      // ---- 图钉图标(无色线条版 📌, 跟随 currentColor) ----
+      function PinIcon() {
+        return React.createElement(
+          'svg',
+          {
+            width: 14,
+            height: 14,
+            viewBox: '0 0 24 24',
+            fill: 'none',
+            stroke: 'currentColor',
+            strokeWidth: 2,
+            strokeLinecap: 'round',
+            strokeLinejoin: 'round',
+            'aria-hidden': 'true',
+            style: { display: 'block' },
+          },
+          // Lucide "pin": 钉帽 + 针
+          React.createElement('path', {
+            d: 'M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z',
+          }),
+        );
+      }
+
+      // ---- 箭头图标(圆角线条, 细条展开用) ----
+      function ChevronIcon(props) {
+        return React.createElement(
+          'svg',
+          {
+            width: 14,
+            height: 14,
+            viewBox: '0 0 24 24',
+            fill: 'none',
+            stroke: 'currentColor',
+            strokeWidth: 2.5,
+            strokeLinecap: 'round',
+            strokeLinejoin: 'round',
+            'aria-hidden': 'true',
+            style: { display: 'block' },
+          },
+          React.createElement('path', {
+            d: props.dir === 'left' ? 'M15 18l-6-6 6-6' : 'M9 18l6-6-6-6',
+          }),
+        );
+      }
+
+      // ---- 刷新图标(⟳, 单色线条) ----
+      function RefreshIcon() {
+        return React.createElement(
+          'svg',
+          { width: 14, height: 14, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true', style: { display: 'block' } },
+          React.createElement('path', { d: 'M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8' }),
+          React.createElement('path', { d: 'M21 3v5h-5' }),
+        );
+      }
+
+      // ---- 收起图标(» / «, 双箭头) ----
+      function CollapseIcon(props) {
+        var d =
+          props.dir === 'left'
+            ? ['M11 17l-5-5 5-5', 'M18 17l-5-5 5-5']
+            : ['M6 17l5-5-5-5', 'M13 17l5-5-5-5'];
+        return React.createElement(
+          'svg',
+          { width: 14, height: 14, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true', style: { display: 'block' } },
+          React.createElement('path', { d: d[0] }),
+          React.createElement('path', { d: d[1] }),
+        );
+      }
+
+      // ---- 关闭图标(✕) ----
+      function CloseIcon() {
+        return React.createElement(
+          'svg',
+          { width: 14, height: 14, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true', style: { display: 'block' } },
+          React.createElement('path', { d: 'M18 6L6 18M6 6l12 12' }),
+        );
+      }
+
+      // ---- git 分支图标(竖着, 两根分支线) ----
+      function BranchIcon() {
+        return React.createElement(
+          'svg',
+          { width: 14, height: 14, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true', style: { display: 'block' } },
+          React.createElement('line', { x1: 6, y1: 3, x2: 6, y2: 15 }),
+          React.createElement('circle', { cx: 18, cy: 6, r: 3 }),
+          React.createElement('circle', { cx: 6, cy: 18, r: 3 }),
+          React.createElement('path', { d: 'M18 9a9 9 0 0 1-9 9' }),
+        );
+      }
+
+      // ---- 分支下拉展开指示(▾ / ▴) ----
+      function CaretIcon(props) {
+        return React.createElement(
+          'svg',
+          { width: 12, height: 12, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true', style: { display: 'block' } },
+          React.createElement('path', { d: props.open ? 'm6 15 6-6 6 6' : 'm6 9 6 6 6-6' }),
+        );
+      }
+
       // ---- 左侧文件树面板 ----
       function LeftPanel(props) {
+        var copiedState = React.useState(false);
+        var copied = copiedState[0];
+        var setCopied = copiedState[1];
+        // 延迟收起: 悬停离开后宽限, 移到悬浮栏(打开的预览/diff)则豁免(联动)
+        var damp = useDampedHide(360, props.onHide, true);
+        // 路径按面板可用宽度做中间省略(保头保尾), 点击整段复制完整路径
+        var subWidth = (props.style && props.style.width) || 320;
+        var subMax = Math.max(12, Math.floor((subWidth - 104) / 5.6));
+        var onCopyPath = function () {
+          if (copyText(props.cwd)) {
+            setCopied(true);
+            setTimeout(function () {
+              setCopied(false);
+            }, 1200);
+          }
+        };
         return React.createElement(
           'div',
-          { className: 'fge-panel', 'data-fge-root': '1', style: props.style },
+          {
+            className: 'fge-panel',
+            'data-fge-root': '1',
+            style: props.style,
+            onMouseEnter: damp.enter,
+            onMouseLeave: damp.leave,
+          },
           React.createElement(
             'div',
             { className: 'fge-panel-head' },
             React.createElement('span', { className: 'fge-panel-title' }, '文件'),
             React.createElement(
               'span',
-              { className: 'fge-panel-sub', title: props.cwd },
-              props.cwd,
+              {
+                className: 'fge-panel-sub' + (copied ? ' fge-copied' : ''),
+                title: props.cwd,
+                onClick: onCopyPath,
+              },
+              copied ? '✓ 已复制' : middleEllipsis(props.cwd, subMax),
             ),
             React.createElement(
               'button',
@@ -527,7 +792,7 @@ window.__ModuleLoader__.load({
                 title: props.pin ? '已固定: 点击解除固定' : '图钉: 固定后两个面板都不能收起',
                 onClick: props.onPin,
               },
-              '📌',
+              React.createElement(PinIcon, null),
             ),
             React.createElement(
               'button',
@@ -536,7 +801,7 @@ window.__ModuleLoader__.load({
                 title: '刷新(重扫文件树与 git 状态)',
                 onClick: props.onRefresh,
               },
-              '⟳',
+              React.createElement(RefreshIcon, null),
             ),
             React.createElement(
               'button',
@@ -546,7 +811,7 @@ window.__ModuleLoader__.load({
                 onClick: props.onCollapse,
                 disabled: props.pin,
               },
-              '»',
+              React.createElement(CollapseIcon, { dir: 'right' }),
             ),
           ),
           React.createElement(
@@ -558,6 +823,7 @@ window.__ModuleLoader__.load({
               { className: 'fge-section-body' },
               React.createElement(LazyTree, {
                 mode: 'visible',
+                root: props.root,
                 refreshTick: props.refreshTick,
                 onFileClick: props.onFileClick,
               }),
@@ -572,6 +838,7 @@ window.__ModuleLoader__.load({
               { className: 'fge-section-body' },
               React.createElement(LazyTree, {
                 mode: 'hidden',
+                root: props.root,
                 refreshTick: props.refreshTick,
                 onFileClick: props.onFileClick,
               }),
@@ -586,6 +853,7 @@ window.__ModuleLoader__.load({
               { className: 'fge-section-body' },
               React.createElement(LazyTree, {
                 mode: 'ignored',
+                root: props.root,
                 refreshTick: props.refreshTick,
                 onFileClick: props.onFileClick,
               }),
@@ -604,6 +872,8 @@ window.__ModuleLoader__.load({
         var menuOpen = menuState[0];
         var setMenuOpen = menuState[1];
         var listRef = React.useRef(null);
+        // 延迟收起: 悬停离开后宽限, 移到悬浮栏(branch menu 或 diff)则豁免(联动)
+        var damp = useDampedHide(360, props.onHide, true);
 
         var changes = props.status && props.status.changes ? props.status.changes : [];
         var current = props.status ? props.status.current : null;
@@ -685,7 +955,13 @@ window.__ModuleLoader__.load({
 
         return React.createElement(
           'div',
-          { className: 'fge-panel', 'data-fge-root': '1', style: props.style },
+          {
+            className: 'fge-panel',
+            'data-fge-root': '1',
+            style: props.style,
+            onMouseEnter: damp.enter,
+            onMouseLeave: damp.leave,
+          },
           React.createElement(
             'div',
             {
@@ -695,12 +971,13 @@ window.__ModuleLoader__.load({
               },
               title: '点击显示所有分支(只读)',
             },
+            React.createElement(BranchIcon, null),
             React.createElement(
               'span',
               { className: 'fge-branch-name' },
-              '⎇ ' + (current || '(detached)'),
+              current || '(detached)',
             ),
-            React.createElement('span', { className: 'fge-branch-caret' }, menuOpen ? '▴' : '▾'),
+            React.createElement(CaretIcon, { open: menuOpen }),
           ),
           menu,
           React.createElement(
@@ -721,12 +998,12 @@ window.__ModuleLoader__.load({
                 title: props.pin ? '已固定: 点击解除固定' : '图钉: 固定后两个面板都不能收起',
                 onClick: props.onPin,
               },
-              '📌',
+              React.createElement(PinIcon, null),
             ),
             React.createElement(
               'button',
               { className: 'fge-btn', title: '刷新 git 状态', onClick: props.onRefresh },
-              '⟳',
+              React.createElement(RefreshIcon, null),
             ),
             React.createElement(
               'button',
@@ -736,7 +1013,7 @@ window.__ModuleLoader__.load({
                 onClick: props.onCollapse,
                 disabled: props.pin,
               },
-              '«',
+              React.createElement(CollapseIcon, { dir: 'left' }),
             ),
           ),
           React.createElement(
@@ -775,9 +1052,17 @@ window.__ModuleLoader__.load({
 
       // ---- 悬浮面板公共外壳(头部徽标 + 标题 + 关闭 + 内容区) ----
       function FloatPanel(props) {
+        // 延迟收起(悬浮栏): 离开后宽限; 移到任一侧栏/细条/其他悬浮栏则豁免
+        var damp = useDampedHide(360, props.onHide, false);
         return React.createElement(
           'div',
-          { className: 'fge-float', 'data-fge-root': '1', style: props.style },
+          {
+            className: 'fge-float',
+            'data-fge-root': '1',
+            style: props.style,
+            onMouseEnter: damp.enter,
+            onMouseLeave: damp.leave,
+          },
           React.createElement(
             'div',
             { className: 'fge-float-head' },
@@ -793,7 +1078,11 @@ window.__ModuleLoader__.load({
               { className: 'fge-float-title', title: props.title },
               props.title,
             ),
-            React.createElement('button', { className: 'fge-btn', onClick: props.onClose }, '✕'),
+            React.createElement(
+              'button',
+              { className: 'fge-btn', onClick: props.onClose, title: props.onCloseTitle || '关闭' },
+              React.createElement(CloseIcon, null),
+            ),
           ),
           React.createElement('div', { className: 'fge-float-body' }, props.children),
         );
@@ -813,7 +1102,7 @@ window.__ModuleLoader__.load({
             var alive = true;
             setData(null);
             setErr(null);
-            api('file', { path: props.rel })
+            api('file', { root: props.root, path: props.rel })
               .then(function (res) {
                 if (!alive) return;
                 if (res && res.ok) setData(res);
@@ -826,7 +1115,7 @@ window.__ModuleLoader__.load({
               alive = false;
             };
           },
-          [props.rel],
+          [props.root, props.rel],
         );
 
         var body = null;
@@ -859,6 +1148,7 @@ window.__ModuleLoader__.load({
             style: props.style,
             title: props.rel,
             onClose: props.onClose,
+            onHide: props.onHide,
           },
           body,
         );
@@ -879,6 +1169,7 @@ window.__ModuleLoader__.load({
             setData(null);
             setErr(null);
             api('diff', {
+              root: props.root,
               repoRoot: props.repoRoot,
               path: props.change.path,
               status: props.change.status,
@@ -939,12 +1230,13 @@ window.__ModuleLoader__.load({
             badge: props.change.status,
             title: props.change.path,
             onClose: props.onClose,
+            onHide: props.onHide,
           },
           body,
         );
       }
 
-      // ---- 细条(收起态) ----
+      // ---- 细条(收起态): 只剩一个圆角箭头, 无边框底色; 悬停自动展开 ----
       function Strip(props) {
         return React.createElement(
           'div',
@@ -952,16 +1244,29 @@ window.__ModuleLoader__.load({
             className: 'fge-strip',
             'data-fge-root': '1',
             style: props.style,
+            onMouseEnter: props.onExpand,
             onClick: props.onExpand,
             title: props.title,
           },
-          React.createElement('span', null, props.open ? '«' : props.icon),
+          React.createElement(ChevronIcon, { dir: props.dir }),
         );
       }
 
       // ---- 根组件 ----
-      function FgeRoot() {
+      function FgeRoot(props) {
         var geo = useGeometry();
+
+        // 当前会话 cwd: shell.overlay 标准 prop 提供 useSessions, 跟随工作区切换。
+        // 会话没有 cwd(如 hero 空态)时回退 info.cwd(DSH 进程 cwd)。
+        var useSessions = props.useSessions;
+        var sessionCwd = null;
+        if (typeof useSessions === 'function') {
+          sessionCwd = useSessions(function (s) {
+            if (!s || !s.current) return null;
+            var sess = s.byId && s.byId[s.current];
+            return sess && typeof sess.cwd === 'string' && sess.cwd !== '' ? sess.cwd : null;
+          });
+        }
 
         var infoState = React.useState(null);
         var info = infoState[0];
@@ -972,16 +1277,16 @@ window.__ModuleLoader__.load({
         var pinState = React.useState(false);
         var pin = pinState[0];
         var setPin = pinState[1];
-        var leftOpenState = React.useState(true);
+        var leftOpenState = React.useState(false);
         var leftOpen = leftOpenState[0];
         var setLeftOpen = leftOpenState[1];
-        var rightOpenState = React.useState(true);
+        var rightOpenState = React.useState(false);
         var rightOpen = rightOpenState[0];
         var setRightOpen = rightOpenState[1];
-        var leftWState = React.useState(320);
+        var leftWState = React.useState(400);
         var leftW = leftWState[0];
         var setLeftW = leftWState[1];
-        var rightWState = React.useState(320);
+        var rightWState = React.useState(400);
         var rightW = rightWState[0];
         var setRightW = rightWState[1];
         var viewedBranchState = React.useState(null);
@@ -1001,16 +1306,46 @@ window.__ModuleLoader__.load({
         var setRefreshTick = refreshTickState[1];
 
         var cacheKey = info ? info.repoRoot || info.cwd : null;
+        var root = sessionCwd || (info ? info.cwd : null);
 
-        // 初次加载 info + status + 恢复 cwd 缓存
-        React.useEffect(function () {
-          var alive = true;
-          api('info', {})
-            .then(function (res) {
-              if (!alive || !res || !res.ok) return;
-              setInfo(res);
-              if (res.repoRoot) {
-                var cached = readCache(res.repoRoot);
+        // 根切换时关闭悬浮面板与联动
+        React.useEffect(
+          function () {
+            setContent(null);
+            setDiff(null);
+            setLinkage(null);
+          },
+          [root],
+        );
+
+        // info 跟随当前根: 根变化(会话/工作区切换)时重查仓库根与分支
+        React.useEffect(
+          function () {
+            var alive = true;
+            var req = root ? { root: root } : {};
+            api('info', req)
+              .then(function (res) {
+                if (!alive || !res || !res.ok) return;
+                setInfo(res);
+              })
+              .catch(function () {});
+            return function () {
+              alive = false;
+            };
+          },
+          [root],
+        );
+
+        // status 跟随当前仓库根; 切回同一仓库时恢复 cwd 缓存(UI 状态)
+        React.useEffect(
+          function () {
+            if (!info || !info.repoRoot) return;
+            var alive = true;
+            api('status', { root: info.cwd, repoRoot: info.repoRoot })
+              .then(function (st) {
+                if (!alive || !st || !st.ok) return;
+                setStatus(st);
+                var cached = readCache(info.repoRoot);
                 if (cached) {
                   if (typeof cached.leftW === 'number') setLeftW(cached.leftW);
                   if (typeof cached.rightW === 'number') setRightW(cached.rightW);
@@ -1018,18 +1353,14 @@ window.__ModuleLoader__.load({
                   if (typeof cached.rightOpen === 'boolean') setRightOpen(cached.rightOpen);
                   if (typeof cached.viewedBranch === 'string') setViewedBranch(cached.viewedBranch);
                 }
-                api('status', { repoRoot: res.repoRoot })
-                  .then(function (st) {
-                    if (alive && st && st.ok) setStatus(st);
-                  })
-                  .catch(function () {});
-              }
-            })
-            .catch(function () {});
-          return function () {
-            alive = false;
-          };
-        }, []);
+              })
+              .catch(function () {});
+            return function () {
+              alive = false;
+            };
+          },
+          [root, info ? info.repoRoot : null],
+        );
 
         // 持久化 cwd 缓存
         React.useEffect(
@@ -1047,42 +1378,32 @@ window.__ModuleLoader__.load({
         );
 
         // 刷新: 重读 info + status, 树缓存作废
-        var refresh = React.useCallback(function () {
-          api('info', {})
-            .then(function (res) {
-              if (!res || !res.ok) return;
-              setInfo(res);
-              setRefreshTick(function (t) {
-                return t + 1;
-              });
-              if (res.repoRoot) {
-                api('status', { repoRoot: res.repoRoot })
-                  .then(function (st) {
-                    if (st && st.ok) setStatus(st);
-                  })
-                  .catch(function () {});
-              }
-            })
-            .catch(function () {});
-        }, []);
-
-        // 未固定时点击面板外 → 全部收起为细条
-        React.useEffect(
+        var refresh = React.useCallback(
           function () {
-            function onDown(e) {
-              if (pin) return;
-              var t = e.target;
-              if (!t || !t.closest || t.closest('[data-fge-root]')) return;
-              setLeftOpen(false);
-              setRightOpen(false);
-            }
-            document.addEventListener('pointerdown', onDown, true);
-            return function () {
-              document.removeEventListener('pointerdown', onDown, true);
-            };
+            var req = root ? { root: root } : {};
+            api('info', req)
+              .then(function (res) {
+                if (!res || !res.ok) return;
+                setInfo(res);
+                setRefreshTick(function (t) {
+                  return t + 1;
+                });
+                if (res.repoRoot) {
+                  api('status', { root: res.cwd, repoRoot: res.repoRoot })
+                    .then(function (st) {
+                      if (st && st.ok) setStatus(st);
+                    })
+                    .catch(function () {});
+                }
+              })
+              .catch(function () {});
           },
-          [pin],
+          [root],
         );
+
+        // 悬停交互: 面板由「鼠标悬停细条展开 / 鼠标离开面板收起」驱动,
+        // 未固定时鼠标离开面板即自动收起为细条; 固定时保持展开。
+        // 不再用「点击面板外收起」, 避免鼠标落在细条上时反复展开/收起。
 
         // Escape 关闭悬浮面板
         React.useEffect(function () {
@@ -1135,19 +1456,45 @@ window.__ModuleLoader__.load({
           });
         }, []);
 
+        // 图钉: 无论点哪个面板的图钉, 动作一致 —— 固定时两个面板都展开为卡片。
+        // 避免出现「已固定但另一侧仍是细条」的不一致状态。
         var togglePin = React.useCallback(function () {
-          setPin(function (p) {
-            return !p;
-          });
-        }, []);
+          var next = !pin;
+          setPin(next);
+          if (next) {
+            setLeftOpen(true);
+            setRightOpen(true);
+          }
+        }, [pin]);
+
+        // 收起某侧(悬停离开延迟触发 / 收起按钮): 一并关闭该侧关联的悬浮面板,
+        // 避免「侧栏收了、悬浮栏还在」的孤儿状态(联动)。
+        var hideLeft = React.useCallback(function () {
+          if (!pin) {
+            setLeftOpen(false);
+            setContent(null);
+          }
+        }, [pin]);
+        var hideRight = React.useCallback(function () {
+          if (!pin) {
+            setRightOpen(false);
+            setDiff(null);
+          }
+        }, [pin]);
 
         // 布局计算
-        var leftMaxW = geo ? Math.max(0, geo.convLeft - geo.sbLeft - 24) : 0;
-        var rightMaxW = geo ? Math.max(0, geo.sbRight - geo.convRight - 24) : 0;
-        var leftWidth = leftMaxW >= 140 ? clamp(leftW, 140, leftMaxW) : 0;
-        var rightWidth = rightMaxW >= 140 ? clamp(rightW, 140, rightMaxW) : 0;
-        var leftCanShow = leftMaxW >= 140;
-        var rightCanShow = rightMaxW >= 140;
+        // 可显示仍看「完整留白能容纳最小宽度」; 最大宽度 = 完整留白的 2/3(减少 1/3),
+        // 面板拖不到对话区边缘, 留出更从容的留白。
+        var leftGutterW = geo ? Math.max(0, geo.convLeft - geo.sbLeft - 24) : 0;
+        var rightGutterW = geo ? Math.max(0, geo.sbRight - geo.convRight - 24) : 0;
+        // 面板最小宽度 250px: 保证头部工具栏(图钉/刷新/收起)不被吞掉。
+        var MIN_W = 250;
+        var leftCanShow = leftGutterW >= MIN_W;
+        var rightCanShow = rightGutterW >= MIN_W;
+        var leftMaxW = leftCanShow ? Math.max(MIN_W, Math.floor(leftGutterW * (2 / 3))) : 0;
+        var rightMaxW = rightCanShow ? Math.max(MIN_W, Math.floor(rightGutterW * (2 / 3))) : 0;
+        var leftWidth = leftCanShow ? clamp(leftW, MIN_W, leftMaxW) : 0;
+        var rightWidth = rightCanShow ? clamp(rightW, MIN_W, rightMaxW) : 0;
         var leftShow = leftOpen && leftCanShow;
         var rightShow = rightOpen && rightCanShow;
 
@@ -1160,10 +1507,10 @@ window.__ModuleLoader__.load({
             function onMove(e) {
               if (side === 'left') {
                 var w = startW + (e.clientX - startX);
-                setLeftW(clamp(w, 140, leftMaxW));
+                setLeftW(clamp(w, MIN_W, leftMaxW));
               } else {
                 var w2 = startW - (e.clientX - startX);
-                setRightW(clamp(w2, 140, rightMaxW));
+                setRightW(clamp(w2, MIN_W, rightMaxW));
               }
             }
             function onUp() {
@@ -1176,11 +1523,18 @@ window.__ModuleLoader__.load({
         };
 
         if (!geo || !info) return null;
-        // 垂直带太矮(<68px)时不再渲染, 保证底边永不越过 composer card 下边框。
-        if (geo.height < 68) return null;
+        // 垂直带太矮(<74px)时不再渲染, 避免出现贴边的细长条。
+        if (geo.height < 74) return null;
 
-        var top = geo.top + 4;
-        var height = geo.height - 8;
+        // 垂直: 居中 + 对称留白, 高度上限 ≈ 屏幕高度的 85% —— 不贴满整个对话列。
+        //   vMargin = 上下最小留白(对称); maxH = 面板高度上限(0.85 * 视口高)。
+        //   高度 = min(列高 - 2*留白, 上限), 并在列内垂直居中。
+        var colH = geo.height;
+        var vMargin = 20;
+        var maxH = Math.floor(window.innerHeight * 0.85);
+        var panelH = Math.max(0, Math.min(colH - vMargin * 2, maxH));
+        var top = geo.top + Math.max(vMargin, (colH - panelH) / 2);
+        var height = panelH;
         var stripW = 26;
         var leftPanelStyle = {
           left: geo.sbLeft + 8,
@@ -1209,17 +1563,19 @@ window.__ModuleLoader__.load({
 
         var leftAnchor = geo.sbLeft + 8 + (leftShow ? leftWidth : stripW);
         var rightAnchor = geo.sbRight - 8 - (rightShow ? rightWidth : stripW);
-        var floatW = Math.min(560, Math.max(320, geo.sbRight - geo.sbLeft - 60));
+        // 文件内容浮窗宽度 = 原值的 4/3(560→746); diff 浮窗保持原宽。
+        var diffW = Math.min(560, Math.max(320, geo.sbRight - geo.sbLeft - 60));
+        var contentW = Math.min(746, Math.max(426, geo.sbRight - geo.sbLeft - 60));
         var contentStyle = {
           left: Math.min(leftAnchor + 10, geo.convRight - 40),
           top: top,
-          width: floatW,
+          width: contentW,
           height: height,
         };
         var diffStyle = {
-          left: Math.max(geo.convLeft + 40, rightAnchor - 10 - floatW),
+          left: Math.max(geo.convLeft + 40, rightAnchor - 10 - diffW),
           top: top,
-          width: floatW,
+          width: diffW,
           height: height,
         };
 
@@ -1230,24 +1586,26 @@ window.__ModuleLoader__.load({
             ? React.createElement(LeftPanel, {
                 style: leftPanelStyle,
                 cwd: info.cwd,
+                root: root,
                 pin: pin,
                 onPin: togglePin,
                 onRefresh: refresh,
-                onCollapse: function () {
-                  setLeftOpen(false);
-                },
+                onCollapse: hideLeft,
+                onHide: hideLeft,
                 onResizeStart: resize('left'),
                 refreshTick: refreshTick,
                 onFileClick: onFileClick,
               })
-            : React.createElement(Strip, {
-                style: leftStripStyle,
-                icon: '▸',
-                title: '展开文件树',
-                onExpand: function () {
-                  setLeftOpen(true);
-                },
-              }),
+            : leftCanShow
+              ? React.createElement(Strip, {
+                  style: leftStripStyle,
+                  dir: 'right',
+                  title: '展开文件树',
+                  onExpand: function () {
+                    setLeftOpen(true);
+                  },
+                })
+              : null,
           rightShow
             ? React.createElement(RightPanel, {
                 style: rightPanelStyle,
@@ -1256,9 +1614,8 @@ window.__ModuleLoader__.load({
                 pin: pin,
                 onPin: togglePin,
                 onRefresh: refresh,
-                onCollapse: function () {
-                  setRightOpen(false);
-                },
+                onCollapse: hideRight,
+                onHide: hideRight,
                 onResizeStart: resize('right'),
                 viewedBranch: viewedBranch,
                 onViewBranch: setViewedBranch,
@@ -1266,31 +1623,37 @@ window.__ModuleLoader__.load({
                 onDiffClick: onDiffClick,
                 selectedDiff: diff ? diff.change.path : null,
               })
-            : React.createElement(Strip, {
-                style: rightStripStyle,
-                icon: '◂',
-                title: '展开 Git 树',
-                onExpand: function () {
-                  setRightOpen(true);
-                },
-              }),
+            : rightCanShow
+              ? React.createElement(Strip, {
+                  style: rightStripStyle,
+                  dir: 'left',
+                  title: '展开 Git 树',
+                  onExpand: function () {
+                    setRightOpen(true);
+                  },
+                })
+              : null,
           content
             ? React.createElement(ContentPanel, {
                 style: contentStyle,
+                root: root,
                 rel: content.rel,
                 onClose: function () {
                   setContent(null);
                 },
+                onHide: hideLeft,
               })
             : null,
           diff
             ? React.createElement(DiffPanel, {
                 style: diffStyle,
+                root: root,
                 change: diff.change,
                 repoRoot: info.repoRoot,
                 onClose: function () {
                   setDiff(null);
                 },
+                onHide: hideRight,
               })
             : null,
         );

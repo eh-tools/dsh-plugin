@@ -174,13 +174,41 @@ assert.equal(file.body.binary, false);
 assert.ok(file.body.size > 0);
 ok('file: 文本读取');
 
-// 8. 防穿越: 拒绝逃出 cwd
+// 8. 显式 root: 请求根跟随工作区(缺省回退 cwd)
+const rootVis = await callAt('POST', base('tree'), {
+    root: process.cwd(),
+    path: '',
+    mode: 'visible',
+    reveal: false,
+});
+assert.deepEqual(
+    rootVis.body.entries.map((e) => e.name),
+    vis.body.entries.map((e) => e.name),
+    '显式 root 应与缺省 cwd 结果一致',
+);
+const infoRoot = await callAt('POST', base('info'), { root: process.cwd() });
+assert.equal(infoRoot.body.ok, true);
+assert.equal(infoRoot.body.cwd, process.cwd());
+const stRoot = await callAt('POST', base('status'), {
+    root: process.cwd(),
+    repoRoot: info.body.repoRoot,
+});
+assert.equal(stRoot.body.ok, true);
+ok('显式 root: info/tree/status 使用请求根');
+
+// 8b. 非法 root(相对路径)拒绝
+const badRoot = await callAt('POST', base('file'), { root: 'relative/path', path: 'x' });
+assert.equal(badRoot.body.ok, false);
+assert.equal(badRoot.body.error, 'invalid-root');
+ok('非法 root(相对路径)拒绝');
+
+// 9. 防穿越: 拒绝逃出 root
 const trav = await callAt('POST', base('file'), { path: '../../outside.txt' });
 assert.equal(trav.body.ok, false);
-assert.equal(trav.body.error, 'outside-cwd');
-ok('防穿越: outside-cwd 拒绝');
+assert.equal(trav.body.error, 'outside-root');
+ok('防穿越: outside-root 拒绝');
 
-// 9. 信任栅栏: 无 x-dsh-plugin 头 / 非回环 host / 非 POST
+// 10. 信任栅栏: 无 x-dsh-plugin 头 / 非回环 host / 非 POST
 const noHeader = await callAt('POST', base('info'), {}, { 'x-dsh-plugin': undefined });
 assert.equal(noHeader.status, 403);
 const badHost = await callAt('POST', base('info'), {}, { host: 'evil.example.com' });

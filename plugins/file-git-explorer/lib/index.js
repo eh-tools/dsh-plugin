@@ -2,19 +2,20 @@
  * dsh-file-git-explorer — host half(静态双半插件)
  *
  * 职责: 为浏览器端左右树面板提供文件系统 + git 数据。
- * 根目录 = DSH 进程的 cwd(process.cwd()), 两个树面板共享这一事实来源。
+ * 根目录 = 每个请求携带的 `root`(客户端跟随当前会话工作区下发, 切换工作区
+ * 即切换树根), 缺省回退 DSH 进程 cwd(process.cwd())。
  *
  * 静态插件的 client→host 通信不走动态插件的 harness 私有 RPC, 而是注册一个
  * HTTP JSON 路由(与 dsh-ds-balance 的 /ds-balance/api 同款信任栅栏):
  *
- *   POST /fge/api/info    → { cwd, repoRoot, currentBranch }
- *   POST /fge/api/tree    → 目录三区(可见/隐藏/忽略)分组条目
- *   POST /fge/api/status  → 分支列表 + 工作区变更列表(相对 HEAD)
- *   POST /fge/api/diff    → 单文件 diff(rename 走 -M, 未跟踪读内容)
- *   POST /fge/api/file    → 文件内容预览(≤1MiB, NUL 二进制探测)
+ *   POST /fge/api/info    → { root? } → { cwd(root), repoRoot, currentBranch }
+ *   POST /fge/api/tree    → { root?, path, mode, reveal } → 目录三区分组条目
+ *   POST /fge/api/status  → { root?, repoRoot } → 分支列表 + 工作区变更列表
+ *   POST /fge/api/diff    → { repoRoot, path, status, from } → 单文件 diff
+ *   POST /fge/api/file    → { root?, path } → 文件内容预览(≤1MiB, NUL 探测)
  *
  * git 一律经 subprocess 服务执行(argv 数组, 无 shell), 路径全部做防穿越校验:
- * 文件树/file 只能落在 cwd 之下, diff/status 的仓库根必须是 cwd 的祖先。
+ * 文件树/file 只能落在 root 之下, diff/status 的仓库根必须是绝对路径。
  *
  * 挂载: 见 cordis.patch.yml —— 安装后随 profile boot 自动挂载。
  */
@@ -42,9 +43,20 @@ const ROUTE_PREFIX = '/fge/api';
 
 export function apply(ctx) {
   const CWD = process.cwd();
-  let cachedRepoRoot = undefined;
+  const repoRootCache = new Map();
 
   // ---- 通用工具 ----
+
+  /**
+   * 请求根目录: 每个请求可携带 `root`(绝对路径), 由客户端跟随当前会话
+   * 工作区下发; 缺省回退 DSH 进程 cwd。非法(非绝对路径)返回 null。
+   */
+  function baseOf(body) {
+    const r = typeof body.root === 'string' ? body.root : '';
+    if (r === '') return CWD;
+    if (!path.isAbsolute(r)) return null;
+    return path.normalize(r);
+  }
 
   /** 从 start 向上找含 .git 的目录(仓库根); 找不到返回 null。 */
   async function findRepoRoot(start) {
@@ -62,16 +74,12 @@ export function apply(ctx) {
     }
   }
 
-  /** cwd 的仓库根(缓存)。 */
-  async function repoRootOfCwd() {
-    if (cachedRepoRoot === undefined) cachedRepoRoot = await findRepoRoot(CWD);
-    return cachedRepoRoot;
-  }
-
-  /** target 是否等于 base 或位于 base 之下。 */
-  function isWithinOrSame(base, target) {
-    const rel = path.relative(base, target);
-    return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+  /** 某根目录的仓库根(按根缓存)。 */
+  async function repoRootFor(base) {
+    if (repoRootCache.has(base)) return repoRootCache.get(base);
+    const found = await findRepoRoot(base);
+    repoRootCache.set(base, found);
+    return found;
   }
 
   /** 执行 git。input 存在时走 stdin pipe; 非零退出不抛错, 由调用方判断。 */
@@ -105,11 +113,11 @@ export function apply(ctx) {
     };
   }
 
-  /** 批量 check-ignore: 输入 cwd 相对路径数组, 返回被忽略的路径集合。 */
-  async function checkIgnore(relPaths) {
+  /** 批量 check-ignore: 输入相对 base 的路径数组, 返回被忽略的路径集合。 */
+  async function checkIgnore(relPaths, base) {
     if (relPaths.length === 0) return new Set();
     const r = await runGit(['check-ignore', '--stdin', '-z'], {
-      cwd: CWD,
+      cwd: base,
       input: relPaths.join('\0') + '\0',
     });
     const set = new Set();
@@ -163,24 +171,29 @@ export function apply(ctx) {
 
   // ---- API handlers ----
 
-  async function handleInfo() {
-    const repoRoot = await repoRootOfCwd();
+  /** info: 返回某根目录(缺省 cwd)的仓库根与当前分支。 */
+  async function handleInfo(body) {
+    const base = baseOf(body);
+    if (base === null) return { ok: false, error: 'invalid-root' };
+    const repoRoot = await repoRootFor(base);
     let branch = null;
     if (repoRoot !== null) {
       const r = await runGit(['branch', '--show-current'], { cwd: repoRoot });
       if (r.exitCode === 0) branch = r.stdout.trim() || null;
     }
-    return { ok: true, cwd: CWD, repoRoot, branch };
+    return { ok: true, cwd: base, repoRoot, branch };
   }
 
-  /** 目录条目(三区分组)。path = cwd 相对路径, '' 表示 cwd 本身。 */
+  /** 目录条目(三区分组)。path = root 相对路径, '' 表示根本身。 */
   async function handleTree(body) {
+    const base = baseOf(body);
+    if (base === null) return { ok: false, error: 'invalid-root' };
     const rel = typeof body.path === 'string' ? body.path : '';
     const mode =
       body.mode === 'hidden' ? 'hidden' : body.mode === 'ignored' ? 'ignored' : 'visible';
     const reveal = body.reveal === true;
-    const abs = resolveWithin(CWD, rel);
-    if (abs === null) return { ok: false, error: 'outside-cwd' };
+    const abs = resolveWithin(base, rel);
+    if (abs === null) return { ok: false, error: 'outside-root' };
     let entries;
     try {
       const st = await fsp.stat(abs);
@@ -197,12 +210,12 @@ export function apply(ctx) {
     } catch {
       return { ok: false, error: 'readdir-failed' };
     }
-    // 忽略判定: 仅当 cwd 位于 git 仓库内才需要。
-    const repoRoot = await repoRootOfCwd();
+    // 忽略判定: 仅当根位于 git 仓库内才需要。
+    const repoRoot = await repoRootFor(base);
     if (repoRoot !== null) {
       try {
         const relPaths = entries.map((e) => joinRel(rel, e.name));
-        const ignoredSet = await checkIgnore(relPaths);
+        const ignoredSet = await checkIgnore(relPaths, base);
         for (const e of entries) {
           if (ignoredSet.has(joinRel(rel, e.name))) e.ignored = true;
         }
@@ -225,8 +238,10 @@ export function apply(ctx) {
   async function handleStatus(body) {
     const root = typeof body.repoRoot === 'string' ? body.repoRoot : '';
     if (root === '') return { ok: false, error: 'no-repo' };
+    if (!path.isAbsolute(root)) return { ok: false, error: 'invalid-root' };
+    const base = baseOf(body);
+    if (base === null) return { ok: false, error: 'invalid-root' };
     const absRoot = path.resolve(root);
-    if (!isWithinOrSame(CWD, absRoot)) return { ok: false, error: 'outside-cwd' };
     const r = await runGit(['status', '--porcelain=v1', '-z', '--untracked-files=all'], {
       cwd: absRoot,
     });
@@ -236,12 +251,12 @@ export function apply(ctx) {
     const toPosix = (p) => p.split(path.sep).join('/');
     const changes = parseStatusZ(r.stdout)
       .map((e) => {
-        // cwdRel: 相对 cwd 的路径(与左树 rel 同基准), 供联动匹配;
-        // path 仍为仓库根相对(供 diff 使用)。cwd 恰为仓库根时两者相同。
+        // cwdRel: 相对根(base)的路径, 与左树 rel 同基准, 供联动匹配;
+        // path 仍为仓库根相对(供 diff 使用)。根恰为仓库根时两者相同。
         const abs = path.join(absRoot, e.path);
         return {
           path: e.path,
-          cwdRel: toPosix(path.relative(CWD, abs)),
+          cwdRel: toPosix(path.relative(base, abs)),
           from: e.from,
           xy: e.xy,
           status: statusBadge(e.xy),
@@ -279,8 +294,8 @@ export function apply(ctx) {
     const badge = typeof body.status === 'string' ? body.status : 'M';
     const from = typeof body.from === 'string' ? body.from : undefined;
     if (root === '') return { ok: false, error: 'no-repo' };
+    if (!path.isAbsolute(root)) return { ok: false, error: 'invalid-root' };
     const absRoot = path.resolve(root);
-    if (!isWithinOrSame(CWD, absRoot)) return { ok: false, error: 'outside-cwd' };
     const abs = resolveWithin(absRoot, rel);
     if (abs === null) return { ok: false, error: 'outside-repo' };
     const preview = async () => {
@@ -306,9 +321,11 @@ export function apply(ctx) {
   }
 
   async function handleFile(body) {
+    const base = baseOf(body);
+    if (base === null) return { ok: false, error: 'invalid-root' };
     const rel = typeof body.path === 'string' ? body.path : '';
-    const abs = resolveWithin(CWD, rel);
-    if (abs === null) return { ok: false, error: 'outside-cwd' };
+    const abs = resolveWithin(base, rel);
+    if (abs === null) return { ok: false, error: 'outside-root' };
     const p = await readFilePreview(abs);
     return p;
   }
