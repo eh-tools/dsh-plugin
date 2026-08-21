@@ -10,11 +10,12 @@
 
 DSH 的插件生态还在早期,本仓库把几个日常高频缺口做成了独立插件,一个插件一个目录,按需取用:
 
-| 插件          | 解决什么问题                             | 一句话说明                                                                 |
-| ------------- | ---------------------------------------- | -------------------------------------------------------------------------- |
-| `ds-balance`  | 官方状态栏看不到余额和用量               | stats 行下方加第二行:余额 + 今日/本月 token,每 5 分钟刷新                  |
-| `tool-vision` | DeepSeek 模型不支持图片输入              | 本地识图工具,把图片交给本地视觉模型(llama-server / LM Studio / Ollama)描述 |
-| `paste-image` | 粘贴图片发送会被"当前模型不支持图片"拒绝 | 粘贴瞬间把图片落盘成文件,路径写入草稿,配合 `tool-vision` 实现看图          |
+| 插件                | 解决什么问题                             | 一句话说明                                                                 |
+| ------------------- | ---------------------------------------- | -------------------------------------------------------------------------- |
+| `ds-balance`        | 官方状态栏看不到余额和用量               | stats 行下方加第二行:余额 + 今日/本月 token,每 5 分钟刷新                  |
+| `tool-vision`       | DeepSeek 模型不支持图片输入              | 本地识图工具,把图片交给本地视觉模型(llama-server / LM Studio / Ollama)描述 |
+| `paste-image`       | 粘贴图片发送会被"当前模型不支持图片"拒绝 | 粘贴瞬间把图片落盘成文件,路径写入草稿,配合 `tool-vision` 实现看图          |
+| `file-git-explorer` | 看不到项目文件和 git 状态                | 左右树浏览:左侧文件树(可见/隐藏/忽略三区)+ 右侧 git 树(分支/变更/diff)     |
 
 > `tool-vision` + `paste-image` 合起来的效果:你在输入框粘贴一张截图,agent 就能"看到"并描述它——完全绕开 DeepSeek 模型的图片输入限制。
 
@@ -31,6 +32,7 @@ cd dsh-plugin
 # <repo-abs-path> 换成你克隆下来的仓库绝对路径(link: 安装要求绝对路径)
 dsh plugin --profile web add link:<repo-abs-path>/plugins/ds-balance
 dsh plugin --profile web add link:<repo-abs-path>/plugins/paste-image
+dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer
 ```
 
 装完**重启 DSH 并硬刷新浏览器**(Cmd/Ctrl+Shift+R)生效。
@@ -135,6 +137,18 @@ agent 会自动调用;支持 PNG / JPEG / WebP / BMP / GIF。
 这样 agent 看到路径后,直接用 `tool-vision` 传该路径识别——绕开 DSH 主模型
 (DeepSeek)不支持图片的检查。限制:PNG / JPEG / WebP / GIF,单张 ≤ 30MB;
 文本粘贴不受影响。
+
+### file-git-explorer —— 左右树浏览
+
+左侧**文件树** + 右侧 **git 树**,夹在会话 header 与 composer 之间,可拉伸、
+可收起为细条、图钉锁定,不覆盖主对话区:
+
+- **左树三区**:可显示文件(排除 dot 与 .gitignore)/ 隐藏文件(dot 开头)/ 忽略文件(.gitignore 忽略项),根始终 = DSH 进程 cwd,逐级懒加载;点文件 → 内容悬浮面板(向右浮出,可越对话区),同时联动右树——有 diff 则定位高亮,不自动打开。
+- **右树**:当前分支(只读下拉,本地/远程分组,不支持切换)+ 变更列表(相对 HEAD,含暂存/未暂存/未跟踪,状态徽标);点变更 → diff 悬浮面板(向左浮出)。
+- **图钉 📌**:钉住后两面板都不能收起;未钉时点面板外自动收起为细条。
+- 面板宽度 / 开合 / 上次查看分支按仓库根缓存,切回自动恢复。
+
+详见 `plugins/file-git-explorer/README.md`。
 
 ## 常见问题速查
 
