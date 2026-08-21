@@ -477,6 +477,12 @@ window.__ModuleLoader__.load({
         }
       }
 
+      // 当前会话摘要: 从会话 store 快照取 current 对应的会话(无则返回 null)
+      function currentSession(s) {
+        if (!s || !s.current) return null;
+        return (s.byId && s.byId[s.current]) || null;
+      }
+
       // 延迟收起(张顿一点): 鼠标离开后用 delay(ms) 宽限, 期间移回则取消。
       // keepOnFloatOnly=true(侧栏): 只有移到悬浮栏才豁免收起(与悬浮栏联动);
       //                =false(悬浮栏): 移到任意 fge 元素都豁免(避免悬浮栏关闭其源侧栏)。
@@ -1187,7 +1193,7 @@ window.__ModuleLoader__.load({
               alive = false;
             };
           },
-          [props.change.path],
+          [props.change.path, props.statusVersion],
         );
 
         var body = null;
@@ -1262,11 +1268,24 @@ window.__ModuleLoader__.load({
         var sessionCwd = null;
         if (typeof useSessions === 'function') {
           sessionCwd = useSessions(function (s) {
-            if (!s || !s.current) return null;
-            var sess = s.byId && s.byId[s.current];
+            var sess = currentSession(s);
             return sess && typeof sess.cwd === 'string' && sess.cwd !== '' ? sess.cwd : null;
           });
         }
+
+        // 当前会话的 agent 运行态: turn 结束(running true→false)是自动刷新触发信号。
+        var running = false;
+        if (typeof useSessions === 'function') {
+          running = useSessions(function (s) {
+            var sess = currentSession(s);
+            return !!(sess && sess.running);
+          });
+        }
+        var prevRunningRef = React.useRef(running);
+        var pendingAutoRef = React.useRef(false);
+        var lastAutoRef = React.useRef(0);
+        var autoRefreshFnRef = React.useRef(null);
+        var autoRetryRef = React.useRef(null);
 
         var infoState = React.useState(null);
         var info = infoState[0];
@@ -1304,6 +1323,10 @@ window.__ModuleLoader__.load({
         var refreshTickState = React.useState(0);
         var refreshTick = refreshTickState[0];
         var setRefreshTick = refreshTickState[1];
+        // 状态版本: 每次 status 重取(自动/手动)递增, 驱动已打开的 diff 悬浮栏重拉
+        var statusVersionState = React.useState(0);
+        var statusVersion = statusVersionState[0];
+        var setStatusVersion = statusVersionState[1];
 
         var cacheKey = info ? info.repoRoot || info.cwd : null;
         var root = sessionCwd || (info ? info.cwd : null);
@@ -1377,7 +1400,44 @@ window.__ModuleLoader__.load({
           [cacheKey, leftW, rightW, leftOpen, rightOpen, viewedBranch],
         );
 
-        // 刷新: 重读 info + status, 树缓存作废
+        // 应用一次 status 结果: 更新状态、递增版本(驱动已打开 diff 重拉),
+        // 若打开的 diff 对应变更已不在变更集(如已提交)则关闭该悬浮栏。
+        var applyStatus = React.useCallback(function (st) {
+          if (!st || !st.ok) return;
+          setStatus(st);
+          setStatusVersion(function (v) {
+            return v + 1;
+          });
+          setDiff(function (prev) {
+            if (!prev || !prev.change) return prev;
+            if (Array.isArray(st.changes)) {
+              var latest = null;
+              for (var i = 0; i < st.changes.length; i++) {
+                if (st.changes[i].path === prev.change.path) {
+                  latest = st.changes[i];
+                  break;
+                }
+              }
+              if (!latest) return null; // 已不在变更集(如已提交) → 关闭
+              // 仍在变更集 → 用最新元数据替换(重拉 diff 用最新 status/from)
+              return { change: latest };
+            }
+            return prev;
+          });
+        }, []);
+
+        // 自动刷新用: 只重取 status(不重查 info, 不作废树缓存 —— 文件树仅走手动 ⟳)
+        var refreshStatus = React.useCallback(
+          function () {
+            if (!info || !info.repoRoot) return;
+            api('status', { root: info.cwd, repoRoot: info.repoRoot })
+              .then(applyStatus)
+              .catch(function () {});
+          },
+          [info, applyStatus],
+        );
+
+        // 手动刷新(⟳): 重读 info + status, 树缓存作废; 无视冷却, 立刻执行。
         var refresh = React.useCallback(
           function () {
             var req = root ? { root: root } : {};
@@ -1390,16 +1450,35 @@ window.__ModuleLoader__.load({
                 });
                 if (res.repoRoot) {
                   api('status', { root: res.cwd, repoRoot: res.repoRoot })
-                    .then(function (st) {
-                      if (st && st.ok) setStatus(st);
-                    })
+                    .then(applyStatus)
                     .catch(function () {});
                 }
               })
               .catch(function () {});
           },
-          [root],
+          [root, applyStatus],
         );
+
+        // 自动刷新(git 状态, 事件驱动): turn 结束(running true→false)触发。
+        // 冷却 1s; 仅当右侧面板可见时才真正重取, 不可见则挂起(面板下次展开时补刷)。
+        React.useEffect(
+          function () {
+            if (prevRunningRef.current && !running) {
+              if (autoRefreshFnRef.current) autoRefreshFnRef.current();
+            }
+            prevRunningRef.current = running;
+          },
+          [running],
+        );
+        // 卸载清理自动刷新的重试定时器
+        React.useEffect(function () {
+          return function () {
+            if (autoRetryRef.current) {
+              clearTimeout(autoRetryRef.current);
+              autoRetryRef.current = null;
+            }
+          };
+        }, []);
 
         // 悬停交互: 面板由「鼠标悬停细条展开 / 鼠标离开面板收起」驱动,
         // 未固定时鼠标离开面板即自动收起为细条; 固定时保持展开。
@@ -1497,6 +1576,41 @@ window.__ModuleLoader__.load({
         var rightWidth = rightCanShow ? clamp(rightW, MIN_W, rightMaxW) : 0;
         var leftShow = leftOpen && leftCanShow;
         var rightShow = rightOpen && rightCanShow;
+
+        // 自动刷新(git 状态): turn 结束(running true→false)时由上方事件触发。
+        // 冷却 1s; 仅当右侧面板可见(rightShow)时真正重取, 否则挂起待面板展开时补刷。
+        autoRefreshFnRef.current = function () {
+          var now = Date.now();
+          if (!rightShow) {
+            pendingAutoRef.current = true; // 不可见 → 必挂起(无论冷却)
+            return;
+          }
+          var remaining = 1000 - (now - lastAutoRef.current);
+          if (remaining > 0) {
+            // 可见但处于冷却: 安排一次冷却结束后的重试, 避免挂起刷新被丢弃
+            pendingAutoRef.current = true;
+            if (autoRetryRef.current) clearTimeout(autoRetryRef.current);
+            autoRetryRef.current = setTimeout(function () {
+              autoRetryRef.current = null;
+              lastAutoRef.current = Date.now();
+              pendingAutoRef.current = false;
+              refreshStatus();
+            }, remaining + 30);
+            return;
+          }
+          lastAutoRef.current = now;
+          pendingAutoRef.current = false;
+          refreshStatus();
+        };
+        // 面板从不可见变为可见时, 若挂起过一次自动刷新 → 立即触发(内部处理冷却/重试)
+        React.useEffect(
+          function () {
+            if (rightShow && pendingAutoRef.current) {
+              if (autoRefreshFnRef.current) autoRefreshFnRef.current();
+            }
+          },
+          [rightShow],
+        );
 
         // 拉伸
         var resize = function (side) {
@@ -1650,6 +1764,7 @@ window.__ModuleLoader__.load({
                 root: root,
                 change: diff.change,
                 repoRoot: info.repoRoot,
+                statusVersion: statusVersion,
                 onClose: function () {
                   setDiff(null);
                 },
