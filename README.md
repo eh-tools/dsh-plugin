@@ -20,6 +20,18 @@ DSH 的插件生态还在早期,本仓库把几个日常高频缺口做成了独
 
 > `tool-vision` + `paste-image` 合起来的效果:你在输入框粘贴一张截图,agent 就能"看到"并描述它——完全绕开 DeepSeek 模型的图片输入限制。
 
+## 效果展示
+
+### 主界面(Home 页面)
+
+![主界面截图](png/home_page.png)
+
+![主界面动效](png/home_page.gif)
+
+### 文件树 / Git 树演示
+
+<video controls width="100%" src="png/tree.mp4"></video>
+
 ## 快速上手
 
 前置:Node.js >= 20、已安装 DeepSeek Harness(`dsh` CLI)及 `web` profile。
