@@ -1293,13 +1293,13 @@ window.__ModuleLoader__.load({
         var statusState = React.useState(null);
         var status = statusState[0];
         var setStatus = statusState[1];
-        var pinState = React.useState(false);
+        var pinState = React.useState(true);
         var pin = pinState[0];
         var setPin = pinState[1];
-        var leftOpenState = React.useState(false);
+        var leftOpenState = React.useState(true);
         var leftOpen = leftOpenState[0];
         var setLeftOpen = leftOpenState[1];
-        var rightOpenState = React.useState(false);
+        var rightOpenState = React.useState(true);
         var rightOpen = rightOpenState[0];
         var setRightOpen = rightOpenState[1];
         var leftWState = React.useState(400);
@@ -1370,6 +1370,7 @@ window.__ModuleLoader__.load({
                 setStatus(st);
                 var cached = readCache(info.repoRoot);
                 if (cached) {
+                  if (typeof cached.pin === 'boolean') setPin(cached.pin);
                   if (typeof cached.leftW === 'number') setLeftW(cached.leftW);
                   if (typeof cached.rightW === 'number') setRightW(cached.rightW);
                   if (typeof cached.leftOpen === 'boolean') setLeftOpen(cached.leftOpen);
@@ -1385,11 +1386,12 @@ window.__ModuleLoader__.load({
           [root, info ? info.repoRoot : null],
         );
 
-        // 持久化 cwd 缓存
+        // 持久化 cwd 缓存(含固定态: 让「固定+展开」跨会话/刷新保留)
         React.useEffect(
           function () {
             if (!cacheKey) return;
             writeCache(cacheKey, {
+              pin: pin,
               leftW: leftW,
               rightW: rightW,
               leftOpen: leftOpen,
@@ -1397,7 +1399,7 @@ window.__ModuleLoader__.load({
               viewedBranch: viewedBranch,
             });
           },
-          [cacheKey, leftW, rightW, leftOpen, rightOpen, viewedBranch],
+          [cacheKey, pin, leftW, rightW, leftOpen, rightOpen, viewedBranch],
         );
 
         // 应用一次 status 结果: 更新状态、递增版本(驱动已打开 diff 重拉),
