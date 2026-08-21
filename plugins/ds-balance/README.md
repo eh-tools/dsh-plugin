@@ -3,7 +3,7 @@
 在 DSH Web 的官方 stats 状态栏**下方**显示独立第二行:
 
 ```
-DeepSeek ¥68.64 | 今日 34K tok | 本月 1.2M tok
+DeepSeek ¥68.64 | 今日 646 次 · 98M tok | 本月 25084 次 · 4B tok
 ```
 
 - 每 5 分钟自动刷新;悬停可看明细(总余额 / 赠送 / 充值 / 今日与本月输入输出 token 拆分)。
@@ -19,9 +19,18 @@ DeepSeek ¥68.64 | 今日 34K tok | 本月 1.2M tok
 
 用量接口是平台用量页 dashboard 的私有接口(未公开文档,可能变动):响应
 `data.biz_data.days[]` 按天返回,每天 `data[].usage[]` 含
-`PROMPT_CACHE_HIT_TOKEN` / `PROMPT_CACHE_MISS_TOKEN` / `RESPONSE_TOKEN`(token 数)。
-该接口**不返回调用次数**,因此第二行只显示 token 数。未配置 userToken 时退回
-`by_api_key/amount`(API key 认证,实测返回 `40003`),同样退化只显示余额。
+`PROMPT_CACHE_HIT_TOKEN` / `PROMPT_CACHE_MISS_TOKEN` / `RESPONSE_TOKEN`(token 数)
+与 `REQUEST`(调用次数)。
+
+> **口径(时区)**:`days[].date` 按 **UTC** 切天(接口忽略 `tz` 参数,实测
+> 请求发生在 UTC 时段的调用计入对应 UTC 日)。因此"今日"取**当前 UTC 日**的桶:
+> 对 UTC+8 用户,每天本地 `00:00~08:00` 的请求会**计入上一天(UTC)**的记录,
+> 这正是当天早上"今日"仍显示较多、而本地日期桶为 0 的原因——与平台官网用量页
+> 一致,不是插件瑕疵。相应的 `month`/`year` 也按 UTC 取,保证响应总是包含
+> 今日的 UTC 桶。
+
+未配置 userToken 时退回 `by_api_key/amount`(API key 认证,实测返回 `40003`),
+同样退化只显示余额。
 
 ### userToken 获取(平台网页登录态, 与 API key 无关)
 

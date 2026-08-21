@@ -254,9 +254,11 @@ export function apply(ctx) {
     const biz = data.biz_data;
     if (biz === undefined || typeof biz !== 'object') return null;
     const days = Array.isArray(biz.days) ? biz.days : [];
-    const now = new Date();
-    const pad = (n) => String(n).padStart(2, '0');
-    const todayKey = now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate());
+    // 平台用量接口的 days[].date 按 UTC 固定时区切天(实测 tz 参数被忽略)。
+    // 若用本地日期匹配, UTC+8 用户每天本地 00:00~08:00 的"今日"会指向一个
+    // 尚未开始累积的桶(该时段请求落入上一 UTC 日), 于是今日显示 0 而本月却很大。
+    // 因此按 UTC 取今天的日期字符串, 与平台桶标签对齐。
+    const todayKey = new Date().toISOString().slice(0, 10);
     const month = { requests: 0, promptCacheHit: 0, promptCacheMiss: 0, response: 0 };
     const today = { requests: 0, promptCacheHit: 0, promptCacheMiss: 0, response: 0 };
     let any = false;
@@ -301,8 +303,11 @@ export function apply(ctx) {
   async function queryUsage(keyValue, userToken) {
     const now = new Date();
     if (userToken !== undefined) {
-      const month = now.getMonth() + 1;
-      const year = now.getFullYear();
+      // days[].date 按 UTC 切天, month/year 也按 UTC 取。否则本地月上旬 00:00~08:00
+      // 时(UTC 仍是上个月)响应不含 todayKey, 今日会再次显示 0。
+      const todayKey = now.toISOString().slice(0, 10);
+      const month = Number(todayKey.slice(5, 7));
+      const year = Number(todayKey.slice(0, 4));
       const url = PLATFORM_AMOUNT_URL + '?month=' + month + '&year=' + year;
       const res = await httpGetJson(url, PLATFORM_HEADERS, userToken);
       if (res.error !== undefined) throw new Error('usage ' + res.error);
