@@ -137,3 +137,157 @@ export function diffArgs(entry, badge) {
   }
   return [...base, '--', entry.path];
 }
+
+// ---- 文件搜索(name search) ----
+
+/**
+ * 命中项的三区归属: 被忽略 > 任一路径段以点开头(隐藏) > 其余(可见)。
+ * 与树面板的逐条目分类口径一致(partitionChildren 的单条目视角)。
+ */
+export function searchZone(rel, ignored) {
+  if (ignored) return 'ignored';
+  const segs = String(rel).split('/');
+  for (const seg of segs) {
+    if (isDotName(seg)) return 'hidden';
+  }
+  return 'visible';
+}
+
+/**
+ * 从文件路径列表推导其全部祖先目录(去重、按名称排序)。
+ * git ls-files 只列文件; 目录命中项由此派生, 供搜索结果点目录 → 树内 reveal。
+ * 搜索命中项统一为 {rel, type, zone, nameHit} 形状(matchEntries 产出)。
+ */
+export function dirsFromPaths(paths) {
+  const seen = new Set();
+  for (const p of paths) {
+    const segs = String(p).split('/');
+    for (let i = 1; i < segs.length; i++) {
+      seen.add(segs.slice(0, i).join('/'));
+    }
+  }
+  return [...seen].sort(compareZh);
+}
+
+/** 大小写不敏感子串匹配 + 排序: 名字命中 > 仅路径命中 → 短路径优先 → 名称。 */
+export function matchEntries(entries, query) {
+  const q = String(query).trim().toLowerCase();
+  if (q === '') return [];
+  const hits = [];
+  for (const e of entries) {
+    const rel = String(e.rel);
+    const lower = rel.toLowerCase();
+    if (!lower.includes(q)) continue;
+    const base = rel.slice(rel.lastIndexOf('/') + 1);
+    hits.push({ ...e, nameHit: base.toLowerCase().includes(q) });
+  }
+  return hits.sort((a, b) => {
+    if (a.nameHit !== b.nameHit) return a.nameHit ? -1 : 1;
+    const dl = a.rel.length - b.rel.length;
+    if (dl !== 0) return dl;
+    return compareZh(a.rel, b.rel);
+  });
+}
+
+// ---- 提交历史(commit history) ----
+
+const LOG_FORMAT = '%H%x00%h%x00%an%x00%at%x00%s';
+
+/**
+ * ref 是否可安全作为 git argv 参数(无 shell, 主要防选项注入与区间语法):
+ * 拒绝 `-` 开头、`..` 区间、空白/NUL、reflog `@{`。
+ */
+export function safeRef(ref) {
+  if (typeof ref !== 'string') return false;
+  const r = ref.trim();
+  if (r === '' || r.length > 200) return false;
+  if (r.startsWith('-') || r.includes('..') || r.includes('@{')) return false;
+  if (/[\s\0]/.test(r)) return false;
+  return true;
+}
+
+/** hash 是否为纯十六进制串(7~64 位), 供 git show 使用。 */
+export function safeHash(hash) {
+  return typeof hash === 'string' && /^[0-9a-fA-F]{7,64}$/.test(hash);
+}
+
+/**
+ * git log argv: NUL 分隔字段(hash 全/短, 作者, unix 时间戳, subject)。
+ * ref 为 null/非法时缺省 HEAD; skip 钳制 ≥0, limit 钳制 1..500。
+ */
+export function logArgs(ref, skip, limit) {
+  const sk = Math.max(0, Math.floor(Number(skip) || 0));
+  const lim = Math.min(500, Math.max(1, Math.floor(Number(limit) || 50)));
+  const args = ['-c', 'core.quotepath=false', 'log', '--format=' + LOG_FORMAT];
+  args.push('--skip=' + String(sk), '-n', String(lim));
+  if (safeRef(ref)) args.push(ref.trim());
+  return args;
+}
+
+/** 解析 logArgs 的输出; 字段不足或时间非数字的行跳过。 */
+export function parseLogOut(text) {
+  const commits = [];
+  for (const line of String(text).split('\n')) {
+    if (line === '') continue;
+    const f = line.split('\0');
+    if (f.length < 5 || f[0] === '') continue;
+    const at = Number(f[3]);
+    if (!Number.isFinite(at)) continue;
+    commits.push({ hash: f[0], short: f[1], author: f[2], at: at, subject: f[4] });
+  }
+  return commits;
+}
+
+/**
+ * 解析 `diff-tree --numstat -z` 输出(实测钉死, 见 README「实现事实」):
+ *   首个 token 是提交 hash; 普通条目 = "A\tD\t<path>\0";
+ *   rename/copy 条目 = "A\tD\t\0<from>\0<to>\0"(计数 token 内路径位为空,
+ *   紧跟旧、新两个裸路径 token)。二进制行 A/D 为 "-" → 归一为 null。
+ */
+export function parseNumStatZ(text) {
+  const stats = [];
+  const num = (v) => (/^\d+$/.test(v) ? Number(v) : null);
+  const tokens = String(text).split('\0');
+  for (let i = 1; i < tokens.length;) {
+    const t = tokens[i];
+    if (t === undefined || t === '') {
+      i++;
+      continue;
+    }
+    const i1 = t.indexOf('\t');
+    if (i1 < 0) {
+      i++;
+      continue;
+    }
+    const i2 = t.indexOf('\t', i1 + 1);
+    if (i2 < 0) {
+      i++;
+      continue;
+    }
+    const adds = num(t.slice(0, i1));
+    const dels = num(t.slice(i1 + 1, i2));
+    const inlinePath = t.slice(i2 + 1);
+    if (inlinePath !== '') {
+      stats.push({ adds: adds, dels: dels, path: inlinePath });
+      i++;
+      continue;
+    }
+    // rename/copy: 计数 token 路径位为空, 后跟 旧路径、新路径 两个裸 token
+    const from = tokens[i + 1];
+    const to = tokens[i + 2];
+    if (typeof to === 'string' && to !== '') {
+      stats.push({ adds: adds, dels: dels, path: to, from: from });
+      i += 3;
+    } else {
+      i++;
+    }
+  }
+  return stats;
+}
+
+/** 由 `rev-list --parents -n1 <hash>` 输出计父提交数(首个 token 是自身)。 */
+export function parentsFromRevList(text) {
+  const tokens = String(text).trim().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return null;
+  return tokens.length - 1;
+}

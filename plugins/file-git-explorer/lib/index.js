@@ -13,6 +13,9 @@
  *   POST /fge/api/status  → { root?, repoRoot } → 分支列表 + 工作区变更列表
  *   POST /fge/api/diff    → { repoRoot, path, status, from } → 单文件 diff
  *   POST /fge/api/file    → { root?, path } → 文件内容预览(≤1MiB, NUL 探测)
+ *   POST /fge/api/search  → { root?, query } → 按名搜索命中项(三区徽标, 截断上限)
+ *   POST /fge/api/log     → { repoRoot, ref?, skip?, limit? } → 分页提交列表 + head
+ *   POST /fge/api/show    → { repoRoot, hash, path? } → 单提交详情/merge 标记/单文件 diff
  *
  * git 一律经 subprocess 服务执行(argv 数组, 无 shell), 路径全部做防穿越校验:
  * 文件树/file 只能落在 root 之下, diff/status 的仓库根必须是绝对路径。
@@ -30,6 +33,15 @@ import {
   partitionChildren,
   diffArgs,
   compareZh,
+  searchZone,
+  dirsFromPaths,
+  matchEntries,
+  safeRef,
+  safeHash,
+  logArgs,
+  parseLogOut,
+  parseNumStatZ,
+  parentsFromRevList,
 } from './git.js';
 
 export const name = 'dsh-file-git-explorer';
@@ -40,6 +52,8 @@ export const inject = ['webServer'];
 const FILE_CAP = 1024 * 1024; // 单文件内容预览上限 1 MiB
 const BODY_CAP = 256 * 1024; // 请求体上限
 const ROUTE_PREFIX = '/fge/api';
+const SEARCH_SCAN_CAP = 20000; // 搜索扫描条目上限(超出即截断, 忽略区可能巨大)
+const SEARCH_RETURN_CAP = 300; // 搜索返回条目上限(排序后截断)
 
 export function apply(ctx) {
   const CWD = process.cwd();
@@ -80,6 +94,20 @@ export function apply(ctx) {
     const found = await findRepoRoot(base);
     repoRootCache.set(base, found);
     return found;
+  }
+
+  /** 校验 body.repoRoot: 缺失 → no-repo, 非绝对路径 → invalid-root; 否则给绝对路径。 */
+  function absRepoRootOf(body) {
+    const root = typeof body.repoRoot === 'string' ? body.repoRoot : '';
+    if (root === '') return { error: 'no-repo' };
+    if (!path.isAbsolute(root)) return { error: 'invalid-root' };
+    return { dir: path.resolve(root) };
+  }
+
+  /** 某目录下的 HEAD 全 hash(空仓库 / 失败返回 null)。 */
+  async function headOf(cwd) {
+    const r = await runGit(['rev-parse', 'HEAD'], { cwd });
+    return r.exitCode === 0 ? r.stdout.trim() || null : null;
   }
 
   /** 执行 git。input 存在时走 stdin pipe; 非零退出不抛错, 由调用方判断。 */
@@ -171,17 +199,19 @@ export function apply(ctx) {
 
   // ---- API handlers ----
 
-  /** info: 返回某根目录(缺省 cwd)的仓库根与当前分支。 */
+  /** info: 返回某根目录(缺省 cwd)的仓库根、当前分支与 HEAD。 */
   async function handleInfo(body) {
     const base = baseOf(body);
     if (base === null) return { ok: false, error: 'invalid-root' };
     const repoRoot = await repoRootFor(base);
     let branch = null;
+    let head = null;
     if (repoRoot !== null) {
       const r = await runGit(['branch', '--show-current'], { cwd: repoRoot });
       if (r.exitCode === 0) branch = r.stdout.trim() || null;
+      head = await headOf(repoRoot);
     }
-    return { ok: true, cwd: base, repoRoot, branch };
+    return { ok: true, cwd: base, repoRoot, branch, head };
   }
 
   /** 目录条目(三区分组)。path = root 相对路径, '' 表示根本身。 */
@@ -236,12 +266,11 @@ export function apply(ctx) {
 
   /** git 状态: 分支列表 + 变更列表(相对 HEAD, 含未跟踪)。 */
   async function handleStatus(body) {
-    const root = typeof body.repoRoot === 'string' ? body.repoRoot : '';
-    if (root === '') return { ok: false, error: 'no-repo' };
-    if (!path.isAbsolute(root)) return { ok: false, error: 'invalid-root' };
+    const rr = absRepoRootOf(body);
+    if (rr.error) return { ok: false, error: rr.error };
     const base = baseOf(body);
     if (base === null) return { ok: false, error: 'invalid-root' };
-    const absRoot = path.resolve(root);
+    const absRoot = rr.dir;
     const r = await runGit(['status', '--porcelain=v1', '-z', '--untracked-files=all'], {
       cwd: absRoot,
     });
@@ -284,7 +313,74 @@ export function apply(ctx) {
     }
     const cur = await runGit(['branch', '--show-current'], { cwd: absRoot });
     const current = cur.exitCode === 0 ? cur.stdout.trim() : null;
-    return { ok: true, current, branches, changes };
+    const head = await headOf(absRoot);
+    return { ok: true, current, head, branches, changes };
+  }
+
+  /**
+   * 提交历史: 查看分支(缺省 HEAD)的分页 log。
+   * ref 显式给出但不合法时拒绝(invalid-ref), 缺省时回退 HEAD。
+   */
+  async function handleLog(body) {
+    const root = typeof body.repoRoot === 'string' ? body.repoRoot : '';
+    if (root === '') return { ok: false, error: 'no-repo' };
+    if (!path.isAbsolute(root)) return { ok: false, error: 'invalid-root' };
+    const absRoot = path.resolve(root);
+    let ref = null;
+    if (body.ref !== undefined && body.ref !== null) {
+      if (typeof body.ref !== 'string' || !safeRef(body.ref)) {
+        return { ok: false, error: 'invalid-ref' };
+      }
+      ref = body.ref.trim();
+    }
+    const r = await runGit(logArgs(ref, body.skip, body.limit), { cwd: absRoot });
+    if (r.exitCode !== 0) {
+      return { ok: false, error: 'git-log-failed', stderr: r.stderr.slice(0, 300) };
+    }
+    const rh = await runGit(['rev-parse', 'HEAD'], { cwd: absRoot });
+    const head = rh.exitCode === 0 ? rh.stdout.trim() || null : null;
+    return { ok: true, ref, head, commits: parseLogOut(r.stdout) };
+  }
+
+  /**
+   * 单提交详情: message + 按文件 ±行数(diff-tree --root --numstat);
+   * merge 提交(combined diff 无阅读价值)只返回 message; 带 path 时返回该文件 diff。
+   */
+  async function handleShow(body) {
+    const root = typeof body.repoRoot === 'string' ? body.repoRoot : '';
+    if (root === '') return { ok: false, error: 'no-repo' };
+    if (!path.isAbsolute(root)) return { ok: false, error: 'invalid-root' };
+    const absRoot = path.resolve(root);
+    const hash = typeof body.hash === 'string' ? body.hash.trim() : '';
+    if (!safeHash(hash)) return { ok: false, error: 'invalid-hash' };
+    const rp = await runGit(['rev-list', '--parents', '-n', '1', hash], { cwd: absRoot });
+    if (rp.exitCode !== 0) {
+      return { ok: false, error: 'git-show-failed', stderr: rp.stderr.slice(0, 300) };
+    }
+    const parentCount = parentsFromRevList(rp.stdout);
+    if (parentCount === null) return { ok: false, error: 'git-show-failed' };
+    const rm = await runGit(['-c', 'core.quotepath=false', 'show', '-s', '--format=%B', hash], {
+      cwd: absRoot,
+    });
+    const message = rm.exitCode === 0 ? rm.stdout : '';
+    const rel = typeof body.path === 'string' ? body.path : '';
+    if (parentCount > 1) return { ok: true, kind: 'merge', message };
+    if (rel !== '') {
+      const abs = resolveWithin(absRoot, rel);
+      if (abs === null) return { ok: false, error: 'outside-repo' };
+      const rd = await runGit(
+        ['-c', 'core.quotepath=false', 'show', '--format=', hash, '--', rel],
+        { cwd: absRoot },
+      );
+      if (rd.exitCode !== 0) return { ok: false, error: 'git-show-failed' };
+      return { ok: true, kind: 'diff', text: rd.stdout };
+    }
+    const rs = await runGit(
+      ['-c', 'core.quotepath=false', 'diff-tree', '--root', '-r', '--numstat', '-M', '-z', hash],
+      { cwd: absRoot },
+    );
+    if (rs.exitCode !== 0) return { ok: false, error: 'git-show-failed' };
+    return { ok: true, kind: 'commit', message, files: parseNumStatZ(rs.stdout) };
   }
 
   /** 单文件 diff(相对 HEAD); 未跟踪/空 diff 回退为内容预览。 */
@@ -330,6 +426,105 @@ export function apply(ctx) {
     return p;
   }
 
+  /**
+   * 文件搜索(按名/相对路径, 大小写不敏感子串): 三区覆盖 + 截断上限。
+   * git 仓库: `ls-files -c -o --exclude-standard`(可见+隐藏)与
+   * `ls-files -o -i --exclude-standard`(忽略)各扫一遍; 目录命中项由文件路径
+   * 派生(dirsFromPaths)。非 git 目录回退 fs 递归扫描(不跟符号链接, 无忽略区)。
+   */
+  async function handleSearch(body) {
+    const base = baseOf(body);
+    if (base === null) return { ok: false, error: 'invalid-root' };
+    const query = typeof body.query === 'string' ? body.query : '';
+    if (query.trim() === '') return { ok: true, matches: [], truncated: false };
+    const repoRoot = await repoRootFor(base);
+    /** 收集器: 只收文件(目录统一由 dirsFromPaths 派生), rel 为 base 相对 posix。 */
+    const plainFiles = [];
+    const ignoredFiles = [];
+    let truncated = false;
+    let scanCount = 0;
+    const bump = () => {
+      scanCount++;
+      if (scanCount > SEARCH_SCAN_CAP) {
+        truncated = true;
+        return false;
+      }
+      return true;
+    };
+
+    if (repoRoot !== null) {
+      // repo 相对路径 → base 相对路径; 越出 base(root 之外)的条目丢弃。
+      const toBaseRel = (repoRel) => {
+        const abs = path.join(repoRoot, repoRel);
+        const rel = path.relative(base, abs);
+        if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) return null;
+        return rel.split(path.sep).join('/');
+      };
+      const lsFiles = async (args, sink) => {
+        const r = await runGit(args, { cwd: repoRoot });
+        if (r.exitCode !== 0) return false;
+        for (const token of r.stdout.split('\0')) {
+          if (token === '') continue;
+          if (!bump()) break;
+          const rel = toBaseRel(token);
+          if (rel !== null) sink.push(rel);
+        }
+        return true;
+      };
+      const okPlain = await lsFiles(
+        ['ls-files', '-c', '-o', '--exclude-standard', '-z'],
+        plainFiles,
+      );
+      if (!okPlain) return { ok: false, error: 'git-ls-failed' };
+      // 忽略清单失败不致命(忽略区为空), 与树面板的容错口径一致。
+      await lsFiles(['ls-files', '-o', '-i', '--exclude-standard', '-z'], ignoredFiles).catch(
+        () => {},
+      );
+    } else {
+      const stack = [''];
+      while (stack.length > 0 && !truncated) {
+        const relDir = stack.pop();
+        let dirents;
+        try {
+          dirents = await fsp.readdir(path.join(base, relDir), { withFileTypes: true });
+        } catch {
+          continue; // 无权限/已消失的分支直接跳过
+        }
+        for (const d of dirents) {
+          if (d.name === '.git') continue;
+          if (!bump()) break;
+          if (d.isDirectory()) stack.push(relDir === '' ? d.name : relDir + '/' + d.name);
+          else plainFiles.push(relDir === '' ? d.name : relDir + '/' + d.name);
+        }
+      }
+    }
+
+    const entries = [];
+    const addGroup = (rels, ignored) => {
+      const seen = new Set();
+      for (const rel of rels) {
+        if (seen.has(rel)) continue; // -c/-o 理论不相交, 防御去重
+        seen.add(rel);
+        entries.push({ rel, type: 'file', zone: searchZone(rel, ignored) });
+      }
+      for (const rel of dirsFromPaths(rels)) {
+        if (!seen.has(rel)) entries.push({ rel, type: 'dir', zone: searchZone(rel, ignored) });
+      }
+    };
+    addGroup(plainFiles, false);
+    addGroup(ignoredFiles, true);
+
+    const ranked = matchEntries(entries, query);
+    const matches = ranked.slice(0, SEARCH_RETURN_CAP).map((e) => ({
+      rel: e.rel,
+      type: e.type,
+      zone: e.zone,
+      nameHit: e.nameHit,
+    }));
+    if (ranked.length > matches.length) truncated = true;
+    return { ok: true, matches, truncated };
+  }
+
   // ---- 路由与信任栅栏(与 ds-balance 同款) ----
 
   const HANDLERS = {
@@ -338,6 +533,9 @@ export function apply(ctx) {
     status: handleStatus,
     diff: handleDiff,
     file: handleFile,
+    search: handleSearch,
+    log: handleLog,
+    show: handleShow,
   };
 
   function isTrustedRequest(req) {

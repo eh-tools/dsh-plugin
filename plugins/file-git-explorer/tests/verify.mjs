@@ -146,6 +146,7 @@ assert.ok(st.body.current === null || typeof st.body.current === 'string');
 assert.ok(Array.isArray(st.body.branches) && st.body.branches.length >= 1, 'branches 应为非空数组');
 assert.ok(!st.body.branches.some((b) => b.name.endsWith('/HEAD')), '应过滤 */HEAD 符号引用');
 assert.ok(Array.isArray(st.body.changes), 'changes 应为数组');
+assert.ok(st.body.head === null || typeof st.body.head === 'string', 'head 应为 string|null');
 ok('status: 分支/变更/HEAD 过滤');
 
 // 6. diff: 取当前第一个变更动态校验(状态无关); 若工作区干净则跳过
@@ -216,5 +217,74 @@ assert.equal(badHost.status, 403);
 const get = await callAt('GET', base('info'), undefined);
 assert.equal(get.status, 405);
 ok('信任栅栏: 头/回环/POST 校验');
+
+// 4b. search: 子串命中 / 三区徽标 / 空查询(状态无关: 只断言仓库自身固定内容)
+const sVis = await callAt('POST', base('search'), { query: 'CONTEXT.md' });
+assert.equal(sVis.body.ok, true);
+const ctxHit = sVis.body.matches.find((m) => m.rel === 'CONTEXT.md');
+assert.ok(ctxHit, 'search 应命中 CONTEXT.md');
+assert.equal(ctxHit.zone, 'visible');
+assert.equal(ctxHit.nameHit, true);
+const sDir = await callAt('POST', base('search'), { query: 'plugins' });
+assert.equal(sDir.body.ok, true);
+assert.ok(
+    sDir.body.matches.some((m) => m.type === 'dir' && m.rel === 'plugins'),
+    '应含由文件路径派生的目录命中(plugins)',
+);
+const sDot = await callAt('POST', base('search'), { query: '.gitmessage' });
+assert.equal(sDot.body.ok, true);
+const dotHit = sDot.body.matches.find((m) => m.rel === '.gitmessage');
+assert.ok(dotHit, 'search 应命中根级 dotfile .gitmessage');
+assert.equal(dotHit.zone, 'hidden');
+const sEmpty = await callAt('POST', base('search'), { query: '   ' });
+assert.deepEqual(sEmpty.body.matches, []);
+const sNone = await callAt('POST', base('search'), { query: 'zzz-no-such-entry-xyz' });
+assert.equal(sNone.body.ok, true);
+assert.equal(sNone.body.matches.length, 0);
+ok('search: 可见/隐藏区命中 + 空查询/无命中');
+
+// 11. log: 提交列表 / ref 指定 / 分页越界 / 非法 ref 拒绝
+const repoRootV = info.body.repoRoot;
+const lg = await callAt('POST', base('log'), { repoRoot: repoRootV });
+assert.equal(lg.body.ok, true);
+assert.ok(Array.isArray(lg.body.commits) && lg.body.commits.length >= 1, 'log 应至少一条提交');
+assert.equal(typeof lg.body.head, 'string', 'log.head 应为 HEAD 全 hash');
+const c0 = lg.body.commits[0];
+assert.ok(c0.hash.length >= 7 && typeof c0.subject === 'string' && typeof c0.at === 'number');
+const lRef = await callAt('POST', base('log'), {
+    repoRoot: repoRootV,
+    ref: st.body.branches[0].name,
+});
+assert.equal(lRef.body.ok, true, '合法分支名作 ref 应 ok');
+const lFar = await callAt('POST', base('log'), { repoRoot: repoRootV, skip: 1000000, limit: 10 });
+assert.equal(lFar.body.ok, true);
+assert.deepEqual(lFar.body.commits, []);
+const lBad = await callAt('POST', base('log'), { repoRoot: repoRootV, ref: '-evil' });
+assert.equal(lBad.body.ok, false);
+assert.equal(lBad.body.error, 'invalid-ref');
+ok('log: 列表/ref/分页越界/非法 ref');
+
+// 12. show: 单提交详情(message + 文件 ±行数)/ 单文件 diff / 非法 hash 拒绝
+const sh = await callAt('POST', base('show'), { repoRoot: repoRootV, hash: c0.hash });
+assert.equal(sh.body.ok, true);
+assert.ok(sh.body.kind === 'commit' || sh.body.kind === 'merge', 'show kind 应合法');
+if (sh.body.kind === 'commit') {
+    assert.ok(typeof sh.body.message === 'string' && sh.body.message.trim().length > 0);
+    assert.ok(Array.isArray(sh.body.files));
+    const textFile = sh.body.files.find((f) => f.adds !== null);
+    if (textFile !== undefined) {
+        const sf = await callAt('POST', base('show'), {
+            repoRoot: repoRootV,
+            hash: c0.hash,
+            path: textFile.path,
+        });
+        assert.equal(sf.body.ok, true, '单文件 diff 应 ok');
+        assert.equal(sf.body.kind, 'diff');
+    }
+}
+const sBadHash = await callAt('POST', base('show'), { repoRoot: repoRootV, hash: '../etc/passwd' });
+assert.equal(sBadHash.body.ok, false);
+assert.equal(sBadHash.body.error, 'invalid-hash');
+ok('show: 详情/diff/非法 hash');
 
 console.log('\nHOST LOGIC CHECKS PASSED (' + passed + ' groups)');
