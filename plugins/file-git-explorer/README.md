@@ -1,6 +1,6 @@
 # dsh-file-git-explorer
 
-左右树浏览插件 —— 左侧**文件树**(可见 / 隐藏 / 忽略三区, 根 = 当前会话工作区) + 右侧 **git 树**(当前分支只读下拉、工作区变更列表、悬浮 diff)。两个面板夹在会话 header 与 composer card 之间, 可左右拉伸、可收起为细条、图钉锁定, 不覆盖主对话区。
+左右树浏览插件 —— 左侧**文件树**(可见 / 隐藏 / 忽略三区, 根 = 当前会话工作区, 支持按名搜索) + 右侧 **git 树**(当前分支只读下拉、工作区变更列表、悬浮 diff、查看分支的**提交历史**)。两个面板夹在会话 header 与 composer card 之间, 可左右拉伸、可收起为细条、图钉锁定, 不覆盖主对话区。
 
 静态双半插件(host + client bundle), 随 web profile 启动自动加载。
 
@@ -48,12 +48,31 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer
 - 点文件同时触发**联动**: 右侧 git 树若存在该文件 diff, 滚动定位并闪现高亮; **不自动打开 diff**; 无 diff 则无操作。
 - 目录单击 = 展开 / 折叠切换。
 
+#### 文件搜索(name search)
+
+- 头部**放大镜**展开搜索框, 输入防抖 ~150ms 即时按名检索——大小写不敏感子串匹配
+  相对路径, **不读取、不检索文件内容**; 三区树被平铺结果替换, Esc / 清空即恢复。
+- 每条结果带分区徽标(**显 / 隐 / 忽**); 排序 = 名字命中 > 仅路径命中 → 短路径优先;
+  扫描上限 20 000 条、返回上限 300 条, 超出时列表尾提示「已截断」。
+- 点击**文件**命中 → 打开内容悬浮面板并联动右树(与点树内文件完全一致);
+  点击**目录**命中 → 关闭搜索并在对应分区树内逐级 reveal 展开到目标并高亮
+  (混合链如 `src/.env` 在该区不可达时, 退化为高亮可达的最深祖先)。
+- 非 git 工作区回退 fs 递归扫描(不跟符号链接, 无忽略区); 会话切根自动清空搜索态。
+
 ### 右侧 git 树
 
 - 顶部: 当前分支(前有竖着 git 分支 SVG 图标; 实时读 `git branch --show-current`), 点击从**面板左侧**弹出**所有分支下拉**(本地 / 远程分组, 只读, 不支持切换; 点非当前分支仅标记「上次查看」)。
 - 下方: 工作区相对 **HEAD** 的变更列表(已暂存 + 未暂存 + 未跟踪), 平铺 + 状态徽标(`M`/`A`/`D`/`R`/`U`), 按路径排序。
 - 点变更文件 → **diff 悬浮面板向左浮出**(unified, 行级 +/− 着色, 增删行内容同样做**代码语法高亮**; 未跟踪文件显示内容; rename 用 `-M` 双路径 diff; 二进制显示提示)。再点同一项或点 ✕ 关闭。
-- 非 git 目录: 右侧树显示「(工作区干净)」占位, 分支区为空。
+- 非 git 目录: 右侧树显示「(工作区干净)」占位, 分支区为空, 历史按钮置灰。
+
+#### 提交历史(commit history)
+
+- 头部**时钟按钮**向左浮出历史面板, 与 diff 浮层**互斥共享锚位**(开一关一)。
+- 跟随「**查看分支**」= 分支下拉里最后点击的分支(默认当前分支; 分支被删时回退当前分支)——下拉里的「上次查看」标记由此获得实际用途。
+- 列表每页 50 条, 滚动到底自动追加(`--skip` 分页); 条目 = subject + 作者 · 相对时间 · 短 hash。
+- 点条目进入详情: 完整提交说明 + 按文件 ±行数列表(numstat), 点文件懒加载该提交内此文件的 diff; **merge 提交只显示说明、不展示 diff**(combined diff 无阅读价值)。
+- agent turn 结束的自动刷新同样覆盖历史: 面板可见且 HEAD 变了才整页重拉已加载页数, 尽量保留滚动位置; Esc / 收起右栏 / 切换工作区都会关闭历史浮层。
 
 ## cwd 缓存
 
@@ -64,13 +83,16 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer
 
 信任栅栏与 `dsh-ds-balance` 同款: 仅回环地址 + `x-dsh-plugin: 1` 头 + POST。所有路径做防穿越校验(文件树/file 只能落在请求 `root` 之下, `root`/`repoRoot` 必须是绝对路径)。
 
-| 路由                   | 请求体                                  | 返回                                             |
-| ---------------------- | --------------------------------------- | ------------------------------------------------ |
-| `POST /fge/api/info`   | `{root?}`                               | `{cwd(=root), repoRoot, branch}`                 |
-| `POST /fge/api/tree`   | `{root?, path, mode, reveal}`           | 目录三区条目 `[{name, rel, type, dot, ignored}]` |
-| `POST /fge/api/status` | `{root?, repoRoot}`                     | `{current, branches[], changes[]}`               |
-| `POST /fge/api/diff`   | `{root?, repoRoot, path, status, from}` | `{kind: 'diff'\|'untracked', text, ...}`         |
-| `POST /fge/api/file`   | `{root?, path}`                         | `{text, binary, truncated, size}`                |
+| 路由                   | 请求体                                   | 返回                                                        |
+| ---------------------- | ---------------------------------------- | ----------------------------------------------------------- |
+| `POST /fge/api/info`   | `{root?}`                                | `{cwd(=root), repoRoot, branch, head}`                      |
+| `POST /fge/api/tree`   | `{root?, path, mode, reveal}`            | 目录三区条目 `[{name, rel, type, dot, ignored}]`            |
+| `POST /fge/api/status` | `{root?, repoRoot}`                      | `{current, head, branches[], changes[]}`                    |
+| `POST /fge/api/diff`   | `{root?, repoRoot, path, status, from}`  | `{kind: 'diff'\|'untracked', text, ...}`                    |
+| `POST /fge/api/file`   | `{root?, path}`                          | `{text, binary, truncated, size}`                           |
+| `POST /fge/api/search` | `{root?, query}`                         | `{matches[{rel, type, zone, nameHit}], truncated}`          |
+| `POST /fge/api/log`    | `{root?, repoRoot, ref?, skip?, limit?}` | `{ref, head, commits[{hash, short, author, at, subject}]}`  |
+| `POST /fge/api/show`   | `{root?, repoRoot, hash, path?}`         | `{kind: 'commit'\|'merge'\|'diff', message, files[], text}` |
 
 git 一律经 `subprocess` 服务执行(argv 数组, 无 shell)。
 
@@ -80,6 +102,11 @@ git 一律经 `subprocess` 服务执行(argv 数组, 无 shell)。
 - `git check-ignore` 必须 `--stdin -z`(argv 模式不允许 `-z`), 只输出命中的路径(exit 0 = 有命中, 1 = 无)。
 - `git diff HEAD -- <新路径>` 对 rename 只会显示 new file, 必须 `-M -- <新> <旧>` 才能出 rename diff; 未跟踪文件 diff 为空, 回退读内容。
 - 非 ASCII 路径在 diff 里默认 octal 转义, 统一加 `-c core.quotepath=false`。
+- `git ls-files -c -o --exclude-standard -z` 与 `-o -i --exclude-standard -z` 分别给出「可见+隐藏」「忽略」的全量文件清单; 搜索的目录命中项由文件路径派生(`dirsFromPaths`), 与懒加载树语义解耦。
+- `git log --format=%H%x00%h%x00%an%x00%at%x00%s`: 字段 NUL 分隔、条目换行分隔, 作者名/主题含空格安全; 分页用 `--skip` + `-n`。
+- merge 提交识别: `git rev-list --parents -n 1 <hash>` 数父提交(>1 即 merge); 单文件 diff 用 `git show --format= <hash> -- <path>` 输出纯 diff, 首个提交需 `diff-tree --root` 才有 numstat。
+- numstat 取文件清单必须 `-z`: 默认输出把 rename 打成 `old =>{new}` 箭头串(pathspec 无法命中); `-z` 下为 hash\0 + `A\tD\t<路径>\0`, rename 是 `A\tD\t\0<旧>\0<新>\0`(计数 token 路径位为空, 后跟旧、新两个裸 token), 解析见 `parseNumStatZ`。
+- ref/hash 一律 argv 直传且先过白校验(safeRef 拒 `-` 开头 / `..` / 空白 / `@{`; safeHash 只收十六进制串), 无 shell 可注入面。
 - 面板锚点全部用稳定 data 属性: `[data-conversation-scroll]`、`[data-composer-card="true"]`; 对话列宽读 `--dsh-chat-content-width`; 不依赖任何哈希类名(`uV2eYG_*`/`wSkVaW_*` 等跨构建不稳定)。
 
 ## 测试与静态检查
@@ -94,4 +121,4 @@ eslint .                   # 仓库统一 lint(client bundle 按惯例忽略)
 
 ## 术语
 
-「cwd」「可见组 / 隐藏组 / 忽略组」「悬浮面板」「细条」「图钉」「联动」「diff 范围」「分支」「cwd 缓存」「树面板」的定义见仓库根 `CONTEXT.md`。
+「cwd」「可见组 / 隐藏组 / 忽略组」「悬浮面板」「细条」「图钉」「联动」「diff 范围」「分支」「查看分支」「文件搜索」「提交历史」「刷新」「cwd 缓存」「树面板」的定义见仓库根 `CONTEXT.md`。

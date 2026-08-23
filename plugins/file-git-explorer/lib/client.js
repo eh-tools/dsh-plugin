@@ -144,7 +144,35 @@ window.__ModuleLoader__.load({
         '.fge-resize::after{content:"";position:absolute;top:0;bottom:0;left:50%;width:2px;margin-left:-1px;background:transparent;transition:background .15s;}' +
         '.fge-resize:hover::after{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 14%,transparent);}' +
         '.fge-resize-left{right:-3px;}' +
-        '.fge-resize-right{left:-3px;}';
+        '.fge-resize-right{left:-3px;}' +
+        '.fge-search-row{display:flex;align-items:center;gap:4px;padding:4px 8px;border-bottom:1px solid var(--dsw-alias-border-l1);flex:none;}' +
+        '.fge-search-input{flex:1;min-width:0;background:var(--dsw-alias-bg-layer-2);border:1px solid transparent;border-radius:6px;' +
+        'color:var(--dsw-alias-label-primary);padding:3px 8px;font-size:12px;outline:none;}' +
+        '.fge-search-input:focus{border-color:color-mix(in srgb,var(--dsw-alias-brand-primary) 45%,transparent);}' +
+        '.fge-search-input::placeholder{color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));}' +
+        '.fge-result{display:flex;align-items:center;gap:6px;padding:2px 8px;cursor:pointer;white-space:nowrap;' +
+        'color:var(--dsw-alias-label-secondary);border-radius:4px;}' +
+        '.fge-result:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);}' +
+        '.fge-result-name{flex:none;max-width:60%;overflow:hidden;text-overflow:ellipsis;}' +
+        '.fge-result-dir{flex:1;min-width:0;color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));' +
+        'font-size:11px;overflow:hidden;text-overflow:ellipsis;text-align:right;}' +
+        '.fge-badge-v{color:var(--dsw-alias-brand-primary);background:color-mix(in srgb,var(--dsw-alias-brand-primary) 15%,transparent);}' +
+        '.fge-badge-h{color:var(--dsw-alias-state-warn-primary);background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 15%,transparent);}' +
+        '.fge-badge-i{color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-2);}' +
+        '.fge-commit{padding:3px 8px;border-radius:4px;cursor:pointer;color:var(--dsw-alias-label-secondary);}' +
+        '.fge-commit:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);}' +
+        '.fge-commit-subject{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
+        '.fge-commit-meta{display:flex;align-items:center;gap:6px;margin-top:1px;' +
+        'font-size:10px;color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));}' +
+        '.fge-hash{font-family:Consolas,Menlo,monospace;}' +
+        '.fge-stat-add{color:var(--dsw-alias-state-success-primary);flex:none;}' +
+        '.fge-stat-del{color:var(--dsw-alias-state-error-primary);flex:none;}' +
+        '.fge-cfile{display:flex;align-items:center;gap:8px;padding:2px 4px;border-radius:4px;cursor:pointer;' +
+        'white-space:nowrap;color:var(--dsw-alias-label-secondary);}' +
+        '.fge-cfile:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);}' +
+        '.fge-cfile-path{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;}' +
+        '.fge-msg{margin:0 0 8px;padding:6px 8px;background:var(--dsw-alias-bg-layer-2);border-radius:6px;' +
+        'white-space:pre-wrap;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-primary);font-family:inherit;}';
       var styleTag = null;
       function ensureStyles() {
         if (styleTag !== null) return;
@@ -522,7 +550,8 @@ window.__ModuleLoader__.load({
       }
 
       // ---- 懒加载树(每个分区一棵) ----
-      // props: mode, root, refreshTick, onFileClick(rel, name, type)
+      // props: mode, root, refreshTick, onFileClick(rel, name, type),
+      //        revealReq({rel, zone, tick} | null) —— 搜索结果点目录时的树内定位
       function LazyTree(props) {
         var mode = props.mode;
         var root = props.root;
@@ -539,6 +568,7 @@ window.__ModuleLoader__.load({
         var loading = loadingState[0];
         var setLoading = loadingState[1];
         var mounted = React.useRef(true);
+        var bodyRef = React.useRef(null);
 
         var loadChildren = function (rel, reveal) {
           setLoading(rel);
@@ -572,6 +602,86 @@ window.__ModuleLoader__.load({
           },
           // 根变化(工作区切换)时同样作废整棵树
           [props.refreshTick, root],
+        );
+
+        // 树内 reveal(搜索结果点目录): 沿路径逐级加载 + 展开, 最后选中并闪现目标。
+        // 链在某一层断掉(该区不展示此条目, 如可见区下的深层 dot 项)时,
+        // 退化为高亮已到达的最深祖先。
+        React.useEffect(
+          function () {
+            var req = props.revealReq;
+            if (!req || !req.rel) return undefined;
+            var alive = true;
+            var segs = req.rel.split('/');
+            var loadLevel = function (i) {
+              var prefix = i === 0 ? '' : segs.slice(0, i).join('/');
+              // hidden/ignored 区进入目录一律 reveal=true(展示全部子项)
+              var revealFlag = mode !== 'visible' && i > 0;
+              return api('tree', { root: root, path: prefix, mode: mode, reveal: revealFlag }).then(
+                function (res) {
+                  if (!alive || !res || !res.ok || !Array.isArray(res.entries)) return null;
+                  setCache(function (prev) {
+                    var next = {};
+                    for (var k in prev) next[k] = prev[k];
+                    next[prefix] = res.entries;
+                    return next;
+                  });
+                  for (var j = 0; j < res.entries.length; j++) {
+                    if (res.entries[j].name === segs[i]) return res.entries[j];
+                  }
+                  return null;
+                },
+              );
+            };
+            var finish = function (targetRel) {
+              if (!alive) return;
+              setSelected(targetRel);
+              setTimeout(function () {
+                if (!alive || !bodyRef.current || !targetRel) return;
+                var el = bodyRef.current.querySelector('[data-fge-node="' + targetRel + '"]');
+                if (!el) return;
+                el.scrollIntoView({ block: 'nearest' });
+                el.classList.add('fge-flash');
+                var onEnd = function () {
+                  el.classList.remove('fge-flash');
+                  el.removeEventListener('animationend', onEnd);
+                };
+                el.addEventListener('animationend', onEnd);
+              }, 30);
+            };
+            var walk = function (i) {
+              if (i >= segs.length) {
+                finish(req.rel);
+                return;
+              }
+              loadLevel(i)
+                .then(function (found) {
+                  if (!alive) return;
+                  if (!found) {
+                    finish(i === 0 ? null : segs.slice(0, i).join('/'));
+                    return;
+                  }
+                  if (found.type === 'dir') {
+                    var p = segs.slice(0, i + 1).join('/');
+                    setExpanded(function (prev) {
+                      var next = {};
+                      for (var k in prev) next[k] = prev[k];
+                      next[p] = true;
+                      return next;
+                    });
+                    walk(i + 1);
+                  } else {
+                    finish(found.rel);
+                  }
+                })
+                .catch(function () {});
+            };
+            walk(0);
+            return function () {
+              alive = false;
+            };
+          },
+          [props.revealReq],
         );
 
         var revealFor = function (e) {
@@ -621,7 +731,7 @@ window.__ModuleLoader__.load({
         var rootLoaded = cache[''] !== undefined;
         var children = React.createElement(
           'div',
-          { className: 'fge-tree' },
+          { className: 'fge-tree', ref: bodyRef },
           rows.map(function (row) {
             var icon = row.type === 'dir' ? (expanded[row.rel] ? '▾' : '▸') : '·';
             return React.createElement(
@@ -632,6 +742,7 @@ window.__ModuleLoader__.load({
                   'fge-node' +
                   (row.type === 'dir' ? ' fge-dir' : '') +
                   (selected === row.rel ? ' fge-selected' : ''),
+                'data-fge-node': row.rel,
                 onClick: function () {
                   toggle(row);
                 },
@@ -701,7 +812,18 @@ window.__ModuleLoader__.load({
       function RefreshIcon() {
         return React.createElement(
           'svg',
-          { width: 14, height: 14, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true', style: { display: 'block' } },
+          {
+            width: 14,
+            height: 14,
+            viewBox: '0 0 24 24',
+            fill: 'none',
+            stroke: 'currentColor',
+            strokeWidth: 2,
+            strokeLinecap: 'round',
+            strokeLinejoin: 'round',
+            'aria-hidden': 'true',
+            style: { display: 'block' },
+          },
           React.createElement('path', { d: 'M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8' }),
           React.createElement('path', { d: 'M21 3v5h-5' }),
         );
@@ -715,7 +837,18 @@ window.__ModuleLoader__.load({
             : ['M6 17l5-5-5-5', 'M13 17l5-5-5-5'];
         return React.createElement(
           'svg',
-          { width: 14, height: 14, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true', style: { display: 'block' } },
+          {
+            width: 14,
+            height: 14,
+            viewBox: '0 0 24 24',
+            fill: 'none',
+            stroke: 'currentColor',
+            strokeWidth: 2,
+            strokeLinecap: 'round',
+            strokeLinejoin: 'round',
+            'aria-hidden': 'true',
+            style: { display: 'block' },
+          },
           React.createElement('path', { d: d[0] }),
           React.createElement('path', { d: d[1] }),
         );
@@ -725,7 +858,18 @@ window.__ModuleLoader__.load({
       function CloseIcon() {
         return React.createElement(
           'svg',
-          { width: 14, height: 14, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true', style: { display: 'block' } },
+          {
+            width: 14,
+            height: 14,
+            viewBox: '0 0 24 24',
+            fill: 'none',
+            stroke: 'currentColor',
+            strokeWidth: 2,
+            strokeLinecap: 'round',
+            strokeLinejoin: 'round',
+            'aria-hidden': 'true',
+            style: { display: 'block' },
+          },
           React.createElement('path', { d: 'M18 6L6 18M6 6l12 12' }),
         );
       }
@@ -734,7 +878,18 @@ window.__ModuleLoader__.load({
       function BranchIcon() {
         return React.createElement(
           'svg',
-          { width: 14, height: 14, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true', style: { display: 'block' } },
+          {
+            width: 14,
+            height: 14,
+            viewBox: '0 0 24 24',
+            fill: 'none',
+            stroke: 'currentColor',
+            strokeWidth: 2,
+            strokeLinecap: 'round',
+            strokeLinejoin: 'round',
+            'aria-hidden': 'true',
+            style: { display: 'block' },
+          },
           React.createElement('line', { x1: 6, y1: 3, x2: 6, y2: 15 }),
           React.createElement('circle', { cx: 18, cy: 6, r: 3 }),
           React.createElement('circle', { cx: 6, cy: 18, r: 3 }),
@@ -746,8 +901,106 @@ window.__ModuleLoader__.load({
       function CaretIcon(props) {
         return React.createElement(
           'svg',
-          { width: 12, height: 12, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true', style: { display: 'block' } },
+          {
+            width: 12,
+            height: 12,
+            viewBox: '0 0 24 24',
+            fill: 'none',
+            stroke: 'currentColor',
+            strokeWidth: 2,
+            strokeLinecap: 'round',
+            strokeLinejoin: 'round',
+            'aria-hidden': 'true',
+            style: { display: 'block' },
+          },
           React.createElement('path', { d: props.open ? 'm6 15 6-6 6 6' : 'm6 9 6 6 6-6' }),
+        );
+      }
+
+      // ---- 放大镜(文件搜索入口) ----
+      function SearchIcon() {
+        return React.createElement(
+          'svg',
+          {
+            width: 14,
+            height: 14,
+            viewBox: '0 0 24 24',
+            fill: 'none',
+            stroke: 'currentColor',
+            strokeWidth: 2,
+            strokeLinecap: 'round',
+            strokeLinejoin: 'round',
+            'aria-hidden': 'true',
+            style: { display: 'block' },
+          },
+          React.createElement('circle', { cx: 11, cy: 11, r: 7 }),
+          React.createElement('line', { x1: 16.5, y1: 16.5, x2: 21, y2: 21 }),
+        );
+      }
+
+      // ---- 时钟回溯(提交历史入口) ----
+      function HistoryIcon() {
+        return React.createElement(
+          'svg',
+          {
+            width: 14,
+            height: 14,
+            viewBox: '0 0 24 24',
+            fill: 'none',
+            stroke: 'currentColor',
+            strokeWidth: 2,
+            strokeLinecap: 'round',
+            strokeLinejoin: 'round',
+            'aria-hidden': 'true',
+            style: { display: 'block' },
+          },
+          React.createElement('path', { d: 'M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8' }),
+          React.createElement('path', { d: 'M3 3v5h5' }),
+          React.createElement('path', { d: 'M12 7v5l4 2' }),
+        );
+      }
+
+      // ---- 搜索结果列表(平铺, 带分区徽标) ----
+      // props: res {matches, truncated}, onPick(match)
+      var ZONE_MARK = { visible: '显', hidden: '隐', ignored: '忽' };
+      function SearchResults(props) {
+        var matches = props.res && Array.isArray(props.res.matches) ? props.res.matches : [];
+        return React.createElement(
+          'div',
+          { className: 'fge-tree' },
+          matches.length === 0
+            ? React.createElement('div', { className: 'fge-empty' }, '(无匹配)')
+            : matches.map(function (m) {
+                var name = m.rel.slice(m.rel.lastIndexOf('/') + 1);
+                var dir = m.rel.slice(0, m.rel.length - name.length);
+                return React.createElement(
+                  'div',
+                  {
+                    key: m.type + ':' + m.rel,
+                    className: 'fge-result',
+                    onClick: function () {
+                      props.onPick(m);
+                    },
+                    title: m.rel,
+                  },
+                  React.createElement(
+                    'span',
+                    { className: 'fge-badge fge-badge-' + m.zone.charAt(0), title: '所在分区' },
+                    ZONE_MARK[m.zone] || '·',
+                  ),
+                  React.createElement('span', { className: 'fge-result-name' }, name),
+                  dir !== ''
+                    ? React.createElement('span', { className: 'fge-result-dir' }, dir)
+                    : null,
+                );
+              }),
+          props.res && props.res.truncated
+            ? React.createElement(
+                'div',
+                { className: 'fge-empty' },
+                '结果过多, 已截断(请缩短关键词)',
+              )
+            : null,
         );
       }
 
@@ -769,6 +1022,103 @@ window.__ModuleLoader__.load({
             }, 1200);
           }
         };
+
+        // ---- 文件搜索(name search): 输入防抖 150ms → host /search, 结果替换三区树 ----
+        var searchOpenState = React.useState(false);
+        var searchOpen = searchOpenState[0];
+        var setSearchOpen = searchOpenState[1];
+        var draftState = React.useState('');
+        var draft = draftState[0];
+        var setDraft = draftState[1];
+        var queryState = React.useState(''); // 已提交(防抖后)的查询
+        var query = queryState[0];
+        var setQuery = queryState[1];
+        var resState = React.useState(null); // {matches, truncated} | null
+        var res = resState[0];
+        var setRes = resState[1];
+        var revealReqState = React.useState(null); // {rel, zone, tick}
+        var revealReq = revealReqState[0];
+        var setRevealReq = revealReqState[1];
+        var seqRef = React.useRef(0); // 竞态守卫: 只接受最后一次请求的结果
+
+        var closeSearch = React.useCallback(function () {
+          setSearchOpen(false);
+          setDraft('');
+          setQuery('');
+          setRes(null);
+        }, []);
+
+        // 根切换: 关闭搜索与定位态(树本身也会随 root 作废)
+        React.useEffect(
+          function () {
+            closeSearch();
+            setRevealReq(null);
+          },
+          [props.root, closeSearch],
+        );
+
+        // 搜索开启时全局 Esc 关闭(焦点不在输入框时——如刚点过结果——也能恢复树;
+        // 输入框内的 Esc 由 onKeyDown stopPropagation 处理, 只关搜索不波及悬浮面板)
+        React.useEffect(
+          function () {
+            if (!searchOpen) return undefined;
+            function onKey(e) {
+              if (e.key === 'Escape') closeSearch();
+            }
+            window.addEventListener('keydown', onKey);
+            return function () {
+              window.removeEventListener('keydown', onKey);
+            };
+          },
+          [searchOpen, closeSearch],
+        );
+
+        React.useEffect(
+          function () {
+            if (!searchOpen) return undefined;
+            var t = setTimeout(function () {
+              var q = draft;
+              setQuery(q);
+              if (q.trim() === '') {
+                setRes(null);
+                return;
+              }
+              var mySeq = ++seqRef.current;
+              api('search', { root: props.root, query: q })
+                .then(function (r) {
+                  if (seqRef.current !== mySeq) return;
+                  setRes(r && r.ok ? r : { matches: [], truncated: false });
+                })
+                .catch(function () {
+                  if (seqRef.current === mySeq) setRes({ matches: [], truncated: false });
+                });
+            }, 150);
+            return function () {
+              clearTimeout(t);
+            };
+          },
+          [draft, searchOpen, props.root],
+        );
+
+        var searching = searchOpen && query.trim() !== '';
+        // 目录命中 → 对应分区树内 reveal 并关闭搜索; 文件命中 → 打开内容悬浮面板。
+        var onPickResult = function (m) {
+          if (m.type === 'dir') {
+            setRevealReq({ rel: m.rel, zone: m.zone, tick: Date.now() });
+            closeSearch();
+            return;
+          }
+          props.onFileClick(m.rel, m.rel.slice(m.rel.lastIndexOf('/') + 1), m.type);
+        };
+        // zone → 目标分区: 首段为 dot 走隐藏区, 忽略命中走忽略区, 其余走可见区。
+        // (混合链如 src/.env 在可见区逐级走到最深可见祖先为止。)
+        var revealModeFor = function (zone, rel) {
+          if (zone === 'ignored') return 'ignored';
+          var firstSeg = String(rel).split('/')[0];
+          if (firstSeg.charAt(0) === '.') return 'hidden';
+          return 'visible';
+        };
+
         return React.createElement(
           'div',
           {
@@ -790,6 +1140,18 @@ window.__ModuleLoader__.load({
                 onClick: onCopyPath,
               },
               copied ? '✓ 已复制' : middleEllipsis(props.cwd, subMax),
+            ),
+            React.createElement(
+              'button',
+              {
+                className: 'fge-btn' + (searchOpen ? ' fge-btn-active' : ''),
+                title: searchOpen ? '关闭搜索' : '搜索文件(名称或路径)',
+                onClick: function () {
+                  if (searchOpen) closeSearch();
+                  else setSearchOpen(true);
+                },
+              },
+              React.createElement(SearchIcon, null),
             ),
             React.createElement(
               'button',
@@ -820,51 +1182,103 @@ window.__ModuleLoader__.load({
               React.createElement(CollapseIcon, { dir: 'right' }),
             ),
           ),
-          React.createElement(
-            'div',
-            { className: 'fge-section', style: { flex: '3' } },
-            React.createElement('div', { className: 'fge-section-head' }, '可显示文件'),
-            React.createElement(
-              'div',
-              { className: 'fge-section-body' },
-              React.createElement(LazyTree, {
-                mode: 'visible',
-                root: props.root,
-                refreshTick: props.refreshTick,
-                onFileClick: props.onFileClick,
-              }),
-            ),
-          ),
-          React.createElement(
-            'div',
-            { className: 'fge-section', style: { flex: '1' } },
-            React.createElement('div', { className: 'fge-section-head' }, '隐藏文件'),
-            React.createElement(
-              'div',
-              { className: 'fge-section-body' },
-              React.createElement(LazyTree, {
-                mode: 'hidden',
-                root: props.root,
-                refreshTick: props.refreshTick,
-                onFileClick: props.onFileClick,
-              }),
-            ),
-          ),
-          React.createElement(
-            'div',
-            { className: 'fge-section', style: { flex: '1' } },
-            React.createElement('div', { className: 'fge-section-head' }, '忽略文件'),
-            React.createElement(
-              'div',
-              { className: 'fge-section-body' },
-              React.createElement(LazyTree, {
-                mode: 'ignored',
-                root: props.root,
-                refreshTick: props.refreshTick,
-                onFileClick: props.onFileClick,
-              }),
-            ),
-          ),
+          searchOpen
+            ? React.createElement(
+                'div',
+                { className: 'fge-search-row' },
+                React.createElement('input', {
+                  className: 'fge-search-input',
+                  value: draft,
+                  autoFocus: true,
+                  placeholder: '搜索文件名或路径…',
+                  onChange: function (e) {
+                    setDraft(e.target.value);
+                  },
+                  onKeyDown: function (e) {
+                    if (e.key === 'Escape') {
+                      e.stopPropagation();
+                      closeSearch();
+                    }
+                  },
+                }),
+              )
+            : null,
+          searching && res !== null
+            ? React.createElement(
+                'div',
+                { className: 'fge-section', style: { flex: '1' } },
+                React.createElement(
+                  'div',
+                  { className: 'fge-section-head' },
+                  '搜索 "' + query.trim() + '"',
+                ),
+                React.createElement(
+                  'div',
+                  { className: 'fge-section-body' },
+                  React.createElement(SearchResults, { res: res, onPick: onPickResult }),
+                ),
+              )
+            : React.createElement(
+                React.Fragment,
+                null,
+                React.createElement(
+                  'div',
+                  { className: 'fge-section', style: { flex: '3' } },
+                  React.createElement('div', { className: 'fge-section-head' }, '可显示文件'),
+                  React.createElement(
+                    'div',
+                    { className: 'fge-section-body' },
+                    React.createElement(LazyTree, {
+                      mode: 'visible',
+                      root: props.root,
+                      refreshTick: props.refreshTick,
+                      onFileClick: props.onFileClick,
+                      revealReq:
+                        revealReq && revealModeFor(revealReq.zone, revealReq.rel) === 'visible'
+                          ? revealReq
+                          : null,
+                    }),
+                  ),
+                ),
+                React.createElement(
+                  'div',
+                  { className: 'fge-section', style: { flex: '1' } },
+                  React.createElement('div', { className: 'fge-section-head' }, '隐藏文件'),
+                  React.createElement(
+                    'div',
+                    { className: 'fge-section-body' },
+                    React.createElement(LazyTree, {
+                      mode: 'hidden',
+                      root: props.root,
+                      refreshTick: props.refreshTick,
+                      onFileClick: props.onFileClick,
+                      revealReq:
+                        revealReq && revealModeFor(revealReq.zone, revealReq.rel) === 'hidden'
+                          ? revealReq
+                          : null,
+                    }),
+                  ),
+                ),
+                React.createElement(
+                  'div',
+                  { className: 'fge-section', style: { flex: '1' } },
+                  React.createElement('div', { className: 'fge-section-head' }, '忽略文件'),
+                  React.createElement(
+                    'div',
+                    { className: 'fge-section-body' },
+                    React.createElement(LazyTree, {
+                      mode: 'ignored',
+                      root: props.root,
+                      refreshTick: props.refreshTick,
+                      onFileClick: props.onFileClick,
+                      revealReq:
+                        revealReq && revealModeFor(revealReq.zone, revealReq.rel) === 'ignored'
+                          ? revealReq
+                          : null,
+                    }),
+                  ),
+                ),
+              ),
           React.createElement('div', {
             className: 'fge-resize fge-resize-left',
             onPointerDown: props.onResizeStart,
@@ -978,11 +1392,7 @@ window.__ModuleLoader__.load({
               title: '点击显示所有分支(只读)',
             },
             React.createElement(BranchIcon, null),
-            React.createElement(
-              'span',
-              { className: 'fge-branch-name' },
-              current || '(detached)',
-            ),
+            React.createElement('span', { className: 'fge-branch-name' }, current || '(detached)'),
             React.createElement(CaretIcon, { open: menuOpen }),
           ),
           menu,
@@ -996,6 +1406,16 @@ window.__ModuleLoader__.load({
               'span',
               { className: 'fge-panel-title' },
               '变更 (' + changes.length + ')',
+            ),
+            React.createElement(
+              'button',
+              {
+                className: 'fge-btn' + (props.historyOpen ? ' fge-btn-active' : ''),
+                title: '提交历史(跟随查看分支)',
+                onClick: props.onToggleHistory,
+                disabled: !props.hasRepo,
+              },
+              React.createElement(HistoryIcon, null),
             ),
             React.createElement(
               'button',
@@ -1072,6 +1492,7 @@ window.__ModuleLoader__.load({
           React.createElement(
             'div',
             { className: 'fge-float-head' },
+            props.headExtra === undefined ? null : props.headExtra,
             props.badge === undefined
               ? null
               : React.createElement(
@@ -1090,7 +1511,11 @@ window.__ModuleLoader__.load({
               React.createElement(CloseIcon, null),
             ),
           ),
-          React.createElement('div', { className: 'fge-float-body' }, props.children),
+          React.createElement(
+            'div',
+            Object.assign({ className: 'fge-float-body' }, props.bodyProps || {}),
+            props.children,
+          ),
         );
       }
 
@@ -1242,6 +1667,399 @@ window.__ModuleLoader__.load({
         );
       }
 
+      // ---- 提交历史悬浮面板(右树头部入口, 与 diff 浮层互斥共享锚位) ----
+      // props: style, root, repoRoot, refName(string|null), statusHead(string|null),
+      //        onClose, onHide
+      // refName = 「查看分支」(下拉最后点击, 缺省当前分支); 列表 50 条/页滚动加载;
+      // turn-end 自动刷新比对 HEAD(statusHead), 变了才整页重拉并保留滚动位置。
+      function fmtRelTime(at) {
+        var diff = Math.floor(Date.now() / 1000) - at;
+        if (!(diff >= 0)) return '';
+        if (diff < 60) return '刚刚';
+        if (diff < 3600) return Math.floor(diff / 60) + ' 分钟前';
+        if (diff < 86400) return Math.floor(diff / 3600) + ' 小时前';
+        if (diff < 86400 * 30) return Math.floor(diff / 86400) + ' 天前';
+        var d = new Date(at * 1000);
+        return (
+          d.getFullYear() +
+          '-' +
+          String(d.getMonth() + 1).padStart(2, '0') +
+          '-' +
+          String(d.getDate()).padStart(2, '0')
+        );
+      }
+
+      function HistoryPanel(props) {
+        var PAGE = 50;
+        var commitsState = React.useState(null); // null = 首屏加载中
+        var commits = commitsState[0];
+        var setCommits = commitsState[1];
+        var exhaustedState = React.useState(false);
+        var exhausted = exhaustedState[0];
+        var setExhausted = exhaustedState[1];
+        var loadingMoreState = React.useState(false);
+        var loadingMore = loadingMoreState[0];
+        var setLoadingMore = loadingMoreState[1];
+        var errState = React.useState(null);
+        var err = errState[0];
+        var setErr = errState[1];
+        var viewHashState = React.useState(null); // null=列表 | hash=详情
+        var viewHash = viewHashState[0];
+        var setViewHash = viewHashState[1];
+        var detailState = React.useState(null); // {kind:'commit'|'merge', message, files?}
+        var detail = detailState[0];
+        var setDetail = detailState[1];
+        var fileDiffsState = React.useState({}); // {path: {loading}|{text}|{error}}
+        var fileDiffs = fileDiffsState[0];
+        var setFileDiffs = fileDiffsState[1];
+        var listRef = React.useRef(null);
+        var shownHeadRef = React.useRef(null); // 本列表已知的 HEAD(供刷新比对)
+
+        var fetchPage = React.useCallback(
+          function (skip, limit) {
+            return api('log', {
+              root: props.root,
+              repoRoot: props.repoRoot,
+              ref: props.refName || undefined,
+              skip: skip,
+              limit: limit,
+            });
+          },
+          [props.root, props.repoRoot, props.refName],
+        );
+
+        // ref / 仓库变化 → 重置并拉第一页
+        React.useEffect(
+          function () {
+            var alive = true;
+            setCommits(null);
+            setViewHash(null);
+            setDetail(null);
+            setFileDiffs({});
+            setErr(null);
+            setExhausted(false);
+            shownHeadRef.current = null;
+            fetchPage(0, PAGE)
+              .then(function (r) {
+                if (!alive) return;
+                if (r && r.ok) {
+                  setCommits(r.commits);
+                  if (r.commits.length < PAGE) setExhausted(true);
+                  shownHeadRef.current = r.head;
+                } else {
+                  setErr((r && r.error) || 'failed');
+                }
+              })
+              .catch(function () {
+                if (alive) setErr('rpc-failed');
+              });
+            return function () {
+              alive = false;
+            };
+          },
+          [props.refName, props.repoRoot, props.root],
+        );
+
+        // HEAD 变化(turn-end 自动刷新链路)→ 整页重拉, 尽量保留滚动位置
+        React.useEffect(
+          function () {
+            var sh = props.statusHead;
+            if (!sh || !shownHeadRef.current || sh === shownHeadRef.current) return;
+            if (commits === null || commits.length === 0) return;
+            var el = listRef.current;
+            var prevTop = el ? el.scrollTop : 0;
+            var count = commits.length;
+            var alive = true;
+            fetchPage(0, Math.max(count, PAGE))
+              .then(function (r) {
+                if (!alive || !r || !r.ok) return;
+                setCommits(r.commits);
+                shownHeadRef.current = r.head;
+                if (r.commits.length < PAGE) setExhausted(true);
+                requestAnimationFrame(function () {
+                  if (el) el.scrollTop = Math.min(prevTop, el.scrollHeight);
+                });
+              })
+              .catch(function () {});
+            return function () {
+              alive = false;
+            };
+          },
+          [props.statusHead],
+        );
+
+        var onListScroll = function (e) {
+          var el = e.currentTarget;
+          if (exhausted || loadingMore || commits === null || commits.length === 0) return;
+          if (el.scrollTop + el.clientHeight < el.scrollHeight - 40) return;
+          setLoadingMore(true);
+          fetchPage(commits.length, PAGE)
+            .then(function (r) {
+              if (r && r.ok) {
+                setCommits(function (prev) {
+                  return (prev || []).concat(r.commits);
+                });
+                if (r.commits.length < PAGE) setExhausted(true);
+              } else {
+                setExhausted(true);
+              }
+              setLoadingMore(false);
+            })
+            .catch(function () {
+              setLoadingMore(false);
+              setExhausted(true);
+            });
+        };
+
+        var detailReqRef = React.useRef(null); // 竞态守卫: 只接受最后一次详情请求
+        var openDetail = function (c) {
+          detailReqRef.current = c.hash;
+          setViewHash(c.hash);
+          setDetail(null);
+          setFileDiffs({});
+          api('show', { root: props.root, repoRoot: props.repoRoot, hash: c.hash })
+            .then(function (r) {
+              if (detailReqRef.current !== c.hash) return;
+              if (r && r.ok) setDetail(r);
+              else setDetail({ kind: 'error', message: (r && r.error) || 'failed' });
+            })
+            .catch(function () {
+              if (detailReqRef.current !== c.hash) return;
+              setDetail({ kind: 'error', message: 'rpc-failed' });
+            });
+        };
+
+        var toggleFile = function (path) {
+          var opening = fileDiffs[path] === undefined;
+          setFileDiffs(function (prev) {
+            var next = {};
+            for (var k in prev) next[k] = prev[k];
+            if (next[path] !== undefined) delete next[path];
+            else next[path] = { loading: true };
+            return next;
+          });
+          if (!opening || viewHash === null) return;
+          api('show', {
+            root: props.root,
+            repoRoot: props.repoRoot,
+            hash: viewHash,
+            path: path,
+          })
+            .then(function (r) {
+              setFileDiffs(function (prev) {
+                if (prev[path] === undefined || !prev[path].loading) return prev; // 已被收起
+                var next = {};
+                for (var k in prev) next[k] = prev[k];
+                next[path] =
+                  r && r.ok && r.kind === 'diff'
+                    ? { text: r.text }
+                    : { error: (r && r.error) || 'failed' };
+                return next;
+              });
+            })
+            .catch(function () {
+              setFileDiffs(function (prev) {
+                if (prev[path] === undefined || !prev[path].loading) return prev;
+                var next = {};
+                for (var k in prev) next[k] = prev[k];
+                next[path] = { error: 'rpc-failed' };
+                return next;
+              });
+            });
+        };
+
+        // ---- 渲染 ----
+        var title = '提交历史' + (props.refName ? ' · ' + props.refName : '');
+        var headExtra =
+          viewHash !== null
+            ? React.createElement(
+                'button',
+                {
+                  className: 'fge-btn',
+                  title: '返回提交列表',
+                  onClick: function () {
+                    detailReqRef.current = null;
+                    setViewHash(null);
+                    setDetail(null);
+                    setFileDiffs({});
+                  },
+                },
+                '‹ 列表',
+              )
+            : null;
+
+        var body = null;
+        if (err !== null) {
+          body = React.createElement('div', { className: 'fge-note' }, '读取失败: ' + err);
+        } else if (viewHash !== null) {
+          // 详情视图: 完整 message + 文件 ±行数列表 → 点文件展开单文件 diff
+          var inner = [];
+          if (detail === null) {
+            inner.push(React.createElement('div', { className: 'fge-note', key: 'ld' }, '加载中…'));
+          } else if (detail.kind === 'error') {
+            inner.push(
+              React.createElement(
+                'div',
+                { className: 'fge-note', key: 'er' },
+                '读取失败: ' + detail.message,
+              ),
+            );
+          } else {
+            inner.push(
+              React.createElement(
+                'pre',
+                { className: 'fge-msg', key: 'msg' },
+                detail.message.trim() || '(无提交说明)',
+              ),
+            );
+            if (detail.kind === 'merge') {
+              inner.push(
+                React.createElement(
+                  'div',
+                  { className: 'fge-note', key: 'mg' },
+                  'merge 提交不展示 diff',
+                ),
+              );
+            } else if (!Array.isArray(detail.files) || detail.files.length === 0) {
+              inner.push(
+                React.createElement('div', { className: 'fge-note', key: 'ef' }, '(空提交)'),
+              );
+            } else {
+              for (var fi = 0; fi < detail.files.length; fi++) {
+                (function (f) {
+                  var fd = fileDiffs[f.path];
+                  inner.push(
+                    React.createElement(
+                      'div',
+                      {
+                        className: 'fge-cfile',
+                        key: 'f:' + f.path,
+                        onClick: function () {
+                          toggleFile(f.path);
+                        },
+                        title: f.from ? f.path + ' (原 ' + f.from + ')' : f.path,
+                      },
+                      f.adds === null
+                        ? React.createElement('span', { className: 'fge-badge fge-badge-i' }, 'B')
+                        : React.createElement(
+                            'span',
+                            { className: 'fge-commit-meta' },
+                            React.createElement(
+                              'span',
+                              { className: 'fge-stat-add' },
+                              '+' + f.adds,
+                            ),
+                            React.createElement(
+                              'span',
+                              { className: 'fge-stat-del' },
+                              '−' + f.dels,
+                            ),
+                          ),
+                      React.createElement('span', { className: 'fge-cfile-path' }, f.path),
+                    ),
+                  );
+                  if (fd !== undefined) {
+                    if (fd.loading) {
+                      inner.push(
+                        React.createElement(
+                          'div',
+                          { className: 'fge-note', key: 'fl:' + f.path },
+                          '加载中…',
+                        ),
+                      );
+                    } else if (fd.error !== undefined) {
+                      inner.push(
+                        React.createElement(
+                          'div',
+                          { className: 'fge-note', key: 'fl:' + f.path },
+                          '读取失败: ' + fd.error,
+                        ),
+                      );
+                    } else if (fd.text === '') {
+                      inner.push(
+                        React.createElement(
+                          'div',
+                          { className: 'fge-note', key: 'fl:' + f.path },
+                          '(二进制或无差异)',
+                        ),
+                      );
+                    } else {
+                      inner.push(
+                        React.createElement('pre', {
+                          className: 'fge-pre',
+                          key: 'fl:' + f.path,
+                          dangerouslySetInnerHTML: { __html: diffToHtml(fd.text) },
+                        }),
+                      );
+                    }
+                  }
+                })(detail.files[fi]);
+              }
+            }
+          }
+          body = React.createElement('div', null, inner);
+        } else {
+          // 列表视图
+          var list = [];
+          if (commits === null) {
+            list.push(React.createElement('div', { className: 'fge-note', key: 'ld' }, '加载中…'));
+          } else if (commits.length === 0) {
+            list.push(
+              React.createElement('div', { className: 'fge-empty', key: 'mt' }, '(无提交)'),
+            );
+          } else {
+            for (var ci = 0; ci < commits.length; ci++) {
+              (function (c) {
+                list.push(
+                  React.createElement(
+                    'div',
+                    {
+                      key: c.hash,
+                      className: 'fge-commit',
+                      onClick: function () {
+                        openDetail(c);
+                      },
+                      title: c.hash,
+                    },
+                    React.createElement('div', { className: 'fge-commit-subject' }, c.subject),
+                    React.createElement(
+                      'div',
+                      { className: 'fge-commit-meta' },
+                      React.createElement('span', null, c.author),
+                      React.createElement('span', null, fmtRelTime(c.at)),
+                      React.createElement('span', { className: 'fge-hash' }, c.short),
+                    ),
+                  ),
+                );
+              })(commits[ci]);
+            }
+            if (loadingMore) {
+              list.push(
+                React.createElement('div', { className: 'fge-loading', key: 'lm' }, '加载中…'),
+              );
+            } else if (exhausted) {
+              list.push(
+                React.createElement('div', { className: 'fge-empty', key: 'btm' }, '已到底'),
+              );
+            }
+          }
+          body = React.createElement('div', null, list);
+        }
+
+        return React.createElement(
+          FloatPanel,
+          {
+            style: props.style,
+            title: title,
+            headExtra: headExtra,
+            bodyProps: viewHash === null ? { onScroll: onListScroll } : undefined,
+            onClose: props.onClose,
+            onHide: props.onHide,
+          },
+          body,
+        );
+      }
+
       // ---- 细条(收起态): 只剩一个圆角箭头, 无边框底色; 悬停自动展开 ----
       function Strip(props) {
         return React.createElement(
@@ -1317,6 +2135,10 @@ window.__ModuleLoader__.load({
         var diffState = React.useState(null);
         var diff = diffState[0];
         var setDiff = diffState[1];
+        // 提交历史浮层开关(布尔): 面板内部状态由 HistoryPanel 自持
+        var historyState = React.useState(false);
+        var historyOpen = historyState[0];
+        var setHistoryOpen = historyState[1];
         var linkageState = React.useState(null);
         var linkage = linkageState[0];
         var setLinkage = linkageState[1];
@@ -1331,12 +2153,28 @@ window.__ModuleLoader__.load({
         var cacheKey = info ? info.repoRoot || info.cwd : null;
         var root = sessionCwd || (info ? info.cwd : null);
 
+        // 提交历史跟随「查看分支」: 下拉里最后点击的分支(默认当前分支)。
+        // 查看分支已不在分支列表(如被删除)时回退当前分支; 非 git 目录为 null(host 回退 HEAD)。
+        var branchList = status && Array.isArray(status.branches) ? status.branches : [];
+        var viewedKnown =
+          typeof viewedBranch === 'string' &&
+          viewedBranch !== '' &&
+          branchList.some(function (b) {
+            return b.name === viewedBranch;
+          });
+        var historyRefName = viewedKnown
+          ? viewedBranch
+          : status && typeof status.current === 'string' && status.current !== ''
+            ? status.current
+            : null;
+
         // 根切换时关闭悬浮面板与联动
         React.useEffect(
           function () {
             setContent(null);
             setDiff(null);
             setLinkage(null);
+            setHistoryOpen(false);
           },
           [root],
         );
@@ -1492,6 +2330,7 @@ window.__ModuleLoader__.load({
             if (e.key === 'Escape') {
               setContent(null);
               setDiff(null);
+              setHistoryOpen(false);
             }
           }
           window.addEventListener('keydown', onKey);
@@ -1531,37 +2370,62 @@ window.__ModuleLoader__.load({
         );
 
         var onDiffClick = React.useCallback(function (ch) {
+          // 与历史浮层互斥: 打开 diff 即关闭历史(共享同一锚位)
+          setHistoryOpen(false);
           setDiff(function (prev) {
             if (prev && prev.change.path === ch.path) return null;
             return { change: ch };
           });
         }, []);
 
+        // 提交历史开关: 打开时关闭 diff 浮层(互斥共享锚位)
+        var toggleHistory = React.useCallback(
+          function () {
+            if (historyOpen) {
+              setHistoryOpen(false);
+              return;
+            }
+            setDiff(null);
+            setHistoryOpen(true);
+          },
+          [historyOpen],
+        );
+
         // 图钉: 无论点哪个面板的图钉, 动作一致 —— 固定时两个面板都展开为卡片。
         // 避免出现「已固定但另一侧仍是细条」的不一致状态。
-        var togglePin = React.useCallback(function () {
-          var next = !pin;
-          setPin(next);
-          if (next) {
-            setLeftOpen(true);
-            setRightOpen(true);
-          }
-        }, [pin]);
+        var togglePin = React.useCallback(
+          function () {
+            var next = !pin;
+            setPin(next);
+            if (next) {
+              setLeftOpen(true);
+              setRightOpen(true);
+            }
+          },
+          [pin],
+        );
 
         // 收起某侧(悬停离开延迟触发 / 收起按钮): 一并关闭该侧关联的悬浮面板,
         // 避免「侧栏收了、悬浮栏还在」的孤儿状态(联动)。
-        var hideLeft = React.useCallback(function () {
-          if (!pin) {
-            setLeftOpen(false);
-            setContent(null);
-          }
-        }, [pin]);
-        var hideRight = React.useCallback(function () {
-          if (!pin) {
-            setRightOpen(false);
-            setDiff(null);
-          }
-        }, [pin]);
+        var hideLeft = React.useCallback(
+          function () {
+            if (!pin) {
+              setLeftOpen(false);
+              setContent(null);
+            }
+          },
+          [pin],
+        );
+        var hideRight = React.useCallback(
+          function () {
+            if (!pin) {
+              setRightOpen(false);
+              setDiff(null);
+              setHistoryOpen(false);
+            }
+          },
+          [pin],
+        );
 
         // 布局计算
         // 可显示仍看「完整留白能容纳最小宽度」; 最大宽度 = 完整留白的 2/3(减少 1/3),
@@ -1738,6 +2602,9 @@ window.__ModuleLoader__.load({
                 linkagePath: linkage,
                 onDiffClick: onDiffClick,
                 selectedDiff: diff ? diff.change.path : null,
+                onToggleHistory: toggleHistory,
+                historyOpen: historyOpen,
+                hasRepo: !!(info && info.repoRoot),
               })
             : rightCanShow
               ? React.createElement(Strip, {
@@ -1769,6 +2636,19 @@ window.__ModuleLoader__.load({
                 statusVersion: statusVersion,
                 onClose: function () {
                   setDiff(null);
+                },
+                onHide: hideRight,
+              })
+            : null,
+          historyOpen && info.repoRoot
+            ? React.createElement(HistoryPanel, {
+                style: diffStyle, // 与 diff 浮层互斥共享锚位(开一关一)
+                root: root,
+                repoRoot: info.repoRoot,
+                refName: historyRefName,
+                statusHead: status ? status.head : null,
+                onClose: function () {
+                  setHistoryOpen(false);
                 },
                 onHide: hideRight,
               })
