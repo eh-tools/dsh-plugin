@@ -19,6 +19,10 @@ window.__ModuleLoader__.load({
     var exports = module.exports;
     Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' });
     var React = require('react');
+    // 官方 UI 原语(Button/Input 等): 样式随壳层全局样式表已就位, 直接可用
+    var UI = require('@deepseek-ai/dsh-client-ui-primitives');
+    var Btn = UI.Button;
+    var Input = UI.Input;
 
     exports.name = 'dsh-db-console';
     exports.inject = ['slots'];
@@ -38,93 +42,123 @@ window.__ModuleLoader__.load({
       }
 
       // ---- 样式 ----
+      // ---- 样式(原生口径) ----
+      // 全部使用壳层设计代币(body 别名层随明暗主题自动翻转); 结构对齐轨迹视图:
+      // 平铺满高 bg-layer-1 + 32px 级工具栏细条 + 官方表格配方; 主色是
+      // state-business-primary(#4176e6/#679efe), 不再自造品牌蓝。
+      // 编辑区回声 composer 卡片(specific-input-major + l2-darkmode-thin 边 + lv2 影)。
       var STYLE_CSS =
-        // 视图容器: 填满会话体给到的区域
-        '.dbc-view{position:relative;display:flex;flex-direction:column;box-sizing:border-box;' +
-        'width:100%;height:100%;min-height:320px;padding:14px 18px;gap:10px;' +
-        'color:var(--dsw-alias-label-primary);font-family:var(--ds-font-family,system-ui);font-size:13px;line-height:1.5;}' +
-        '.dbc-card{background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;' +
-        'box-shadow:var(--dsw-shadow-lv2,rgba(0,0,0,.14)) 0 6px 24px;}' +
-        // 登录卡片
-        '.dbc-login{margin:auto;width:min(560px,92%);padding:22px 24px;display:flex;flex-direction:column;gap:12px;}' +
-        '.dbc-login h2{margin:0;font-size:15px;font-weight:600;}' +
-        '.dbc-muted{color:var(--dsw-alias-label-secondary);}' +
-        '.dbc-faint{color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));font-size:12px;}' +
-        '.dbc-input{width:100%;box-sizing:border-box;padding:8px 10px;border-radius:8px;' +
-        'border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-base);' +
-        'color:var(--dsw-alias-label-primary);font-size:13px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}' +
-        '.dbc-input:focus{outline:none;border-color:var(--dsw-alias-brand,#4a6cf7);}' +
-        '.dbc-btnrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}' +
-        '.dbc-btn{padding:6px 14px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2);cursor:pointer;' +
-        'background:transparent;color:var(--dsw-alias-label-primary);font-size:12.5px;}' +
-        '.dbc-btn:hover{border-color:var(--dsw-alias-brand,#4a6cf7);}' +
-        '.dbc-btn-primary{background:var(--dsw-alias-brand,#4a6cf7);border-color:transparent;color:#fff;}' +
-        '.dbc-btn-danger{color:#e5484d;border-color:color-mix(in srgb,#e5484d 45%,transparent);}' +
-        '.dbc-btn:disabled{opacity:.55;cursor:default;}' +
-        '.dbc-err{color:#e5484d;font-size:12.5px;white-space:pre-wrap;word-break:break-all;}' +
-        '.dbc-okmsg{color:#30a46c;font-size:12.5px;}' +
-        '.dbc-masked{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;' +
-        'word-break:break-all;color:var(--dsw-alias-label-secondary);}' +
-        // 已连接工作台
-        '.dbc-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;}' +
-        '.dbc-head .dbc-title{font-weight:600;font-size:13px;}' +
-        '.dbc-body{display:flex;gap:10px;flex:1;min-height:0;}' +
-        '.dbc-side{width:250px;flex:none;display:flex;flex-direction:column;min-height:0;overflow:hidden;}' +
-        '.dbc-side-head{display:flex;align-items:center;justify-content:space-between;padding:7px 10px;' +
-        'border-bottom:1px solid var(--dsw-alias-border-l1);font-weight:600;font-size:12.5px;flex:none;}' +
-        '.dbc-tree{flex:1;overflow:auto;padding:6px 4px 10px;user-select:none;}' +
-        '.dbc-schema{margin-bottom:2px;}' +
-        '.dbc-schema-row{display:flex;align-items:center;gap:5px;padding:3px 8px;border-radius:6px;cursor:pointer;}' +
-        '.dbc-schema-row:hover{background:var(--dsw-alias-bg-overlay,rgba(127,127,127,.12));}' +
-        '.dbc-caret{display:inline-block;width:0;height:0;border-left:5px solid currentColor;' +
-        'border-top:4px solid transparent;border-bottom:4px solid transparent;opacity:.6;transition:transform .12s;}' +
+        // 根容器
+        '.dbc-root{height:100%;min-height:320px;display:flex;flex-direction:column;' +
+        'background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);' +
+        'font-family:var(--dsw-font-family);overflow:hidden;position:relative;}' +
+        '.dbc-center{margin:auto;font:var(--dsw-font-xs-13);color:var(--dsw-alias-label-caption);}' +
+        // 工具栏(轨迹同款细条)
+        '.dbc-toolbar{flex:none;height:36px;display:flex;align-items:center;gap:6px;padding:0 6px;' +
+        'border-bottom:1px solid var(--dsw-alias-border-l2);}' +
+        '.dbc-title{flex:none;padding:0 6px;font:600 var(--dsw-font-s-14);}' +
+        '.dbc-meta{font-family:var(--ds-font-family-code);font-size:11px;line-height:16px;' +
+        'color:var(--dsw-alias-label-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:52%;}' +
+        '.dbc-spacer{flex:1;}' +
+        // 轨迹同款小动作按钮(_toggle/_action 配方)
+        '.dbc-tbtn{display:inline-flex;align-items:center;height:20px;padding:0 7px;border:0;' +
+        'border-radius:3px;background:none;color:var(--dsw-alias-label-tertiary);' +
+        'font:var(--dsw-font-xxs-12);cursor:pointer;white-space:nowrap;' +
+        'transition:color .12s var(--ds-ease-in-out),background-color .12s var(--ds-ease-in-out);}' +
+        '.dbc-tbtn:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover);}' +
+        '.dbc-tbtn:active{background:var(--dsw-alias-interactive-bg-active);}' +
+        '.dbc-tbtn:disabled{opacity:.45;cursor:default;background:none;}' +
+        '.dbc-tbtn:focus-visible{outline:1px solid var(--dsw-alias-state-business-primary);outline-offset:1px;}' +
+        '.dbc-danger{color:var(--dsw-alias-state-error,#ec1313);}' +
+        '.dbc-danger:hover{background:color-mix(in srgb,var(--dsw-alias-state-error,#ec1313) 10%,transparent);}' +
+        // 登录态
+        '.dbc-loginwrap{flex:1;display:flex;align-items:center;justify-content:center;padding:24px;}' +
+        '.dbc-login{width:min(440px,92%);display:flex;flex-direction:column;gap:12px;}' +
+        '.dbc-login h2{margin:0;font:600 var(--dsw-font-s-14);}' +
+        '.dbc-sub{margin:0;font:var(--dsw-font-xs-13);line-height:20px;color:var(--dsw-alias-label-secondary);}' +
+        '.dbc-url{width:100%;}' +
+        '.dbc-maskedbox{padding:8px 10px;border-radius:8px;background:var(--dsw-alias-bg-layer-2);' +
+        'border:1px solid var(--dsw-alias-border-l1);font-family:var(--ds-font-family-code);' +
+        'font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);word-break:break-all;}' +
+        '.dbc-msg-ok{margin:0;font:var(--dsw-font-xs-13);color:var(--dsw-alias-state-success,#16a34a);word-break:break-all;}' +
+        '.dbc-msg-err{margin:0;font:var(--dsw-font-xs-13);color:var(--dsw-alias-state-error,#ec1313);word-break:break-all;}' +
+        '.dbc-btnrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}' +
+        '.dbc-help{font:var(--dsw-font-xxs-12);color:var(--dsw-alias-label-secondary);}' +
+        '.dbc-help summary{cursor:pointer;color:var(--dsw-alias-label-tertiary);}' +
+        // 工作台骨架
+        '.dbc-body{flex:1;display:flex;min-height:0;}' +
+        '.dbc-side{width:256px;flex:none;display:flex;flex-direction:column;min-height:0;' +
+        'border-right:1px solid var(--dsw-alias-border-l2);}' +
+        '.dbc-side-head{flex:none;height:30px;display:flex;align-items:center;justify-content:space-between;' +
+        'padding:0 8px;background:var(--dsw-specific-sidebar-fill);color:var(--dsw-alias-label-tertiary);' +
+        'font:500 var(--dsw-font-xxs-12);border-bottom:1px solid var(--dsw-alias-border-l2);}' +
+        '.dbc-tree{flex:1;overflow:auto;padding:4px 0 8px;user-select:none;}' +
+        '.dbc-row{display:flex;align-items:center;gap:5px;height:24px;padding:0 8px;border-radius:4px;' +
+        'cursor:pointer;font:var(--dsw-font-xxs-12);color:var(--dsw-alias-label-secondary);' +
+        'transition:background-color .12s var(--ds-ease-in-out),color .12s var(--ds-ease-in-out);}' +
+        '.dbc-row:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary);}' +
+        '.dbc-row-strong{color:var(--dsw-alias-label-primary);font-weight:500;}' +
+        '.dbc-count{color:var(--dsw-alias-label-caption);font-weight:400;}' +
+        '.dbc-caret{display:inline-block;width:0;height:0;border-left:4px solid currentColor;' +
+        'border-top:3px solid transparent;border-bottom:3px solid transparent;opacity:.55;' +
+        'transition:transform .12s var(--ds-ease-in-out);}' +
         '.dbc-caret-open{transform:rotate(90deg);}' +
-        '.dbc-tables{margin-left:16px;}' +
-        '.dbc-table-row{display:flex;align-items:center;gap:5px;padding:2.5px 8px;border-radius:6px;cursor:pointer;}' +
-        '.dbc-table-row:hover{background:var(--dsw-alias-bg-overlay,rgba(127,127,127,.12));}' +
-        '.dbc-cols{margin-left:18px;border-left:1px dashed var(--dsw-alias-border-l1);padding-left:6px;}' +
-        '.dbc-col{display:flex;gap:6px;padding:1px 6px;font-size:11.5px;color:var(--dsw-alias-label-secondary);}' +
-        '.dbc-col .t{color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));opacity:.85;}' +
-        '.dbc-main{flex:1;display:flex;flex-direction:column;gap:10px;min-width:0;min-height:0;}' +
-        // 编辑器
-        '.dbc-editor-wrap{position:relative;flex:none;height:34%;min-height:150px;display:flex;' +
-        'flex-direction:column;overflow:hidden;}' +
-        '.dbc-editor-scroll{position:relative;flex:1;overflow:hidden;}' +
-        '.dbc-hl,.dbc-ta{position:absolute;inset:0;margin:0;padding:10px 12px;border:0;' +
-        'font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.8px;line-height:1.55;' +
+        '.dbc-tables{margin-left:14px;}' +
+        '.dbc-cols{margin-left:22px;border-left:1px dashed var(--dsw-alias-border-l1);padding-left:6px;}' +
+        '.dbc-col{display:flex;align-items:center;gap:6px;height:19px;padding:0 4px;font-size:11px;' +
+        'line-height:16px;color:var(--dsw-alias-label-tertiary);}' +
+        '.dbc-col .t{color:var(--dsw-alias-label-caption);}' +
+        '.dbc-main{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0;}' +
+        // 编辑器 —— 回声 composer 卡片
+        '.dbc-editor{flex:none;height:38%;min-height:160px;display:flex;flex-direction:column;' +
+        'margin:10px 10px 0;background:var(--dsw-specific-input-major);' +
+        'border:1px solid var(--dsw-alias-border-l2-darkmode-thin);border-radius:14px;' +
+        'box-shadow:var(--dsw-shadow-lv2);overflow:hidden;transition:border-color .12s var(--ds-ease-in-out);}' +
+        '.dbc-editor:focus-within{border-color:var(--dsw-alias-state-business-primary);}' +
+        '.dbc-editor-scroll{position:relative;flex:1;min-height:0;}' +
+        '.dbc-hl,.dbc-ta{position:absolute;inset:0;margin:0;padding:10px 14px 12px;border:0;' +
+        'font-family:var(--ds-font-family-code);font-size:13px;line-height:22px;' +
         'white-space:pre-wrap;word-break:break-all;overflow-wrap:break-word;tab-size:2;}' +
-        '.dbc-hl{pointer-events:none;overflow:hidden;color:var(--dsw-alias-label-primary);background:transparent;}' +
-        '.dbc-ta{width:100%;height:100%;resize:none;background:var(--dsw-alias-bg-base);' +
-        'color:transparent;caret-color:var(--dsw-alias-label-primary);-webkit-text-fill-color:transparent;' +
-        'border-top:1px solid var(--dsw-alias-border-l1);}' +
-        '.dbc-ta::selection{background:color-mix(in srgb,var(--dsw-alias-brand,#4a6cf7) 32%,transparent);}' +
-        '.dbc-hl .kw{color:#c678dd;font-weight:600;}' +
-        '.dbc-hl .str{color:#98c379;}.dbc-hl .num{color:#d19a66;}.dbc-hl .com{color:var(--dsw-alias-label-tertiary,#7f848e);font-style:italic;}' +
-        '.dbc-editor-bar{display:flex;align-items:center;gap:8px;padding:6px 10px;flex:none;}' +
-        // 补全弹层
-        '.dbc-cmplist{position:absolute;z-index:60;min-width:220px;max-width:340px;max-height:220px;overflow:auto;' +
-        'background:var(--dsw-alias-bg-overlay,var(--dsw-alias-bg-base));border:1px solid var(--dsw-alias-border-l2);' +
-        'border-radius:8px;box-shadow:var(--dsw-shadow-lv2,rgba(0,0,0,.2)) 0 8px 28px;padding:4px;font-size:12.5px;}' +
-        '.dbc-cmp{display:flex;justify-content:space-between;gap:12px;padding:3.5px 8px;border-radius:6px;cursor:pointer;}' +
-        '.dbc-cmp-sel{background:color-mix(in srgb,var(--dsw-alias-brand,#4a6cf7) 22%,transparent);}' +
-        '.dbc-cmp .k{color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));font-size:11px;}' +
-        // 结果区
-        '.dbc-results{flex:1;min-height:0;display:flex;flex-direction:column;gap:8px;overflow:auto;padding:10px 12px;}' +
-        '.dbc-rstat{font-size:12px;color:var(--dsw-alias-label-secondary);}' +
-        '.dbc-gridwrap{overflow:auto;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;max-height:420px;}' +
-        '.dbc-grid{border-collapse:separate;border-spacing:0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;' +
-        'font-size:12px;min-width:100%;}' +
-        '.dbc-grid th{position:sticky;top:0;background:var(--dsw-alias-bg-overlay,var(--dsw-alias-bg-base));' +
-        'text-align:left;padding:5px 10px;border-bottom:1px solid var(--dsw-alias-border-l2);font-weight:600;z-index:1;}' +
-        '.dbc-grid td{padding:4px 10px;border-bottom:1px solid var(--dsw-alias-border-l1);' +
-        'white-space:nowrap;max-width:420px;overflow:hidden;text-overflow:ellipsis;cursor:pointer;}' +
-        '.dbc-grid tr:hover td{background:var(--dsw-alias-bg-overlay,rgba(127,127,127,.08));}' +
-        '.dbc-null{color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));font-style:italic;}' +
-        // 提示条
-        '.dbc-toast{position:fixed;left:50%;bottom:64px;transform:translateX(-50%);z-index:200;' +
-        'padding:7px 16px;border-radius:999px;font-size:12.5px;pointer-events:none;' +
-        'background:var(--dsw-alias-bg-overlay,var(--dsw-alias-bg-base));border:1px solid var(--dsw-alias-border-l2);' +
-        'box-shadow:var(--dsw-shadow-lv2,rgba(0,0,0,.18)) 0 6px 20px;}';
+        '.dbc-hl{pointer-events:none;overflow:hidden;color:var(--dsw-alias-label-primary);background:none;}' +
+        '.dbc-ta{width:100%;height:100%;resize:none;background:none;outline:none;' +
+        'color:transparent;-webkit-text-fill-color:transparent;caret-color:var(--dsw-alias-state-business-primary);}' +
+        '.dbc-ta::placeholder{color:var(--dsw-alias-label-caption);}' +
+        '.dbc-ta::selection{background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 30%,transparent);}' +
+        // 语法着色: 选用在明暗两种底色上都可读的中等亮度值(壳层无语法代币)
+        '.dbc-hl .kw{color:#4176e6;font-weight:600;}' +
+        '.dbc-hl .str{color:#1f9e5f;}.dbc-hl .num{color:#c77700;}' +
+        '.dbc-hl .com{color:var(--dsw-alias-label-tertiary);font-style:italic;}' +
+        '.dbc-editor-bar{flex:none;height:34px;display:flex;align-items:center;gap:8px;padding:0 6px;' +
+        'border-top:1px solid var(--dsw-alias-border-l2-darkmode-thin);}' +
+        '.dbc-hint{font:var(--dsw-font-xxs-12);color:var(--dsw-alias-label-caption);}' +
+        // 补全弹层 —— specific-menu 配方
+        '.dbc-cmplist{position:absolute;z-index:60;min-width:220px;max-width:360px;max-height:240px;overflow:auto;' +
+        'background:var(--dsw-specific-menu,var(--dsw-alias-bg-layer-3));border:1px solid var(--dsw-alias-border-l2);' +
+        'border-radius:8px;box-shadow:var(--dsw-shadow-lv2);padding:4px;}' +
+        '.dbc-cmp{display:flex;align-items:center;justify-content:space-between;gap:12px;height:24px;' +
+        'padding:0 8px;border-radius:4px;font:var(--dsw-font-xxs-12);cursor:pointer;' +
+        'color:var(--dsw-alias-label-secondary);}' +
+        '.dbc-cmp:hover,.dbc-cmp-sel{background:var(--dsw-alias-interactive-bg-active);color:var(--dsw-alias-label-primary);}' +
+        '.dbc-cmp .k{color:var(--dsw-alias-label-caption);font-size:11px;}' +
+        // 结果面板
+        '.dbc-results{flex:1;min-height:120px;display:flex;flex-direction:column;gap:8px;overflow:auto;' +
+        'margin:10px;padding:10px 12px;background:var(--dsw-alias-bg-base);' +
+        'border:1px solid var(--dsw-alias-border-l1);border-radius:12px;}' +
+        '.dbc-rstat{font:var(--dsw-font-xxs-12);color:var(--dsw-alias-label-secondary);}' +
+        '.dbc-gridwrap{overflow:auto;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;max-height:46%;}' +
+        '.dbc-grid{width:100%;border-collapse:separate;border-spacing:0;font:var(--dsw-font-xxs-12);}' +
+        '.dbc-grid th{position:sticky;top:0;height:30px;text-align:left;padding:0 8px;z-index:1;' +
+        'background:var(--dsw-specific-sidebar-fill);color:var(--dsw-alias-label-tertiary);font-weight:500;' +
+        'border-bottom:1px solid var(--dsw-alias-border-l2);}' +
+        '.dbc-grid td{height:30px;padding:0 8px;border-bottom:1px solid var(--dsw-alias-border-l1);' +
+        'white-space:nowrap;max-width:480px;overflow:hidden;text-overflow:ellipsis;cursor:pointer;}' +
+        '.dbc-grid tbody tr:hover td{background:var(--dsw-alias-interactive-bg-hover);}' +
+        '.dbc-null{color:var(--dsw-alias-label-tertiary);font-style:italic;}' +
+        // 提示条(toast 配方)
+        '.dbc-toast{position:fixed;left:50%;bottom:76px;transform:translateX(-50%);z-index:200;' +
+        'pointer-events:none;padding:6px 14px;border-radius:14px;font:var(--dsw-font-xs-13);' +
+        'background:var(--dsw-alias-toast-bg);color:var(--dsw-static-neutral-bluish-00);' +
+        'box-shadow:var(--dsw-shadow-lv2);}';
 
       var styleEl = null;
       function ensureStyles() {
@@ -438,7 +472,7 @@ window.__ModuleLoader__.load({
         if (!schemas.length) {
           return React.createElement(
             'div',
-            { className: 'dbc-faint', style: { padding: '8px 12px' } },
+            { className: 'dbc-hint', style: { padding: '8px 12px' } },
             props.loading ? '内省中…' : '无表(或未加载)',
           );
         }
@@ -453,7 +487,7 @@ window.__ModuleLoader__.load({
               React.createElement(
                 'div',
                 {
-                  className: 'dbc-schema-row',
+                  className: 'dbc-row dbc-row-strong',
                   onClick: function () {
                     toggleSchema(s.name);
                   },
@@ -463,11 +497,11 @@ window.__ModuleLoader__.load({
                 }),
                 React.createElement(
                   'span',
-                  { style: { fontWeight: 600 } },
+                  null,
                   s.name,
                   React.createElement(
                     'span',
-                    { className: 'dbc-faint' },
+                    { className: 'dbc-count' },
                     ' (' + s.tables.length + ')',
                   ),
                 ),
@@ -485,7 +519,7 @@ window.__ModuleLoader__.load({
                         React.createElement(
                           'div',
                           {
-                            className: 'dbc-table-row',
+                            className: 'dbc-row',
                             title: '点击把表名插入编辑器; 再点展开列',
                             onClick: function (e) {
                               props.onPickTable(s.name, t.name);
@@ -952,14 +986,12 @@ window.__ModuleLoader__.load({
           };
         }, []);
 
-        var mono = { fontFamily: 'ui-monospace,SFMono-Regular,Menlo,Consolas,monospace' };
-
         // ---- 渲染分支 ----
         if (!cfg && !loadErr) {
           return React.createElement(
             'div',
-            { className: 'dbc-view' },
-            React.createElement('div', { className: 'dbc-muted' }, '加载数据库配置…'),
+            { className: 'dbc-root' },
+            React.createElement('div', { className: 'dbc-center' }, '加载数据库配置…'),
           );
         }
 
@@ -968,151 +1000,168 @@ window.__ModuleLoader__.load({
         if (showForm) {
           return React.createElement(
             'div',
-            { className: 'dbc-view' },
+            { className: 'dbc-root' },
             toast ? React.createElement('div', { className: 'dbc-toast' }, toast) : null,
             React.createElement(
               'div',
-              { className: 'dbc-card dbc-login' },
-              React.createElement('h2', null, '数据库'),
+              { className: 'dbc-loginwrap' },
+              toast ? React.createElement('div', { className: 'dbc-toast' }, toast) : null,
               React.createElement(
                 'div',
-                { className: 'dbc-faint' },
-                '粘贴完整 PostgreSQL 链接串登录。链接按项目(仓库根)保存于本机, 刷新/重启不失效。',
-              ),
-              React.createElement('input', {
-                className: 'dbc-input',
-                type: 'text',
-                spellCheck: false,
-                autoFocus: true,
-                placeholder: 'postgres://user:password@host:5432/dbname?sslmode=require',
-                value: urlDraft,
-                onChange: function (e) {
-                  setUrlDraft(e.target.value);
-                  setTestMsg(null);
-                },
-                onKeyDown: function (e) {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    doSaveAndConnect();
-                  }
-                },
-              }),
-              testMsg
-                ? React.createElement(
-                    'div',
-                    { className: testMsg.ok ? 'dbc-okmsg' : 'dbc-err' },
-                    testMsg.msg,
-                  )
-                : null,
-              loadErr && !cfg
-                ? React.createElement('div', { className: 'dbc-err' }, loadErr)
-                : null,
-              React.createElement(
-                'div',
-                { className: 'dbc-btnrow' },
+                { className: 'dbc-login' },
+                React.createElement('h2', null, '数据库'),
                 React.createElement(
-                  'button',
-                  {
-                    className: 'dbc-btn dbc-btn-primary',
-                    disabled: busy,
-                    onClick: doSaveAndConnect,
+                  'p',
+                  { className: 'dbc-sub' },
+                  '粘贴完整 PostgreSQL 链接串登录。链接按项目(仓库根)保存于本机, 刷新/重启不失效。',
+                ),
+                React.createElement(Input, {
+                  className: 'dbc-url',
+                  type: 'text',
+                  spellCheck: false,
+                  autoFocus: true,
+                  placeholder: 'postgres://user:password@host:5432/dbname?sslmode=require',
+                  value: urlDraft,
+                  onChange: function (e) {
+                    setUrlDraft(e.target.value);
+                    setTestMsg(null);
                   },
-                  busy ? '处理中…' : '保存并连接',
-                ),
-                React.createElement(
-                  'button',
-                  { className: 'dbc-btn', disabled: busy, onClick: doTest },
-                  '测试连接',
-                ),
-                cfg && cfg.url
+                  onKeyDown: function (e) {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      doSaveAndConnect();
+                    }
+                  },
+                }),
+                testMsg
                   ? React.createElement(
-                      'button',
-                      {
-                        className: 'dbc-btn',
-                        onClick: function () {
-                          setEditMode(false);
-                          setUrlDraft('');
-                        },
-                      },
-                      '取消',
+                      'div',
+                      { className: testMsg.ok ? 'dbc-msg-ok' : 'dbc-msg-err' },
+                      testMsg.msg,
                     )
                   : null,
-              ),
-              React.createElement(
-                'details',
-                { className: 'dbc-faint' },
-                React.createElement('summary', null, '支持哪些写法?'),
+                loadErr && !cfg
+                  ? React.createElement('div', { className: 'dbc-msg-err' }, loadErr)
+                  : null,
                 React.createElement(
                   'div',
-                  null,
-                  'postgres:// 或 postgresql:// 均可; 支持 sslmode、connect_timeout 等 query 参数; 密码中的特殊字符需 URL 转义(%40 代表 @)。',
+                  { className: 'dbc-btnrow' },
+                  React.createElement(
+                    Btn,
+                    { variant: 'primary', size: 'sm', disabled: busy, onClick: doSaveAndConnect },
+                    busy ? '处理中…' : '保存并连接',
+                  ),
+                  React.createElement(
+                    Btn,
+                    {
+                      variant: 'outline',
+                      size: 'sm',
+                      disabled: busy,
+                      onClick: function () {
+                        doTest();
+                      },
+                    },
+                    '测试连接',
+                  ),
+                  cfg && cfg.url
+                    ? React.createElement(
+                        Btn,
+                        {
+                          variant: 'ghost',
+                          size: 'sm',
+                          onClick: function () {
+                            setEditMode(false);
+                            setUrlDraft('');
+                            setTestMsg(null);
+                          },
+                        },
+                        '取消',
+                      )
+                    : null,
+                ),
+                React.createElement(
+                  'details',
+                  { className: 'dbc-help' },
+                  React.createElement('summary', null, '支持哪些写法?'),
+                  React.createElement(
+                    'div',
+                    null,
+                    'postgres:// 或 postgresql:// 均可; 支持 sslmode、connect_timeout 等 query 参数; 密码中的特殊字符需 URL 转义(%40 代表 @)。',
+                  ),
                 ),
               ),
             ),
           );
         }
 
-        // 连接卡片(有配置未连接)
+        // 已保存未连接
         if (conn !== 'open') {
           return React.createElement(
             'div',
-            { className: 'dbc-view' },
+            { className: 'dbc-root' },
             toast ? React.createElement('div', { className: 'dbc-toast' }, toast) : null,
             React.createElement(
               'div',
-              { className: 'dbc-card dbc-login' },
-              React.createElement('h2', null, '数据库'),
-              React.createElement('div', { className: 'dbc-masked' }, cfg.maskedUrl || ''),
-              cfg.summary
-                ? React.createElement('div', { className: 'dbc-faint' }, cfg.summary)
-                : null,
-              connErr ? React.createElement('div', { className: 'dbc-err' }, connErr) : null,
-              testMsg
-                ? React.createElement(
-                    'div',
-                    { className: testMsg.ok ? 'dbc-okmsg' : 'dbc-err' },
-                    testMsg.msg,
-                  )
-                : null,
+              { className: 'dbc-loginwrap' },
               React.createElement(
                 'div',
-                { className: 'dbc-btnrow' },
+                { className: 'dbc-login' },
+                React.createElement('h2', null, '数据库'),
+                React.createElement('div', { className: 'dbc-maskedbox' }, cfg.maskedUrl || ''),
+                cfg.summary
+                  ? React.createElement('p', { className: 'dbc-sub' }, cfg.summary)
+                  : null,
+                connErr ? React.createElement('div', { className: 'dbc-msg-err' }, connErr) : null,
+                testMsg
+                  ? React.createElement(
+                      'div',
+                      { className: testMsg.ok ? 'dbc-msg-ok' : 'dbc-msg-err' },
+                      testMsg.msg,
+                    )
+                  : null,
                 React.createElement(
-                  'button',
-                  {
-                    className: 'dbc-btn dbc-btn-primary',
-                    disabled: conn === 'connecting',
-                    onClick: doConnect,
-                  },
-                  conn === 'connecting' ? '连接中…' : '连接',
-                ),
-                React.createElement(
-                  'button',
-                  {
-                    className: 'dbc-btn',
-                    disabled: busy,
-                    onClick: function () {
-                      doTest(cfg.url);
+                  'div',
+                  { className: 'dbc-btnrow' },
+                  React.createElement(
+                    Btn,
+                    {
+                      variant: 'primary',
+                      size: 'sm',
+                      disabled: conn === 'connecting',
+                      onClick: doConnect,
                     },
-                  },
-                  '测试连接',
-                ),
-                React.createElement(
-                  'button',
-                  {
-                    className: 'dbc-btn',
-                    onClick: function () {
-                      setEditMode(true);
-                      setUrlDraft(cfg.url || '');
-                      setTestMsg(null);
+                    conn === 'connecting' ? '连接中…' : '连接',
+                  ),
+                  React.createElement(
+                    Btn,
+                    {
+                      variant: 'outline',
+                      size: 'sm',
+                      disabled: busy,
+                      onClick: function () {
+                        doTest(cfg.url);
+                      },
                     },
-                  },
-                  '修改链接',
-                ),
-                React.createElement(
-                  'button',
-                  { className: 'dbc-btn dbc-btn-danger', onClick: doDelete },
-                  confirmDel ? '确认删除?' : '删除',
+                    '测试连接',
+                  ),
+                  React.createElement(
+                    Btn,
+                    {
+                      variant: 'outline',
+                      size: 'sm',
+                      onClick: function () {
+                        setEditMode(true);
+                        setUrlDraft(cfg.url || '');
+                        setTestMsg(null);
+                      },
+                    },
+                    '修改链接',
+                  ),
+                  React.createElement(
+                    'button',
+                    { className: 'dbc-tbtn dbc-danger', onClick: doDelete },
+                    confirmDel ? '确认删除?' : '删除',
+                  ),
                 ),
               ),
             ),
@@ -1128,32 +1177,32 @@ window.__ModuleLoader__.load({
           .join(' · ');
         return React.createElement(
           'div',
-          { className: 'dbc-view' },
+          { className: 'dbc-root' },
           toast ? React.createElement('div', { className: 'dbc-toast' }, toast) : null,
           React.createElement(
             'div',
-            { className: 'dbc-card dbc-head' },
+            { className: 'dbc-toolbar' },
             React.createElement('span', { className: 'dbc-title' }, '数据库'),
-            React.createElement('span', { className: 'dbc-masked' }, headDesc),
-            React.createElement('span', { style: { flex: 1 } }),
+            React.createElement('span', { className: 'dbc-meta' }, headDesc),
+            React.createElement('span', { className: 'dbc-spacer' }),
             React.createElement(
               'button',
               {
-                className: 'dbc-btn',
+                className: 'dbc-tbtn',
                 title: '重新内省表结构',
                 disabled: schemaBusy,
                 onClick: loadSchema,
               },
-              schemaBusy ? '⟳ …' : '⟳ schema',
+              schemaBusy ? '⟳ 内省中…' : '⟳ schema',
             ),
-            React.createElement('button', { className: 'dbc-btn', onClick: doDisconnect }, '断开'),
+            React.createElement('button', { className: 'dbc-tbtn', onClick: doDisconnect }, '断开'),
           ),
           React.createElement(
             'div',
             { className: 'dbc-body' },
             React.createElement(
               'div',
-              { className: 'dbc-card dbc-side' },
+              { className: 'dbc-side' },
               React.createElement(
                 'div',
                 { className: 'dbc-side-head' },
@@ -1161,7 +1210,7 @@ window.__ModuleLoader__.load({
                 schema
                   ? React.createElement(
                       'span',
-                      { className: 'dbc-faint' },
+                      { className: 'dbc-count' },
                       schema.length + ' 个 schema',
                     )
                   : null,
@@ -1180,7 +1229,7 @@ window.__ModuleLoader__.load({
               { className: 'dbc-main' },
               React.createElement(
                 'div',
-                { className: 'dbc-card dbc-editor-wrap' },
+                { className: 'dbc-editor' },
                 React.createElement(
                   'div',
                   { className: 'dbc-editor-scroll' },
@@ -1235,26 +1284,26 @@ window.__ModuleLoader__.load({
                   'div',
                   { className: 'dbc-editor-bar' },
                   React.createElement(
-                    'button',
-                    { className: 'dbc-btn dbc-btn-primary', onClick: runQuery },
+                    Btn,
+                    { variant: 'primary', size: 'sm', onClick: runQuery },
                     '▶ 执行',
                   ),
                   React.createElement(
                     'span',
-                    { className: 'dbc-faint' },
+                    { className: 'dbc-hint' },
                     'Ctrl/Cmd+Enter · 补全: 输入字母或「表名.」',
                   ),
                 ),
               ),
               React.createElement(
                 'div',
-                { className: 'dbc-card dbc-results' },
+                { className: 'dbc-results' },
                 result === null
-                  ? React.createElement('div', { className: 'dbc-faint' }, '结果将在这里展示')
+                  ? React.createElement('div', { className: 'dbc-hint' }, '结果将在这里展示')
                   : result.pending
-                    ? React.createElement('div', { className: 'dbc-muted' }, '执行中…')
+                    ? React.createElement('div', { className: 'dbc-hint' }, '执行中…')
                     : result.err
-                      ? React.createElement('div', { className: 'dbc-err' }, result.err)
+                      ? React.createElement('div', { className: 'dbc-msg-err' }, result.err)
                       : (result.parts || []).map(function (part, pi) {
                           return React.createElement(ResultPart, {
                             key: pi,
