@@ -92,14 +92,18 @@ export function statusBadge(xy) {
  * 把 readdir 条目按三区分组, 并返回当前树(visible/hidden/ignored)
  * 在该目录应该展示的列表。
  *
- * 条目已由调用方标注: `dot`(以 `.` 开头)与 `ignored`(git 忽略)。
+ * 条目已由调用方标注: `dot`(以 `.` 开头)、`ignored`(git 忽略)与
+ * `subIgnored`(自身未忽略但子树含忽略项的桥接目录, 仅影响忽略区列表,
+ * 不改变三区分桶 —— 桥接目录在可见区仍是普通成员)。
  * `.git` 由调用方在 readdir 阶段剔除。
  *
- * @param entries [{name, type, dot, ignored}]
+ * @param entries [{name, type, dot, ignored, subIgnored?}]
  * @param mode 'visible' | 'hidden' | 'ignored'
  * @param reveal boolean — 进入"归属区内部"时(true)展示全部子项
  *   (hidden 模式展开 dot 目录、ignored 模式展开被忽略目录),
- *   否则只展示本区成员(hidden 只展示 dot 项, ignored 只展示忽略项)。
+ *   否则只展示本区成员(hidden 只展示 dot 项,
+ *   ignored 展示忽略项 + 桥接目录 —— 否则深层忽略路径如 src/__pycache__
+ *   因父级 src 未被忽略而永远无法从忽略区走到)。
  * @returns {{list: Array, visible: Array, hidden: Array, ignored: Array}}
  */
 export function partitionChildren(entries, mode, reveal) {
@@ -121,8 +125,11 @@ export function partitionChildren(entries, mode, reveal) {
   let list;
   if (mode === 'visible') list = visible;
   else if (mode === 'hidden') list = reveal ? entries : hidden;
-  else if (mode === 'ignored') list = reveal ? entries : ignored;
-  else list = [];
+  else if (mode === 'ignored') {
+    // reveal=true 是"已进入真正被忽略目录内部", 全量展示;
+    // 非 reveal 时含桥接目录, 但 dot 桥接除外(隐藏区已可达, 不重复列出)。
+    list = reveal ? entries : entries.filter((e) => e.ignored || (e.subIgnored && !e.dot));
+  } else list = [];
   return { list: sorted(list), visible, hidden, ignored };
 }
 

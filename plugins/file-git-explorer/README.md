@@ -37,11 +37,11 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer
 
 ### 左侧文件树(三区, 独立滚动)
 
-| 分区       | 内容                                | 展开语义                                                                         |
-| ---------- | ----------------------------------- | -------------------------------------------------------------------------------- |
-| 可显示文件 | 非点开头 且 未被 .gitignore 忽略    | 每级只展示本区成员                                                               |
-| 隐藏文件   | `.` 开头(排除 `.git` 内部结构)      | 普通目录只展示其 dot 子项; 点开的 **dot 目录**展示其全部子项                     |
-| 忽略文件   | .gitignore 忽略项(含被忽略的点文件) | 普通目录只展示其忽略子项; 点开的 **被忽略目录**(如 `node_modules`)展示其全部子项 |
+| 分区       | 内容                                                                                                                        | 展开语义                                                                              |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| 可显示文件 | 非点开头 且 未被 .gitignore 忽略                                                                                            | 每级只展示本区成员                                                                    |
+| 隐藏文件   | `.` 开头(排除 `.git` 内部结构)                                                                                              | 普通目录只展示其 dot 子项; 点开的 **dot 目录**展示其全部子项                          |
+| 忽略文件   | .gitignore 忽略项(含被忽略的点文件), 另含**桥接目录**——自身未忽略但子树含忽略项的普通目录(如 `src`, 通向 `src/__pycache__`) | 普通目录只展示其忽略/桥接子项; 点开的 **被忽略目录**(如 `node_modules`)展示其全部子项 |
 
 - 逐级懒加载: 点目录才拉取子节点(`POST /fge/api/tree`), 无定时扫描。
 - 点**文件** → 行高亮 + **内容悬浮面板向右浮出**(可越过对话区, 文本 + 行号 + **逐行语法高亮**: 关键字 / 类型·类名 / 函数调用 / 字符串 / 注释 / 数字, 覆盖 JS/TS/Python/Rust/Go/Java/C 等常见语言; >1 MiB 或二进制只显示提示、不预览)。
@@ -84,16 +84,16 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer
 
 信任栅栏与 `dsh-ds-balance` 同款: 仅回环地址 + `x-dsh-plugin: 1` 头 + POST。所有路径做防穿越校验(文件树/file 只能落在请求 `root` 之下, `root`/`repoRoot` 必须是绝对路径)。
 
-| 路由                   | 请求体                                   | 返回                                                        |
-| ---------------------- | ---------------------------------------- | ----------------------------------------------------------- |
-| `POST /fge/api/info`   | `{root?}`                                | `{cwd(=root), repoRoot, branch, head}`                      |
-| `POST /fge/api/tree`   | `{root?, path, mode, reveal}`            | 目录三区条目 `[{name, rel, type, dot, ignored}]`            |
-| `POST /fge/api/status` | `{root?, repoRoot}`                      | `{current, head, branches[], changes[]}`                    |
-| `POST /fge/api/diff`   | `{root?, repoRoot, path, status, from}`  | `{kind: 'diff'\|'untracked', text, ...}`                    |
-| `POST /fge/api/file`   | `{root?, path}`                          | `{text, binary, truncated, size}`                           |
-| `POST /fge/api/search` | `{root?, query}`                         | `{matches[{rel, type, zone, nameHit}], truncated}`          |
-| `POST /fge/api/log`    | `{root?, repoRoot, ref?, skip?, limit?}` | `{ref, head, commits[{hash, short, author, at, subject}]}`  |
-| `POST /fge/api/show`   | `{root?, repoRoot, hash, path?}`         | `{kind: 'commit'\|'merge'\|'diff', message, files[], text}` |
+| 路由                   | 请求体                                   | 返回                                                         |
+| ---------------------- | ---------------------------------------- | ------------------------------------------------------------ |
+| `POST /fge/api/info`   | `{root?}`                                | `{cwd(=root), repoRoot, branch, head}`                       |
+| `POST /fge/api/tree`   | `{root?, path, mode, reveal}`            | 目录三区条目 `[{name, rel, type, dot, ignored, subIgnored}]` |
+| `POST /fge/api/status` | `{root?, repoRoot}`                      | `{current, head, branches[], changes[]}`                     |
+| `POST /fge/api/diff`   | `{root?, repoRoot, path, status, from}`  | `{kind: 'diff'\|'untracked', text, ...}`                     |
+| `POST /fge/api/file`   | `{root?, path}`                          | `{text, binary, truncated, size}`                            |
+| `POST /fge/api/search` | `{root?, query}`                         | `{matches[{rel, type, zone, nameHit}], truncated}`           |
+| `POST /fge/api/log`    | `{root?, repoRoot, ref?, skip?, limit?}` | `{ref, head, commits[{hash, short, author, at, subject}]}`   |
+| `POST /fge/api/show`   | `{root?, repoRoot, hash, path?}`         | `{kind: 'commit'\|'merge'\|'diff', message, files[], text}`  |
 
 git 一律经 `subprocess` 服务执行(argv 数组, 无 shell)。
 
@@ -101,6 +101,7 @@ git 一律经 `subprocess` 服务执行(argv 数组, 无 shell)。
 
 - `git status --porcelain=v1 -z`: 条目 NUL 分隔; rename 是两条 —— `R  <新路径>\0<旧路径>\0`(状态 token 带新路径, 裸 token 是旧路径)。
 - `git check-ignore` 必须 `--stdin -z`(argv 模式不允许 `-z`), 只输出命中的路径(exit 0 = 有命中, 1 = 无)。
+- 忽略区的**桥接目录**靠 `git ls-files -o -i --exclude-standard --directory -z -- :(literal)<子目录>…` 探测: `--directory` 把整体被忽略的子目录折叠成单条输出, 任一 token 落在某候选子目录下即标记 `subIgnored`(一次调用覆盖全部直接子目录, 开销同阶); 不做桥接时深层忽略路径(如 `src/__pycache__`)因父级未被忽略而无法从忽略区走到。
 - `git diff HEAD -- <新路径>` 对 rename 只会显示 new file, 必须 `-M -- <新> <旧>` 才能出 rename diff; 未跟踪文件 diff 为空, 回退读内容。
 - 非 ASCII 路径在 diff 里默认 octal 转义, 统一加 `-c core.quotepath=false`。
 - `git ls-files -c -o --exclude-standard -z` 与 `-o -i --exclude-standard -z` 分别给出「可见+隐藏」「忽略」的全量文件清单; 搜索的目录命中项由文件路径派生(`dirsFromPaths`), 与懒加载树语义解耦。

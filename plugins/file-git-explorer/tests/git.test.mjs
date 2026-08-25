@@ -126,6 +126,42 @@ test('partitionChildren: ignored 默认只含忽略项, reveal 时含全部(含�
     assert.equal(r2.list.length, 3);
 });
 
+test('partitionChildren: ignored 桥接(subIgnored 目录在非 reveal 时可达深层忽略项)', () => {
+    const entries = [
+        { name: 'src', type: 'dir', dot: false, ignored: false, subIgnored: true },
+        { name: 'plain', type: 'dir', dot: false, ignored: false },
+        { name: 'node_modules', type: 'dir', dot: false, ignored: true },
+    ];
+    const r1 = partitionChildren(entries, 'ignored', false);
+    assert.deepEqual(
+        r1.list.map((e) => e.name),
+        ['node_modules', 'src'],
+    );
+    // reveal 时仍为全量(含无桥接标记的普通项)
+    const r2 = partitionChildren(entries, 'ignored', true);
+    assert.deepEqual(
+        r2.list.map((e) => e.name),
+        ['node_modules', 'plain', 'src'],
+    );
+});
+
+test('partitionChildren: 桥接不污染 visible/hidden 分桶', () => {
+    const entries = [
+        { name: 'src', type: 'dir', dot: false, ignored: false, subIgnored: true },
+        { name: '.cfg', type: 'dir', dot: true, ignored: false, subIgnored: true },
+        { name: '.env', type: 'file', dot: true, ignored: false },
+    ];
+    assert.deepEqual(
+        partitionChildren(entries, 'visible', false).list.map((e) => e.name),
+        ['src'],
+    );
+    // dot + subIgnored 仍归 hidden 桶(隐藏区成员资格不受桥接影响)
+    assert.deepEqual(
+        partitionChildren(entries, 'hidden', false).list.map((e) => e.name),
+        ['.cfg', '.env'],
+    );
+});
+
 test('partitionChildren: 目录优先, 组内按名称排序', () => {
     const entries = [
         { name: 'z.txt', type: 'file', dot: false, ignored: false },
