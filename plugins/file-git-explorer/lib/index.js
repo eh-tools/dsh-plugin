@@ -214,6 +214,46 @@ export function apply(ctx) {
     return { ok: true, cwd: base, repoRoot, branch, head };
   }
 
+  /**
+   * 忽略区桥接标注: 标出"自身未忽略但子树含忽略项"的普通子目录(subIgnored)。
+   * 不做此标注时, 深层忽略路径(src/__pycache__ 形态)在忽略区内不可达 ——
+   * 各级父目录都未被忽略, 忽略区逐级展开永远走不到它, 左树任何分区都不显示。
+   * 用一次 `ls-files -o -i --exclude-standard --directory` 批量探测
+   * (输出把整体被忽略的子目录折叠成单条, 开销与直接子项数同阶);
+   * 失败只损失桥接, 不影响文件树展示。
+   */
+  async function markIgnoredBridges(entries, rel, base) {
+    const candidates = entries.filter((e) => e.type === 'dir' && !e.dot && !e.ignored);
+    if (candidates.length === 0) return;
+    const byRel = new Map();
+    for (const e of candidates) byRel.set(joinRel(rel, e.name), e);
+    let r;
+    try {
+      r = await runGit(
+        [
+          'ls-files',
+          '-o',
+          '-i',
+          '--exclude-standard',
+          '--directory',
+          '-z',
+          '--',
+          ...Array.from(byRel.keys()).map((p) => ':(literal)' + p),
+        ],
+        { cwd: base },
+      );
+    } catch {
+      return; // git 不可用等: 无桥接, 与 check-ignore 失败同口径
+    }
+    if (r.exitCode !== 0) return;
+    for (const token of r.stdout.split('\0')) {
+      if (token === '') continue;
+      for (const [p, e] of byRel) {
+        if (token === p || token.startsWith(p + '/')) e.subIgnored = true;
+      }
+    }
+  }
+
   /** 目录条目(三区分组)。path = root 相对路径, '' 表示根本身。 */
   async function handleTree(body) {
     const base = baseOf(body);
@@ -252,6 +292,10 @@ export function apply(ctx) {
       } catch {
         // check-ignore 失败不影响文件树展示(忽略组为空)。
       }
+      // 桥接标注只在忽略区非 reveal 列表需要(reveal 时本就全量展示)。
+      if (mode === 'ignored' && !reveal) {
+        await markIgnoredBridges(entries, rel, base);
+      }
     }
     const groups = partitionChildren(entries, mode, reveal);
     const wire = groups.list.map((e) => ({
@@ -260,6 +304,7 @@ export function apply(ctx) {
       type: e.type,
       dot: e.dot,
       ignored: e.ignored,
+      subIgnored: e.subIgnored === true,
     }));
     return { ok: true, path: rel, mode, entries: wire };
   }

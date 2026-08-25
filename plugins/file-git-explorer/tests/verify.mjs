@@ -10,7 +10,11 @@
  * Run: node plugins/file-git-explorer/tests/verify.mjs
  */
 import { spawn } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import assert from 'node:assert/strict';
 import { apply } from '../lib/index.js';
 
@@ -286,5 +290,113 @@ const sBadHash = await callAt('POST', base('show'), { repoRoot: repoRootV, hash:
 assert.equal(sBadHash.body.ok, false);
 assert.equal(sBadHash.body.error, 'invalid-hash');
 ok('show: 详情/diff/非法 hash');
+
+// 13. 深层忽略项可达性(回归): 忽略区必须能逐级走到"自身未忽略但子树含忽略项"
+//     的目录(src/__pycache__ 形态), 否则深层被忽略目录在左树任何分区都不可见。
+//     自建临时 fixture 仓库, 与本仓库工作区状态无关。
+{
+    const fix = fs.mkdtempSync(path.join(os.tmpdir(), 'fge-fix-'));
+    const g = (...args) => execFileSync('git', args, { cwd: fix });
+    try {
+        const w = (rel, text) => {
+            const abs = path.join(fix, rel);
+            fs.mkdirSync(path.dirname(abs), { recursive: true });
+            fs.writeFileSync(abs, text);
+        };
+        g('init', '-q');
+        w('.gitignore', '__pycache__/\nlogs/\n*.log\n');
+        w('README.md', 'fixture\n');
+        w('src/keep.txt', 'tracked\n');
+        w('src/__pycache__/junk.pyc', 'ignored\n');
+        w('logs/a.log', 'ignored\n');
+        // .cfg 是 dot 目录: 自身未被整体忽略, 内含被忽略文件与被跟踪文件
+        w('.cfg/on.json', '{}\n');
+        w('.cfg/x.log', 'ignored\n');
+        g('add', '-A');
+        g('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', 'init');
+
+        // 顶层忽略区: 直接忽略的 logs + 通向深层忽略项的桥接目录 src
+        const top = await callAt('POST', base('tree'), {
+            root: fix,
+            path: '',
+            mode: 'ignored',
+            reveal: false,
+        });
+        assert.equal(top.body.ok, true);
+        const byName = Object.fromEntries(top.body.entries.map((e) => [e.name, e]));
+        assert.ok(byName.logs, '顶层忽略区应含直接忽略的 logs');
+        assert.equal(byName.logs.ignored, true);
+        assert.equal(byName.logs.subIgnored, false, 'logs 本身被忽略, 无需桥接标记');
+        assert.ok(byName.src, '顶层忽略区应含桥接目录 src(其下有 __pycache__)');
+        assert.equal(byName.src.ignored, false);
+        assert.equal(byName.src.subIgnored, true, 'src 应带 subIgnored 桥接标记');
+        assert.ok(!byName['.cfg'], 'dot 目录不走桥接(隐藏区已可达), 不在忽略区重复出现');
+        ok('tree ignored 桥接: 顶层含 src(subIgnored)与 logs');
+
+        // 展开桥接目录 → 只列其下的忽略项
+        const inSrc = await callAt('POST', base('tree'), {
+            root: fix,
+            path: 'src',
+            mode: 'ignored',
+            reveal: false,
+        });
+        assert.deepEqual(
+            inSrc.body.entries.map((e) => e.rel),
+            ['src/__pycache__'],
+        );
+        ok('tree ignored 桥接: 展开 src 可达 __pycache__');
+
+        // 可见区不受影响: logs/__pycache__ 排除, keep.txt 正常
+        const visSrc = await callAt('POST', base('tree'), {
+            root: fix,
+            path: 'src',
+            mode: 'visible',
+            reveal: false,
+        });
+        assert.deepEqual(
+            visSrc.body.entries.map((e) => e.name),
+            ['keep.txt'],
+        );
+        const visTop = await callAt('POST', base('tree'), {
+            root: fix,
+            path: '',
+            mode: 'visible',
+            reveal: false,
+        });
+        const visByName = Object.fromEntries(visTop.body.entries.map((e) => [e.name, e]));
+        assert.ok(visByName.src, 'src 是普通跟踪目录, 仍是可见区成员');
+        assert.equal(visByName.src.subIgnored, false, '非忽略区列表不带桥接标记');
+        assert.ok(!visByName.logs, '可见区不含被忽略的 logs');
+        ok('tree visible: 桥接不影响可见区分桶');
+
+        // 隐藏区分桶不受桥接影响: .cfg 仍是隐藏区成员(dot 且未被忽略)
+        const hidFix = await callAt('POST', base('tree'), {
+            root: fix,
+            path: '',
+            mode: 'hidden',
+            reveal: false,
+        });
+        assert.ok(
+            hidFix.body.entries.some((e) => e.name === '.cfg'),
+            '.cfg 应留在隐藏区',
+        );
+        ok('tree hidden: 桥接不影响隐藏区分桶');
+
+        // reveal=true(真正被忽略目录内部)仍展示全部子项
+        const revLogs = await callAt('POST', base('tree'), {
+            root: fix,
+            path: 'logs',
+            mode: 'ignored',
+            reveal: true,
+        });
+        assert.deepEqual(
+            revLogs.body.entries.map((e) => e.rel),
+            ['logs/a.log'],
+        );
+        ok('tree ignored reveal: 忽略目录内部全量展示');
+    } finally {
+        fs.rmSync(fix, { recursive: true, force: true });
+    }
+}
 
 console.log('\nHOST LOGIC CHECKS PASSED (' + passed + ' groups)');
