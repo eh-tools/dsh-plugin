@@ -1,6 +1,6 @@
 # dsh-file-git-explorer
 
-左右树浏览插件 —— 左侧**文件树**(可见 / 隐藏 / 忽略三区, 根 = 当前会话工作区, 支持按名搜索) + 右侧 **git 树**(当前分支只读下拉、工作区变更列表、悬浮 diff、查看分支的**提交历史**)。两个面板夹在会话 header 与 composer card 之间, 可左右拉伸、可收起为细条、图钉锁定, 不覆盖主对话区。
+左右树浏览插件 —— 左侧**文件树**(可见 / 隐藏 / 忽略三区, 根 = 当前会话工作区, 支持按名搜索, 底部带 **shell 行**: ✓ 执行 / ✕ 停止的单槽后台命令行) + 右侧 **git 树**(当前分支只读下拉、工作区变更列表、悬浮 diff、查看分支的**提交历史**)。两个面板夹在会话 header 与 composer card 之间, 可左右拉伸、可收起为细条、图钉锁定, 不覆盖主对话区。
 
 静态双半插件(host + client bundle), 随 web profile 启动自动加载。
 
@@ -59,6 +59,22 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer
   (混合链如 `src/.env` 在该区不可达时, 退化为高亮可达的最深祖先)。
 - 非 git 工作区回退 fs 递归扫描(不跟符号链接, 无忽略区); 会话切根自动清空搜索态。
 
+#### shell 行(shell bar)
+
+左树底部常驻的命令执行行: 输入框 + **✓ 执行** / **✕ 停止**两钮(单色线稿 SVG), 语义见 CONTEXT.md「shell 行 / 单槽 / 尾部输出窗」。
+
+- **执行**: ✓ 或 **Enter**(IME 组合期不触发; `preventDefault + stopPropagation` 隔离应用层按键链)。
+  命令在**会话工作区**(与文件树同根)以**用户默认 shell** 解释——POSIX 取 `$SHELL`(不可用回退 `/bin/sh`), Windows 取 `pwsh` 回退 `powershell`; 解析结果按进程缓存。命令串 trim 后非空、≤4000 字符, 越界拒绝(`invalid-command`)。
+- **不消失**: 执行后命令文本保留在输入框(不清空); ↑/↓ 在历史间导航(相邻去重, 上限 100 条),
+  历史随仓库根持久化(`fge-cache-v1` 的 `shellHistory` 字段)。Esc = 输入框失焦(stopPropagation, 不波及常驻 Esc 监听)。
+- **挂后台任务**: 启动即注册为 DSH 后台任务(kind `shell`, label = 命令原文), 出现在各会话头部的任务弹层并计入徽标;
+  无主任务 —— 完成**不通知模型**。GUI 任务列表只读, 故 ✕ 是人停止任务的唯一入口
+  (整棵进程树 TERM → 3s → KILL)。
+- **单槽**: 同一时刻全局至多一条 running/stopping(宿主侧记账, 跨刷新 / 多标签成立);
+  GUI 刷新后自动认领仍在跑的任务(running 态 + ✕ 照常可停); 运行中输入框可编辑但 ✓ 置灰; 无运行时长上限。
+- **尾部输出窗**: 状态行(`● 运行中… / ✓ 退出 N / ■ 已停止(SIGTERM) / ⚠ 错误`)旁可展开的滚动区,
+  运行中每 ~1s 拉一次增量(offset 制非消费式读), 显示尾部各流 ~16K 字符, 自动滚底; stderr 以 `[stderr]` 段落区分。
+
 ### 右侧 git 树
 
 - 顶部: 当前分支(前有竖着 git 分支 SVG 图标; 实时读 `git branch --show-current`), 点击从**面板左侧**弹出**所有分支下拉**(本地 / 远程分组, 只读, 不支持切换; 点非当前分支仅标记「上次查看」)。下拉与 diff / 提交历史悬浮栏**互斥**(开一关一, 两者同占面板左侧留白带, 避免互相遮挡)。
@@ -84,18 +100,23 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer
 
 信任栅栏与 `dsh-ds-balance` 同款: 仅回环地址 + `x-dsh-plugin: 1` 头 + POST。所有路径做防穿越校验(文件树/file 只能落在请求 `root` 之下, `root`/`repoRoot` 必须是绝对路径)。
 
-| 路由                   | 请求体                                   | 返回                                                         |
-| ---------------------- | ---------------------------------------- | ------------------------------------------------------------ |
-| `POST /fge/api/info`   | `{root?}`                                | `{cwd(=root), repoRoot, branch, head}`                       |
-| `POST /fge/api/tree`   | `{root?, path, mode, reveal}`            | 目录三区条目 `[{name, rel, type, dot, ignored, subIgnored}]` |
-| `POST /fge/api/status` | `{root?, repoRoot}`                      | `{current, head, branches[], changes[]}`                     |
-| `POST /fge/api/diff`   | `{root?, repoRoot, path, status, from}`  | `{kind: 'diff'\|'untracked', text, ...}`                     |
-| `POST /fge/api/file`   | `{root?, path}`                          | `{text, binary, truncated, size}`                            |
-| `POST /fge/api/search` | `{root?, query}`                         | `{matches[{rel, type, zone, nameHit}], truncated}`           |
-| `POST /fge/api/log`    | `{root?, repoRoot, ref?, skip?, limit?}` | `{ref, head, commits[{hash, short, author, at, subject}]}`   |
-| `POST /fge/api/show`   | `{root?, repoRoot, hash, path?}`         | `{kind: 'commit'\|'merge'\|'diff', message, files[], text}`  |
+| 路由                        | 请求体                                   | 返回                                                               |
+| --------------------------- | ---------------------------------------- | ------------------------------------------------------------------ |
+| `POST /fge/api/info`        | `{root?}`                                | `{cwd(=root), repoRoot, branch, head}`                             |
+| `POST /fge/api/tree`        | `{root?, path, mode, reveal}`            | 目录三区条目 `[{name, rel, type, dot, ignored, subIgnored}]`       |
+| `POST /fge/api/status`      | `{root?, repoRoot}`                      | `{current, head, branches[], changes[]}`                           |
+| `POST /fge/api/diff`        | `{root?, repoRoot, path, status, from}`  | `{kind: 'diff'\|'untracked', text, ...}`                           |
+| `POST /fge/api/file`        | `{root?, path}`                          | `{text, binary, truncated, size}`                                  |
+| `POST /fge/api/search`      | `{root?, query}`                         | `{matches[{rel, type, zone, nameHit}], truncated}`                 |
+| `POST /fge/api/log`         | `{root?, repoRoot, ref?, skip?, limit?}` | `{ref, head, commits[{hash, short, author, at, subject}]}`         |
+| `POST /fge/api/show`        | `{root?, repoRoot, hash, path?}`         | `{kind: 'commit'\|'merge'\|'diff', message, files[], text}`        |
+| `POST /fge/api/shellStart`  | `{root?, command}`                       | `{job{id, label, status, ...}}`; busy / invalid-command 等拒绝     |
+| `POST /fge/api/shellState`  | `{}`                                     | `{job \| null}`(GUI 刷新恢复用)                                    |
+| `POST /fge/api/shellOutput` | `{outFrom?, errFrom?}`                   | `{job, done, out{text,next,base,lossy}, err{...}}`(绝对字符位增量) |
+| `POST /fge/api/shellStop`   | `{}`                                     | `{stopped, job}`(TERM→3s→KILL 整树)                                |
 
-git 一律经 `subprocess` 服务执行(argv 数组, 无 shell)。
+git 一律经 `subprocess` 服务执行(argv 数组, 无 shell)。shell 行是唯一经用户 shell 解释命令串的入口
+(解释器解析见 `lib/shell.js`, 同样只服务栅栏之后的本机请求), 启动即挂 `ctx.jobs`(kind `shell`, 无主任务)。
 
 ## 实现事实(已用真实仓库实测钉死)
 
@@ -115,11 +136,12 @@ git 一律经 `subprocess` 服务执行(argv 数组, 无 shell)。
 
 ```bash
 node tests/git.test.mjs    # 纯函数层单测(status 解析 / 三区划分 / 防穿越 / diff 参数)
+node tests/shell.test.mjs  # shell 行纯函数层单测(解释器解析 / 历史 / 尾部窗口数学)
 node tests/verify.mjs      # host 集成冒烟(真实 git, 需在仓库内运行)
 eslint .                   # 仓库统一 lint(client bundle 按惯例忽略)
 ```
 
-> 两者均已接入根 `package.json` 的 `test` / `check` 与 `justfile test`。
+> 三者均已接入根 `package.json` 的 `test` / `check` 与 `justfile test`。
 
 ## 术语
 

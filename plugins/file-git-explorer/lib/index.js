@@ -16,14 +16,21 @@
  *   POST /fge/api/search  → { root?, query } → 按名搜索命中项(三区徽标, 截断上限)
  *   POST /fge/api/log     → { repoRoot, ref?, skip?, limit? } → 分页提交列表 + head
  *   POST /fge/api/show    → { repoRoot, hash, path? } → 单提交详情/merge 标记/单文件 diff
+ *   POST /fge/api/shellStart  → { root?, command } → 单槽启动后台命令(挂 ctx.jobs, kind 'shell')
+ *   POST /fge/api/shellState  → {} → 当前槽任务快照(GUI 刷新恢复用)
+ *   POST /fge/api/shellOutput → { outFrom?, errFrom? } → 尾部输出增量(绝对字符位切片)
+ *   POST /fge/api/shellStop   → {} → 终止当前槽任务(TERM→宽限→KILL 整树)
  *
  * git 一律经 subprocess 服务执行(argv 数组, 无 shell), 路径全部做防穿越校验:
  * 文件树/file 只能落在 root 之下, diff/status 的仓库根必须是绝对路径。
+ * shell 行是唯一经用户 shell 解释命令串的入口(解释器解析见 lib/shell.js),
+ * 同样只服务信任栅栏之后的本机请求; 启动即注册为无主后台任务(完成不通知模型)。
  *
  * 挂载: 见 cordis.patch.yml —— 安装后随 profile boot 自动挂载。
  */
 
 import fsp from 'node:fs/promises';
+import fs from 'node:fs';
 import path from 'node:path';
 import {
   isDotName,
@@ -43,6 +50,13 @@ import {
   parseNumStatZ,
   parentsFromRevList,
 } from './git.js';
+import {
+  resolveShellArgv,
+  appendTail,
+  sliceSince,
+  validShellCommand,
+  SHELL_STREAM_CAP_CHARS,
+} from './shell.js';
 
 export const name = 'dsh-file-git-explorer';
 
@@ -570,6 +584,251 @@ export function apply(ctx) {
     return { ok: true, matches, truncated };
   }
 
+  // ---- shell 行(shell bar): 单槽后台命令执行 ----
+
+  /**
+   * 可执行探测: 绝对路径直接 access X_OK; 裸名扫 PATH(Windows 附 PATHEXT)。
+   * 仅用于解释器解析($SHELL / pwsh), 不参与任何路径穿越校验。
+   * 有意留在 host 半(依赖 fs/process.env, 注入反而绕); lib/shell.js 只收
+   * 纯字符串/窗口数学, resolveShellArgv 以 canExec 参数接收本探测。
+   */
+  function canExec(nameOrPath) {
+    try {
+      if (path.isAbsolute(nameOrPath)) {
+        fs.accessSync(nameOrPath, fs.constants.X_OK);
+        return true;
+      }
+      const dirs = (process.env.PATH ?? '').split(path.delimiter).filter(Boolean);
+      const exts =
+        process.platform === 'win32'
+          ? (process.env.PATHEXT ?? '.EXE').split(';').filter(Boolean)
+          : [''];
+      for (const dir of dirs) {
+        for (const ext of exts) {
+          try {
+            fs.accessSync(path.join(dir, nameOrPath + ext), fs.constants.X_OK);
+            return true;
+          } catch {
+            // 继续找下一个候选
+          }
+        }
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
+  let shellArgvCache = null;
+  /** 用户默认 shell 的 argv 前缀, 按进程缓存一次。 */
+  function shellArgv() {
+    if (shellArgvCache === null) {
+      shellArgvCache = resolveShellArgv(process.platform, process.env.SHELL, canExec);
+    }
+    return shellArgvCache;
+  }
+
+  let jobControllerAttached = false;
+  /** 防御性自挂 job controller: 某些组合没在根上加载 tool-jobs 时无主 start 会抛。 */
+  function ensureJobController(jobs) {
+    if (jobControllerAttached || typeof jobs.attachController !== 'function') return;
+    try {
+      jobs.attachController('file-git-explorer');
+    } catch {
+      // 已挂过 / 不可挂: 忽略, start 时再按真实错误上报
+    }
+    jobControllerAttached = true;
+  }
+
+  /**
+   * 单槽记账: 同一时刻至多一条 running/stopping 任务(宿主侧全局口径,
+   * 跨 GUI 刷新/多开成立)。任务终结后记录保留(shellState/shellOutput 仍可查),
+   * 直到下一次 start 覆盖。
+   */
+  let shellSlot = null;
+
+  function shellPublic(slot) {
+    if (!slot) return null;
+    return {
+      id: slot.jobId,
+      label: slot.label,
+      status: slot.status,
+      exitCode: slot.exitCode,
+      signal: slot.signal,
+      error: slot.error,
+      startedAt: slot.startedAt,
+    };
+  }
+
+  /** 从 subprocess 收集器拉一段增量进尾部缓冲(readFrom 是 offset 制非消费式)。 */
+  function drainStream(reader, bytePos) {
+    if (!reader) return { text: '', next: bytePos };
+    try {
+      const r = reader.readFrom(bytePos);
+      return {
+        text: r && typeof r.text === 'string' ? r.text : '',
+        next: typeof r.nextOffset === 'number' ? r.nextOffset : bytePos,
+      };
+    } catch {
+      return { text: '', next: bytePos };
+    }
+  }
+
+  /** 单流尾部状态: pump = 收集器字节游标, buf/base = 尾部字符缓冲与其绝对首字符位。 */
+  function newStreamState() {
+    return { pump: 0, buf: '', base: 0 };
+  }
+
+  function pumpSide(slot, side, reader) {
+    const d = drainStream(reader, slot[side].pump);
+    if (d.text !== '') {
+      const r = appendTail(slot[side].buf, d.text, SHELL_STREAM_CAP_CHARS);
+      slot[side].buf = r.buffer;
+      slot[side].base += r.dropped;
+    }
+    slot[side].pump = d.next;
+  }
+
+  function pumpShell(slot) {
+    pumpSide(slot, 'out', slot.handle?.collected?.stdout);
+    pumpSide(slot, 'err', slot.handle?.collected?.stderr);
+  }
+
+  async function handleShellStart(body) {
+    const cmd = validShellCommand(body.command);
+    if (cmd === null) return { ok: false, error: 'invalid-command' };
+    const base = baseOf(body);
+    if (base === null) return { ok: false, error: 'invalid-root' };
+    const subprocess = ctx.get('subprocess');
+    if (subprocess === undefined) return { ok: false, error: 'subprocess-unavailable' };
+    const jobs = ctx.get('jobs');
+    if (jobs === undefined || typeof jobs.start !== 'function') {
+      return { ok: false, error: 'jobs-unavailable' };
+    }
+    if (shellSlot && (shellSlot.status === 'running' || shellSlot.status === 'stopping')) {
+      return { ok: false, error: 'busy', job: shellPublic(shellSlot) };
+    }
+    ensureJobController(jobs);
+    let handle;
+    try {
+      handle = subprocess.spawn({
+        argv: [...shellArgv().argv, cmd],
+        cwd: base,
+        stdio: {
+          stdin: 'ignore',
+          stdout: { maxBytes: 1024 * 1024 },
+          stderr: { maxBytes: 256 * 1024 },
+        },
+        graceMs: 3000, // 停止时 TERM → 3s → KILL; 兼作管道排空宽限
+      });
+    } catch (err) {
+      return {
+        ok: false,
+        error: 'spawn-failed',
+        detail: String((err && err.message) || err || 'spawn failed').slice(0, 200),
+      };
+    }
+    const slot = (shellSlot = {
+      jobId: '',
+      label: cmd,
+      handle,
+      out: newStreamState(),
+      err: newStreamState(),
+      status: 'running',
+      exitCode: null,
+      signal: null,
+      error: null,
+      startedAt: Date.now(),
+    });
+    try {
+      const jobId = jobs.start({
+        kind: 'shell',
+        label: cmd,
+        run: () => ({
+          cancel: () => {
+            if (slot.status === 'running') slot.status = 'stopping';
+            try {
+              handle.terminate();
+            } catch {
+              // 已退出: 忽略
+            }
+          },
+          done: handle.done.then(
+            ({ exitCode, signal }) => {
+              slot.status = signal ? 'killed' : 'completed';
+              slot.exitCode = exitCode;
+              slot.signal = signal;
+              pumpShell(slot); // 终态前排空残余输出
+              return {
+                status: signal ? 'killed' : 'completed',
+                detail: signal ? 'signal: ' + signal : 'exit code: ' + exitCode,
+              };
+            },
+            (err) => {
+              // spawn 级失败(如解释器消失): done 契约不许 reject, 归一为 failed
+              slot.status = 'failed';
+              slot.error = String((err && err.message) || err || 'spawn failed').slice(0, 200);
+              return { status: 'failed', detail: slot.error };
+            },
+          ),
+          readOutput: () => {
+            pumpShell(slot);
+            const merged =
+              slot.out.buf + (slot.err.buf !== '' ? '\n[stderr]\n' + slot.err.buf : '');
+            return merged.slice(-SHELL_STREAM_CAP_CHARS);
+          },
+        }),
+      });
+      slot.jobId = String(jobId ?? '');
+    } catch (err) {
+      // start 抛错(如无 controller): 清理已起进程, 记录失败供状态行展示
+      try {
+        handle.terminate();
+      } catch {
+        // 忽略
+      }
+      slot.status = 'failed';
+      slot.error = String((err && err.message) || err || 'background jobs unavailable').slice(
+        0,
+        200,
+      );
+      return { ok: false, error: 'jobs-unavailable' };
+    }
+    return { ok: true, job: shellPublic(slot) };
+  }
+
+  function handleShellState() {
+    return { ok: true, job: shellPublic(shellSlot) };
+  }
+
+  function handleShellOutput(body) {
+    const slot = shellSlot;
+    if (!slot) return { ok: true, job: null };
+    pumpShell(slot);
+    // from/outFrom 的钳制(非有限数 → 0)由 sliceSince 内部统一处理
+    return {
+      ok: true,
+      job: shellPublic(slot),
+      done: slot.status !== 'running' && slot.status !== 'stopping',
+      out: sliceSince(slot.out.buf, slot.out.base, body.outFrom),
+      err: sliceSince(slot.err.buf, slot.err.base, body.errFrom),
+    };
+  }
+
+  function handleShellStop() {
+    const slot = shellSlot;
+    if (!slot || (slot.status !== 'running' && slot.status !== 'stopping')) {
+      return { ok: true, stopped: false, job: shellPublic(slot) };
+    }
+    slot.status = 'stopping';
+    try {
+      slot.handle.terminate(); // 整树 TERM → graceMs → KILL
+    } catch {
+      // 已退出: 状态由 done 回调收尾
+    }
+    return { ok: true, stopped: true, job: shellPublic(slot) };
+  }
+
   // ---- 路由与信任栅栏(与 ds-balance 同款) ----
 
   const HANDLERS = {
@@ -581,6 +840,10 @@ export function apply(ctx) {
     search: handleSearch,
     log: handleLog,
     show: handleShow,
+    shellStart: handleShellStart,
+    shellState: handleShellState,
+    shellOutput: handleShellOutput,
+    shellStop: handleShellStop,
   };
 
   function isTrustedRequest(req) {

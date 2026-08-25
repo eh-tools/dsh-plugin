@@ -184,7 +184,22 @@ window.__ModuleLoader__.load({
         '.fge-cfile:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);}' +
         '.fge-cfile-path{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;}' +
         '.fge-msg{margin:0 0 8px;padding:6px 8px;background:var(--dsw-alias-bg-layer-2);border-radius:6px;' +
-        'white-space:pre-wrap;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-primary);font-family:inherit;}';
+        'white-space:pre-wrap;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-primary);font-family:inherit;}' +
+        // ---- shell 行(shell bar) ----
+        '.fge-shell-row{display:flex;align-items:center;gap:4px;padding:4px 8px;border-top:1px solid var(--dsw-alias-border-l1);flex:none;}' +
+        '.fge-shell-input{flex:1;min-width:0;background:transparent;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;' +
+        'padding:3px 8px;font-size:12px;color:var(--dsw-alias-label-primary);' +
+        'font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}' +
+        '.fge-shell-input:focus{outline:none;border-color:var(--dsw-alias-brand-primary);}' +
+        '.fge-shell-input::placeholder{color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));}' +
+        '.fge-shell-status{flex:none;font-size:11px;line-height:18px;white-space:nowrap;' +
+        'color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));}' +
+        '.fge-shell-status.fge-shell-run{color:var(--dsw-alias-brand-primary);}' +
+        '.fge-shell-status.fge-shell-ok{color:var(--dsw-alias-state-success-primary);}' +
+        '.fge-shell-status.fge-shell-err{color:#e5484d;}' +
+        '.fge-shell-tail{flex:none;max-height:150px;overflow:auto;margin:0;padding:4px 8px;border-top:1px solid var(--dsw-alias-border-l1);' +
+        'font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:1.5;' +
+        'white-space:pre-wrap;word-break:break-all;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-1);}';
       var styleTag = null;
       function ensureStyles() {
         if (styleTag !== null) return;
@@ -916,7 +931,7 @@ window.__ModuleLoader__.load({
         );
       }
 
-      // ---- 关闭图标(✕) ----
+      // ---- 关闭/停止图标(✕) ----
       function CloseIcon() {
         return React.createElement(
           'svg',
@@ -933,6 +948,26 @@ window.__ModuleLoader__.load({
             style: { display: 'block' },
           },
           React.createElement('path', { d: 'M18 6L6 18M6 6l12 12' }),
+        );
+      }
+
+      // ---- 对号图标(✓, shell 行执行) ----
+      function CheckIcon() {
+        return React.createElement(
+          'svg',
+          {
+            width: 14,
+            height: 14,
+            viewBox: '0 0 24 24',
+            fill: 'none',
+            stroke: 'currentColor',
+            strokeWidth: 2,
+            strokeLinecap: 'round',
+            strokeLinejoin: 'round',
+            'aria-hidden': 'true',
+            style: { display: 'block' },
+          },
+          React.createElement('path', { d: 'M20 6L9 17l-5-5' }),
         );
       }
 
@@ -1063,6 +1098,329 @@ window.__ModuleLoader__.load({
                 '结果过多, 已截断(请缩短关键词)',
               )
             : null,
+        );
+      }
+
+      // ---- shell 行(shell bar): 左树底部命令执行行 ----
+      // 单槽(宿主侧记账): ✓ 启动即挂 ctx.jobs(kind 'shell', 无主, 完成不通知模型);
+      // 运行中每秒拉一次尾部输出增量; GUI 刷新后经 shellState 认领仍在跑的任务。
+      var SHELL_POLL_MS = 1000;
+      var SHELL_TAIL_CHARS = 16 * 1024; // 客户端显示缓冲上限(与 host 每流缓冲同量级)
+      var SHELL_HISTORY_MAX = 100;
+
+      // 历史(相邻去重 + 上限截断)与 lib/shell.js 的 pushHistory 同算法 —— client
+      // bundle 无法 import host ESM, 两处必须同步改; 可执行规约见 tests/shell.test.mjs。
+      function pushHist(list, cmd) {
+        if (list.length > 0 && list[list.length - 1] === cmd) return list;
+        var next = list.concat([cmd]);
+        return next.length > SHELL_HISTORY_MAX ? next.slice(next.length - SHELL_HISTORY_MAX) : next;
+      }
+
+      function ShellBar(props) {
+        var cacheKey = props.cacheKey;
+        var valueState = React.useState('');
+        var value = valueState[0];
+        var setValue = valueState[1];
+        var jobState = React.useState(null); // {id,label,status,exitCode,signal,error}
+        var job = jobState[0];
+        var setJob = jobState[1];
+        var errMsgState = React.useState(null);
+        var errMsg = errMsgState[0];
+        var setErrMsg = errMsgState[1];
+        var openState = React.useState(false);
+        var open = openState[0];
+        var setOpen = openState[1];
+        var outTextState = React.useState('');
+        var outText = outTextState[0];
+        var setOutText = outTextState[1];
+        var errTextState = React.useState('');
+        var errText = errTextState[0];
+        var setErrText = errTextState[1];
+        var inputRef = React.useRef(null);
+        var preRef = React.useRef(null);
+        var histRef = React.useRef([]);
+        var histIdxRef = React.useRef(null); // null = 实时输入
+        var draftRef = React.useRef(''); // 离开实时输入时的草稿
+        var fromRef = React.useRef({ out: 0, err: 0 }); // 已读到的绝对字符位
+        var busy = !!job && (job.status === 'running' || job.status === 'stopping');
+
+        // 历史随仓库根懒加载(cwd 缓存搭车: shellHistory 字段)
+        React.useEffect(
+          function () {
+            var cached = cacheKey ? readCache(cacheKey) : null;
+            histRef.current =
+              cached && Array.isArray(cached.shellHistory)
+                ? cached.shellHistory.filter(function (x) {
+                    return typeof x === 'string';
+                  })
+                : [];
+            histIdxRef.current = null;
+          },
+          [cacheKey],
+        );
+
+        // 挂载时向 host 认领当前槽任务(GUI 刷新/重开后恢复 running 态与 ✕ 可用性)
+        React.useEffect(function () {
+          var dead = false;
+          api('shellState', {})
+            .then(function (r) {
+              if (dead || !r || !r.ok || !r.job) return;
+              setJob(r.job);
+              setOpen(true);
+              // 认领已终结的任务时轮询不会跑, 单次拉尾部输出填充
+              if (r.job.status !== 'running' && r.job.status !== 'stopping') {
+                api('shellOutput', { outFrom: 0, errFrom: 0 })
+                  .then(function (o) {
+                    if (dead || !o || !o.ok) return;
+                    setOutText(
+                      o.out && o.out.text !== ''
+                        ? (o.out.lossy ? '[…输出有缺口…]\n' : '') + o.out.text
+                        : '',
+                    );
+                    setErrText(
+                      o.err && o.err.text !== ''
+                        ? (o.err.lossy ? '[…输出有缺口…]\n' : '') + o.err.text
+                        : '',
+                    );
+                  })
+                  .catch(function () {});
+              }
+            })
+            .catch(function () {});
+          return function () {
+            dead = true;
+          };
+        }, []);
+
+        // 运行中轮询尾部输出; done=true 的那一拍带最终状态与残余输出
+        React.useEffect(
+          function () {
+            if (!busy) return undefined;
+            var dead = false;
+            var applySeg = function (which, seg, setText) {
+              if (!seg) return;
+              var add = seg.lossy ? '[…输出有缺口…]\n' : '';
+              if (seg.text !== '') {
+                setText(function (prev) {
+                  var nextText = prev + add + seg.text;
+                  return nextText.length > SHELL_TAIL_CHARS * 2
+                    ? nextText.slice(-SHELL_TAIL_CHARS * 2)
+                    : nextText;
+                });
+              }
+              fromRef.current[which] = seg.next;
+            };
+            var tick = function () {
+              api('shellOutput', { outFrom: fromRef.current.out, errFrom: fromRef.current.err })
+                .then(function (r) {
+                  if (dead || !r || !r.ok || !r.job) return;
+                  setJob(r.job);
+                  applySeg('out', r.out, setOutText);
+                  applySeg('err', r.err, setErrText);
+                })
+                .catch(function () {});
+            };
+            tick();
+            var t = setInterval(tick, SHELL_POLL_MS);
+            return function () {
+              dead = true;
+              clearInterval(t);
+            };
+          },
+          [busy],
+        );
+
+        // 内容变化 / 展开时滚到底部
+        React.useEffect(
+          function () {
+            var el = preRef.current;
+            if (el) el.scrollTop = el.scrollHeight;
+          },
+          [outText, errText, open],
+        );
+
+        var exec = function () {
+          var cmd = value.trim();
+          if (cmd === '' || busy) return;
+          api('shellStart', { root: props.root, command: cmd })
+            .then(function (r) {
+              if (!r || !r.ok) {
+                var reason = r && r.error;
+                setErrMsg(
+                  reason === 'busy'
+                    ? '已有任务在运行'
+                    : reason === 'jobs-unavailable'
+                      ? '后台任务服务不可用'
+                      : reason === 'subprocess-unavailable'
+                        ? '子进程服务不可用'
+                        : reason === 'invalid-command'
+                          ? '命令无效'
+                          : reason === 'spawn-failed'
+                            ? '进程启动失败' + (r && r.detail ? '(' + r.detail + ')' : '')
+                            : '启动失败',
+                );
+                return;
+              }
+              setErrMsg(null);
+              histRef.current = pushHist(histRef.current, cmd);
+              histIdxRef.current = null;
+              draftRef.current = '';
+              if (cacheKey) writeCache(cacheKey, { shellHistory: histRef.current });
+              fromRef.current = { out: 0, err: 0 };
+              setOutText('');
+              setErrText('');
+              setJob(r.job);
+              setOpen(true);
+            })
+            .catch(function () {
+              setErrMsg('启动失败(网络错误)');
+            });
+        };
+
+        var stop = function () {
+          if (!busy) return;
+          api('shellStop', {})
+            .then(function (r) {
+              if (r && r.ok && r.job) setJob(r.job);
+            })
+            .catch(function () {});
+        };
+
+        // ↑/↓ 历史导航: 离开实时输入时记草稿, 走到底再 ↓ 回到草稿
+        var navHistory = function (dir) {
+          var h = histRef.current;
+          if (!h || h.length === 0) return;
+          var idx = histIdxRef.current;
+          if (dir === 'up') {
+            if (idx === null) {
+              draftRef.current = value;
+              idx = h.length - 1;
+            } else if (idx > 0) {
+              idx -= 1;
+            } else return;
+          } else {
+            if (idx === null) return;
+            idx += 1;
+            if (idx >= h.length) {
+              histIdxRef.current = null;
+              setValue(draftRef.current);
+              return;
+            }
+          }
+          histIdxRef.current = idx;
+          setValue(h[idx]);
+        };
+
+        var statusInfo = null;
+        if (errMsg !== null) statusInfo = { cls: ' fge-shell-err', text: errMsg };
+        else if (job) {
+          if (job.status === 'running') statusInfo = { cls: ' fge-shell-run', text: '● 运行中…' };
+          else if (job.status === 'stopping')
+            statusInfo = { cls: ' fge-shell-run', text: '○ 正在停止…' };
+          else if (job.status === 'completed')
+            statusInfo =
+              job.exitCode === 0
+                ? { cls: ' fge-shell-ok', text: '✓ 退出 0' }
+                : { cls: ' fge-shell-err', text: '✗ 退出 ' + job.exitCode };
+          else if (job.status === 'killed')
+            statusInfo = {
+              cls: ' fge-shell-err',
+              text: '■ 已停止' + (job.signal ? '(' + job.signal + ')' : ''),
+            };
+          else statusInfo = { cls: ' fge-shell-err', text: '⚠ ' + (job.error || '执行失败') };
+        }
+
+        var tailText =
+          outText + (errText !== '' ? (outText !== '' ? '\n' : '') + '[stderr]\n' + errText : '');
+
+        return React.createElement(
+          React.Fragment,
+          null,
+          open
+            ? React.createElement(
+                'pre',
+                { className: 'fge-shell-tail', ref: preRef },
+                tailText !== '' ? tailText : '(尚无输出)',
+              )
+            : null,
+          React.createElement(
+            'div',
+            { className: 'fge-shell-row' },
+            React.createElement(
+              'button',
+              {
+                className: 'fge-btn' + (open ? ' fge-btn-active' : ''),
+                title: job ? '展开/收起输出' : '暂无任务输出',
+                disabled: !job,
+                onClick: function () {
+                  setOpen(!open);
+                },
+              },
+              React.createElement(CaretIcon, { open: open }),
+            ),
+            React.createElement('input', {
+              ref: inputRef,
+              className: 'fge-shell-input',
+              value: value,
+              placeholder: 'shell 命令(⏎ 执行)',
+              spellCheck: false,
+              onChange: function (e) {
+                setValue(e.target.value);
+                histIdxRef.current = null;
+              },
+              onKeyDown: function (e) {
+                if (e.key === 'Enter') {
+                  // IME 组合期不触发; preventDefault+stopPropagation 隔离应用层按键链
+                  if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  exec();
+                } else if (e.key === 'ArrowUp') {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  navHistory('up');
+                } else if (e.key === 'ArrowDown') {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  navHistory('down');
+                } else if (e.key === 'Escape') {
+                  // 只失焦: 不波及插件的常驻 window Esc 监听(会关悬浮窗)
+                  e.stopPropagation();
+                  if (inputRef.current) inputRef.current.blur();
+                }
+              },
+            }),
+            statusInfo
+              ? React.createElement(
+                  'span',
+                  {
+                    className: 'fge-shell-status' + statusInfo.cls,
+                    title: job ? job.label : statusInfo.text,
+                  },
+                  statusInfo.text,
+                )
+              : null,
+            React.createElement(
+              'button',
+              {
+                className: 'fge-btn',
+                title: busy ? '已有任务在运行' : '执行',
+                disabled: busy || value.trim() === '',
+                onClick: exec,
+              },
+              React.createElement(CheckIcon, null),
+            ),
+            React.createElement(
+              'button',
+              {
+                className: 'fge-btn',
+                title: '停止当前任务',
+                disabled: !busy,
+                onClick: stop,
+              },
+              React.createElement(CloseIcon, null),
+            ),
+          ),
         );
       }
 
@@ -1350,6 +1708,7 @@ window.__ModuleLoader__.load({
                   ),
                 ),
               ),
+          React.createElement(ShellBar, { root: props.root, cacheKey: props.cacheKey }),
           React.createElement('div', {
             className: 'fge-resize fge-resize-left',
             onPointerDown: props.onResizeStart,
@@ -2864,6 +3223,7 @@ window.__ModuleLoader__.load({
                 style: leftPanelStyle,
                 cwd: info.cwd,
                 root: root,
+                cacheKey: cacheKey,
                 pin: pin,
                 pinDisabled: !!away,
                 track: leftTrack,
