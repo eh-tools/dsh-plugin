@@ -1,0 +1,14 @@
+{
+  "kind": "static",
+  "name": "dsh-db-console",
+  "purpose": "会话头部「数据库」页签(id database, 排轨迹后): 每项目一条 PostgreSQL 连接——完整链接串登录、明文持久化在 Host 侧(按仓库根隔离, 打码展示); 已连接态左栏 schema 树(表/列内省), 右侧 SQL 编辑器(关键字/表名/列名三级补全 + 高亮 underlay)与结果网格(500 行截断、单元格复制)。执行不拦截。静态双半 npm 包, 随 web profile 启动自动加载。",
+  "files": [
+    "package.json",
+    "cordis.patch.yml",
+    "README.md",
+    "lib/index.js",
+    "lib/client.js",
+    "lib/pg.js"
+  ],
+  "install": "dsh plugin --profile web add link:<repo-abs-path>/plugins/db-console"
+}
