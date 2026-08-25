@@ -29,6 +29,9 @@ window.__ModuleLoader__.load({
     exports.apply = function (ctx) {
       var slots = ctx.slots;
 
+      // 样式注入: 插件挂载即注入(幂等); 视图组件内还会再守一道
+      ensureStyles();
+
       // ---- 与 host 通信 ----
       function api(method, body) {
         return fetch('/dbc/api/' + method, {
@@ -629,6 +632,7 @@ window.__ModuleLoader__.load({
 
       // ---- 主视图 ----
       function DbConsoleView(props) {
+        ensureStyles(); // 双保险: 即使 apply 阶段的注入被清掉也兜得住
         var useSessions = props.useSessions;
         var sessionCwd = null;
         if (typeof useSessions === 'function') {
