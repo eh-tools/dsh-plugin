@@ -89,7 +89,7 @@ window.__ModuleLoader__.load({
         '.fge-branch:hover{background:var(--dsw-alias-bg-layer-2);}' +
         '.fge-branch-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;}' +
         '.fge-branch-caret{color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));}' +
-        '.fge-branch-menu{position:absolute;right:calc(100% + 8px);top:30px;width:280px;max-width:60vw;z-index:40;background:var(--dsw-alias-bg-overlay);' +
+        '.fge-branch-menu{position:absolute;right:calc(100% + 8px);top:30px;width:280px;max-width:60vw;z-index:45;background:var(--dsw-alias-bg-overlay);' +
         'border:1px solid var(--dsw-alias-border-l2);border-radius:8px;box-shadow:var(--dsw-shadow-lv2,rgba(0,0,0,.25)) 0 8px 28px;' +
         'max-height:220px;overflow:auto;padding:4px;}' +
         '.fge-branch-group{font-size:10px;color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));' +
@@ -159,7 +159,8 @@ window.__ModuleLoader__.load({
         '.fge-badge-v{color:var(--dsw-alias-brand-primary);background:color-mix(in srgb,var(--dsw-alias-brand-primary) 15%,transparent);}' +
         '.fge-badge-h{color:var(--dsw-alias-state-warn-primary);background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 15%,transparent);}' +
         '.fge-badge-i{color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-2);}' +
-        '.fge-commit{padding:3px 8px;border-radius:4px;cursor:pointer;color:var(--dsw-alias-label-secondary);}' +
+        '.fge-commit{padding:4px 8px;border-radius:0;cursor:pointer;color:var(--dsw-alias-label-secondary);' +
+        'border-bottom:1px solid var(--dsw-alias-border-l1);}' +
         '.fge-commit:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);}' +
         '.fge-commit-subject{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
         '.fge-commit-meta{display:flex;align-items:center;gap:6px;margin-top:1px;' +
@@ -167,8 +168,19 @@ window.__ModuleLoader__.load({
         '.fge-hash{font-family:Consolas,Menlo,monospace;}' +
         '.fge-stat-add{color:var(--dsw-alias-state-success-primary);flex:none;}' +
         '.fge-stat-del{color:var(--dsw-alias-state-error-primary);flex:none;}' +
-        '.fge-cfile{display:flex;align-items:center;gap:8px;padding:2px 4px;border-radius:4px;cursor:pointer;' +
-        'white-space:nowrap;color:var(--dsw-alias-label-secondary);}' +
+        '.fge-cfile{display:flex;align-items:center;gap:8px;padding:3px 4px;border-radius:0;cursor:pointer;' +
+        'white-space:nowrap;color:var(--dsw-alias-label-secondary);border-bottom:1px solid var(--dsw-alias-border-l1);}' +
+        // 单条提交详情里展开的文件 diff 块: 底部分割线 + 与下一文件的间距
+        '.fge-fdiff{border-bottom:1px solid var(--dsw-alias-border-l1);padding-bottom:8px;margin-bottom:4px;}' +
+        // 历史面板头部的查看分支切换器 + 其下拉菜单(挂在 float 面板内, 不出面板)
+        '.fge-hbranch{flex:none;display:inline-flex;align-items:center;gap:4px;max-width:46%;border:1px solid transparent;' +
+        'background:transparent;color:var(--dsw-alias-brand-primary);border-radius:6px;padding:2px 6px;font-size:12px;' +
+        'font-weight:600;cursor:pointer;line-height:1.4;}' +
+        '.fge-hbranch:hover{background:var(--dsw-alias-bg-layer-2);}' +
+        '.fge-hbranch > span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
+        '.fge-hmenu{position:absolute;left:8px;top:32px;width:280px;max-width:calc(100% - 16px);z-index:45;' +
+        'background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;' +
+        'box-shadow:var(--dsh-shadow-lv2,rgba(0,0,0,.25)) 0 8px 28px;max-height:240px;overflow:auto;padding:4px;}' +
         '.fge-cfile:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);}' +
         '.fge-cfile-path{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;}' +
         '.fge-msg{margin:0 0 8px;padding:6px 8px;background:var(--dsw-alias-bg-layer-2);border-radius:6px;' +
@@ -530,7 +542,10 @@ window.__ModuleLoader__.load({
           if (to && to.closest) {
             var inFloat = to.closest('.fge-float');
             var inRoot = to.closest('[data-fge-root]');
-            if (keepOnFloatOnly ? inFloat : inRoot) {
+            // 分支下拉(右树的 fge-branch-menu / 历史面板的 fge-hmenu)几何上可落在
+            // 源面板矩形之外, 单独豁免, 避免移入菜单就触发延迟收起。
+            var inMenu = to.closest('.fge-branch-menu,.fge-hmenu');
+            if ((keepOnFloatOnly ? inFloat : inRoot) || inMenu) {
               clear();
               return;
             }
@@ -1292,6 +1307,14 @@ window.__ModuleLoader__.load({
         var menuOpen = menuState[0];
         var setMenuOpen = menuState[1];
         var listRef = React.useRef(null);
+        // 与右侧悬浮栏(diff/历史)互斥: 两者都出现在面板左侧同一留白带,
+        // 同时打开会互相遮挡 —— 悬浮栏在打开时收起本下拉(反向经 onOpenMenu 关闭悬浮栏)。
+        React.useEffect(
+          function () {
+            if (props.floatOpen) setMenuOpen(false);
+          },
+          [props.floatOpen],
+        );
         // 延迟收起: 悬停离开后宽限, 移到悬浮栏(branch menu 或 diff)则豁免(联动)
         var damp = useDampedHide(360, props.onHide, true);
 
@@ -1387,7 +1410,10 @@ window.__ModuleLoader__.load({
             {
               className: 'fge-branch',
               onClick: function () {
-                setMenuOpen(!menuOpen);
+                var next = !menuOpen;
+                setMenuOpen(next);
+                // 展开下拉的同时关闭 diff/历史悬浮栏(互斥, 防遮挡)
+                if (next && props.onOpenMenu) props.onOpenMenu();
               },
               title: '点击显示所有分支(只读)',
             },
@@ -1505,6 +1531,7 @@ window.__ModuleLoader__.load({
               { className: 'fge-float-title', title: props.title },
               props.title,
             ),
+            props.afterTitle === undefined ? null : props.afterTitle,
             React.createElement(
               'button',
               { className: 'fge-btn', onClick: props.onClose, title: props.onCloseTitle || '关闭' },
@@ -1715,6 +1742,74 @@ window.__ModuleLoader__.load({
         var listRef = React.useRef(null);
         var shownHeadRef = React.useRef(null); // 本列表已知的 HEAD(供刷新比对)
 
+        // ---- 头部「查看分支」切换器 ----
+        // 分支名可点: 弹出与右树同款的本地/远程分组菜单, 点选即改写
+        // 「查看分支」(FgeRoot 状态) —— refName 随之变化, 列表自动重拉。
+        var pickState = React.useState(false);
+        var pickOpen = pickState[0];
+        var setPickOpen = pickState[1];
+        var pickBranches = Array.isArray(props.branches) ? props.branches : [];
+        var pickLocal = [];
+        var pickRemote = [];
+        for (var pbi = 0; pbi < pickBranches.length; pbi++) {
+          (pickBranches[pbi].remote ? pickRemote : pickLocal).push(pickBranches[pbi]);
+        }
+        var pickGroup = function (title, list) {
+          if (list.length === 0) return null;
+          return React.createElement(
+            React.Fragment,
+            { key: title },
+            React.createElement('div', { className: 'fge-branch-group' }, title),
+            list.map(function (br) {
+              var isCur = br.name === props.currentBranch;
+              var isViewed = br.name === props.viewedBranch && !isCur;
+              var mark = isCur ? '当前' : isViewed ? '查看中' : '';
+              return React.createElement(
+                'div',
+                {
+                  key: br.ref,
+                  className:
+                    'fge-branch-item' +
+                    (isCur ? ' fge-branch-current' : '') +
+                    (isViewed ? ' fge-branch-viewed' : ''),
+                  onClick: function () {
+                    setPickOpen(false);
+                    if (!isCur && props.onViewBranch) props.onViewBranch(br.name);
+                  },
+                  title: isCur ? '当前分支(默认跟随)' : '查看该分支的提交历史(只读, 不切换工作区)',
+                },
+                React.createElement('span', null, br.name),
+                React.createElement('span', { className: 'fge-branch-mark' }, mark),
+              );
+            }),
+          );
+        };
+        var branchPick = React.createElement(
+          React.Fragment,
+          null,
+          React.createElement(
+            'button',
+            {
+              className: 'fge-hbranch',
+              title: '点击切换查看分支(只读, 不做工作区切换)',
+              onClick: function () {
+                setPickOpen(!pickOpen);
+              },
+            },
+            React.createElement(BranchIcon, null),
+            React.createElement('span', null, props.viewedBranch || '(HEAD)'),
+            React.createElement(CaretIcon, { open: pickOpen }),
+          ),
+          pickOpen
+            ? React.createElement(
+                'div',
+                { className: 'fge-hmenu' },
+                pickGroup('本地分支', pickLocal),
+                pickGroup('远程分支', pickRemote),
+              )
+            : null,
+        );
+
         var fetchPage = React.useCallback(
           function (skip, limit) {
             return api('log', {
@@ -1869,7 +1964,8 @@ window.__ModuleLoader__.load({
         };
 
         // ---- 渲染 ----
-        var title = '提交历史' + (props.refName ? ' · ' + props.refName : '');
+        // 查看分支不再拼进标题: 头部的 branchPick 按钮承担展示 + 切换。
+        var title = '提交历史';
         var headExtra =
           viewHash !== null
             ? React.createElement(
@@ -1986,7 +2082,7 @@ window.__ModuleLoader__.load({
                     } else {
                       inner.push(
                         React.createElement('pre', {
-                          className: 'fge-pre',
+                          className: 'fge-pre fge-fdiff',
                           key: 'fl:' + f.path,
                           dangerouslySetInnerHTML: { __html: diffToHtml(fd.text) },
                         }),
@@ -2051,6 +2147,7 @@ window.__ModuleLoader__.load({
           {
             style: props.style,
             title: title,
+            afterTitle: branchPick,
             headExtra: headExtra,
             bodyProps: viewHash === null ? { onScroll: onListScroll } : undefined,
             onClose: props.onClose,
@@ -2427,6 +2524,13 @@ window.__ModuleLoader__.load({
           [pin],
         );
 
+        // 分支下拉与右侧悬浮栏互斥(防遮挡): 展开下拉时关闭 diff/历史悬浮栏。
+        // 反方向(悬浮栏打开时收起下拉)由 RightPanel 内部经 floatOpen 处理。
+        var openBranchMenu = React.useCallback(function () {
+          setDiff(null);
+          setHistoryOpen(false);
+        }, []);
+
         // 布局计算
         // 可显示仍看「完整留白能容纳最小宽度」; 最大宽度 = 完整留白的 2/3(减少 1/3),
         // 面板拖不到对话区边缘, 留出更从容的留白。
@@ -2599,6 +2703,8 @@ window.__ModuleLoader__.load({
                 onResizeStart: resize('right'),
                 viewedBranch: viewedBranch,
                 onViewBranch: setViewedBranch,
+                floatOpen: !!(diff || historyOpen),
+                onOpenMenu: openBranchMenu,
                 linkagePath: linkage,
                 onDiffClick: onDiffClick,
                 selectedDiff: diff ? diff.change.path : null,
@@ -2646,6 +2752,10 @@ window.__ModuleLoader__.load({
                 root: root,
                 repoRoot: info.repoRoot,
                 refName: historyRefName,
+                branches: branchList,
+                currentBranch: status ? status.current : null,
+                viewedBranch: historyRefName,
+                onViewBranch: setViewedBranch,
                 statusHead: status ? status.head : null,
                 onClose: function () {
                   setHistoryOpen(false);
