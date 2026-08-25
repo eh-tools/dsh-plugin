@@ -238,6 +238,29 @@ window.__ModuleLoader__.load({
           .replace(/'/g, '&#39;');
       }
 
+      // ---- 会话头部 tablist 认领(观测器与几何回退共用) ----
+      // 页面可能存在其他 tablist(设置弹窗等), 以包含「对话」页签者为准;
+      // 都不含时退回第一个。
+      function findSessionTablist() {
+        var lists = [];
+        try {
+          lists = Array.prototype.slice.call(document.querySelectorAll('[role="tablist"]'));
+        } catch (e) {
+          lists = [];
+        }
+        if (!lists.length) return null;
+        function tabsOf(list) {
+          return Array.prototype.slice.call(list.querySelectorAll('[role="tab"]'));
+        }
+        for (var li = 0; li < lists.length; li++) {
+          var hasChat = tabsOf(lists[li]).some(function (t) {
+            return (t.textContent || '').trim() === '对话';
+          });
+          if (hasChat) return lists[li];
+        }
+        return lists[0];
+      }
+
       // ---- 几何: 稳定 data 属性锚点 ----
       // top   = [data-conversation-scroll] 顶部(== header/tablist 边框线)
       // bottom= 滚动容器底边(对话列底, 统一基准):
@@ -248,22 +271,45 @@ window.__ModuleLoader__.load({
       // 对话列宽 = --dsh-chat-content-width(定义在会话根, 滚动容器可继承)
       function measureGeometry() {
         var scrollBody = document.querySelector('[data-conversation-scroll]');
-        if (!scrollBody) return null;
-        var rect = scrollBody.getBoundingClientRect();
-        var top = rect.top;
-        var bottom = rect.bottom;
-        var contentW =
-          parseFloat(getComputedStyle(scrollBody).getPropertyValue('--dsh-chat-content-width')) ||
-          748;
-        var gap = Math.max(0, (rect.width - contentW) / 2);
+        if (scrollBody) {
+          var rect = scrollBody.getBoundingClientRect();
+          var top = rect.top;
+          var bottom = rect.bottom;
+          var contentW =
+            parseFloat(getComputedStyle(scrollBody).getPropertyValue('--dsh-chat-content-width')) ||
+            748;
+          var gap = Math.max(0, (rect.width - contentW) / 2);
+          return {
+            top: top,
+            bottom: bottom,
+            sbLeft: rect.left,
+            sbRight: rect.right,
+            convLeft: rect.left + gap,
+            convRight: rect.right - gap,
+            height: Math.max(0, bottom - top),
+          };
+        }
+        // 非对话视图(轨迹/数据库等页签): 无对话滚动容器。退化为以会话头部
+        // tablist 底缘为顶、视口底为底、tablist 所在列左右缘为横向界 —— 保证
+        // 细条在非对话视图仍可悬停展开(数据库页签下复制文件地址依赖此路径)。
+        // 连 hero 空态(无 tablist)都缺失时维持旧行为返回 null(整组不渲染)。
+        // tablist 认领规则与观测器一致(见 findSessionTablist)。
+        var tabsEl = findSessionTablist();
+        if (!tabsEl) return null;
+        var tr = tabsEl.getBoundingClientRect();
+        if (!tr || (tr.width === 0 && tr.height === 0)) return null;
+        var fbTop = tr.bottom + 6;
+        var fbBottom = window.innerHeight - 12;
+        var fbContentW = 748;
+        var fbGap = Math.max(0, (tr.width - fbContentW) / 2);
         return {
-          top: top,
-          bottom: bottom,
-          sbLeft: rect.left,
-          sbRight: rect.right,
-          convLeft: rect.left + gap,
-          convRight: rect.right - gap,
-          height: Math.max(0, bottom - top),
+          top: fbTop,
+          bottom: fbBottom,
+          sbLeft: tr.left,
+          sbRight: tr.right,
+          convLeft: tr.left + fbGap,
+          convRight: tr.right - fbGap,
+          height: Math.max(0, fbBottom - fbTop),
         };
       }
 
@@ -523,45 +569,46 @@ window.__ModuleLoader__.load({
         return (s.byId && s.byId[s.current]) || null;
       }
 
-      // 延迟收起(张顿一点): 鼠标离开后用 delay(ms) 宽限, 期间移回则取消。
-      // keepOnFloatOnly=true(侧栏): 只有移到悬浮栏才豁免收起(与悬浮栏联动);
-      //                =false(悬浮栏): 移到任意 fge 元素都豁免(避免悬浮栏关闭其源侧栏)。
-      function useDampedHide(ms, onHide, keepOnFloatOnly) {
-        var ref = React.useRef(null);
-        function clear() {
-          if (ref.current) {
-            clearTimeout(ref.current);
-            ref.current = null;
+      // 延迟收起 —— 保持区(union)追踪器: 一侧的侧栏与其全部悬浮栏共享一个
+      // 「鼠标在场」区域集; 只要指针还在任一已登记区域就不收起, 全部离开后才
+      // 启动 HIDE_DELAY_MS 宽限定时器, 期间进入任一区域则取消。
+      // 区域登记名约定: 左侧 lp=文件树面板 cf=内容悬浮栏;
+      //                右侧 rp=git树面板 df=diff悬浮栏 hs=提交历史悬浮栏。
+      // (分支下拉/历史分组菜单是面板 DOM 子孙, 指针移入不触发面板 mouseleave,
+      //  无需登记。)
+      var HIDE_DELAY_MS = 360;
+      function makeSideTracker(onFire) {
+        var timer = null;
+        var active = {};
+        function anyActive() {
+          for (var k in active) if (active[k]) return true;
+          return false;
+        }
+        function clearT() {
+          if (timer) {
+            clearTimeout(timer);
+            timer = null;
           }
         }
-        function enter() {
-          clear();
-        }
-        function leave(e) {
-          var to = e && e.relatedTarget;
-          if (to && to.closest) {
-            var inFloat = to.closest('.fge-float');
-            var inRoot = to.closest('[data-fge-root]');
-            // 分支下拉(右树的 fge-branch-menu / 历史面板的 fge-hmenu)几何上可落在
-            // 源面板矩形之外, 单独豁免, 避免移入菜单就触发延迟收起。
-            var inMenu = to.closest('.fge-branch-menu,.fge-hmenu');
-            if ((keepOnFloatOnly ? inFloat : inRoot) || inMenu) {
-              clear();
-              return;
+        return {
+          enter: function (name) {
+            active[name] = true;
+            clearT();
+          },
+          leave: function (name) {
+            active[name] = false;
+            if (!anyActive()) {
+              clearT();
+              timer = setTimeout(function () {
+                timer = null;
+                onFire();
+              }, HIDE_DELAY_MS);
             }
-          }
-          clear();
-          ref.current = setTimeout(function () {
-            ref.current = null;
-            onHide();
-          }, ms);
-        }
-        React.useEffect(function () {
-          return function () {
-            clear();
-          };
-        }, []);
-        return { enter: enter, leave: leave };
+          },
+          dispose: function () {
+            clearT();
+          },
+        };
       }
 
       // ---- 懒加载树(每个分区一棵) ----
@@ -1024,8 +1071,8 @@ window.__ModuleLoader__.load({
         var copiedState = React.useState(false);
         var copied = copiedState[0];
         var setCopied = copiedState[1];
-        // 延迟收起: 悬停离开后宽限, 移到悬浮栏(打开的预览/diff)则豁免(联动)
-        var damp = useDampedHide(360, props.onHide, true);
+        // 延迟收起: 由 FgeRoot 下发的保持区追踪器驱动(lp 区), 见 makeSideTracker
+        var track = props.track;
         // 路径按面板可用宽度做中间省略(保头保尾), 点击整段复制完整路径
         var subWidth = (props.style && props.style.width) || 320;
         var subMax = Math.max(12, Math.floor((subWidth - 104) / 5.6));
@@ -1140,8 +1187,12 @@ window.__ModuleLoader__.load({
             className: 'fge-panel',
             'data-fge-root': '1',
             style: props.style,
-            onMouseEnter: damp.enter,
-            onMouseLeave: damp.leave,
+            onMouseEnter: function () {
+              track.enter('lp');
+            },
+            onMouseLeave: function () {
+              track.leave('lp');
+            },
           },
           React.createElement(
             'div',
@@ -1172,8 +1223,13 @@ window.__ModuleLoader__.load({
               'button',
               {
                 className: 'fge-btn' + (props.pin ? ' fge-btn-active' : ''),
-                title: props.pin ? '已固定: 点击解除固定' : '图钉: 固定后两个面板都不能收起',
+                title: props.pinDisabled
+                  ? '非对话视图下暂不可操作图钉'
+                  : props.pin
+                    ? '已固定: 点击解除固定'
+                    : '图钉: 固定后两个面板都不能收起',
                 onClick: props.onPin,
+                disabled: !!props.pinDisabled,
               },
               React.createElement(PinIcon, null),
             ),
@@ -1315,8 +1371,8 @@ window.__ModuleLoader__.load({
           },
           [props.floatOpen],
         );
-        // 延迟收起: 悬停离开后宽限, 移到悬浮栏(branch menu 或 diff)则豁免(联动)
-        var damp = useDampedHide(360, props.onHide, true);
+        // 延迟收起: 由 FgeRoot 下发的保持区追踪器驱动(rp 区), 见 makeSideTracker
+        var track = props.track;
 
         var changes = props.status && props.status.changes ? props.status.changes : [];
         var current = props.status ? props.status.current : null;
@@ -1402,8 +1458,12 @@ window.__ModuleLoader__.load({
             className: 'fge-panel',
             'data-fge-root': '1',
             style: props.style,
-            onMouseEnter: damp.enter,
-            onMouseLeave: damp.leave,
+            onMouseEnter: function () {
+              track.enter('rp');
+            },
+            onMouseLeave: function () {
+              track.leave('rp');
+            },
           },
           React.createElement(
             'div',
@@ -1447,8 +1507,13 @@ window.__ModuleLoader__.load({
               'button',
               {
                 className: 'fge-btn' + (props.pin ? ' fge-btn-active' : ''),
-                title: props.pin ? '已固定: 点击解除固定' : '图钉: 固定后两个面板都不能收起',
+                title: props.pinDisabled
+                  ? '非对话视图下暂不可操作图钉'
+                  : props.pin
+                    ? '已固定: 点击解除固定'
+                    : '图钉: 固定后两个面板都不能收起',
                 onClick: props.onPin,
+                disabled: !!props.pinDisabled,
               },
               React.createElement(PinIcon, null),
             ),
@@ -1504,16 +1569,21 @@ window.__ModuleLoader__.load({
 
       // ---- 悬浮面板公共外壳(头部徽标 + 标题 + 关闭 + 内容区) ----
       function FloatPanel(props) {
-        // 延迟收起(悬浮栏): 离开后宽限; 移到任一侧栏/细条/其他悬浮栏则豁免
-        var damp = useDampedHide(360, props.onHide, false);
+        // 延迟收起(悬浮栏): 由 FgeRoot 下发的保持区追踪器驱动(region 由调用方指定)
+        var track = props.track;
+        var region = props.region || 'fl';
         return React.createElement(
           'div',
           {
             className: 'fge-float',
             'data-fge-root': '1',
             style: props.style,
-            onMouseEnter: damp.enter,
-            onMouseLeave: damp.leave,
+            onMouseEnter: function () {
+              track.enter(region);
+            },
+            onMouseLeave: function () {
+              track.leave(region);
+            },
           },
           React.createElement(
             'div',
@@ -1604,6 +1674,8 @@ window.__ModuleLoader__.load({
           FloatPanel,
           {
             style: props.style,
+            track: props.track,
+            region: props.region || 'cf',
             title: props.rel,
             onClose: props.onClose,
             onHide: props.onHide,
@@ -1686,6 +1758,8 @@ window.__ModuleLoader__.load({
           {
             style: props.style,
             badge: props.change.status,
+            track: props.track,
+            region: props.region || 'df',
             title: props.change.path,
             onClose: props.onClose,
             onHide: props.onHide,
@@ -2147,6 +2221,8 @@ window.__ModuleLoader__.load({
           {
             style: props.style,
             title: title,
+            track: props.track,
+            region: props.region || 'hs',
             afterTitle: branchPick,
             headExtra: headExtra,
             bodyProps: viewHash === null ? { onScroll: onListScroll } : undefined,
@@ -2247,6 +2323,78 @@ window.__ModuleLoader__.load({
         var statusVersion = statusVersionState[0];
         var setStatusVersion = statusVersionState[1];
 
+        // ---- 视图观测(对话 vs 其他页签) ----
+        // active view ≠ 对话 → 双树强制细条化(快照 pin/open), 切回对话 → 还原快照。
+        // 轨迹/数据库等任何非对话页签一视同仁(fge 是侧栏联动的唯一事实来源,
+        // db-console 等未来页签无需自行广播)。快照只进内存不落盘。
+        var awayState = React.useState(null); // null=对话视图 | 字符串=离场中的页签名
+        var away = awayState[0];
+        var setAway = awayState[1];
+        var awaySnapRef = React.useRef(null);
+        var awaySnapTakenRef = React.useRef(false); // 本轮离场是否已处理过(含无快照情形)
+        var everChatRef = React.useRef(false); // 本次挂载以来是否观测到过对话视图
+        var awayRef = React.useRef(false);
+        var cacheAppliedRef = React.useRef(false); // cwd 缓存是否已回放进当前状态
+
+        // 保持区追踪器(左右各一): onFire 经 ref 取最新 hide*, 避免 stale 闭包
+        var hideLeftRef = React.useRef(null);
+        var hideRightRef = React.useRef(null);
+        var leftTrack = React.useState(function () {
+          return makeSideTracker(function () {
+            if (hideLeftRef.current) hideLeftRef.current();
+          });
+        })[0];
+        var rightTrack = React.useState(function () {
+          return makeSideTracker(function () {
+            if (hideRightRef.current) hideRightRef.current();
+          });
+        })[0];
+        React.useEffect(function () {
+          return function () {
+            leftTrack.dispose();
+            rightTrack.dispose();
+          };
+        }, []);
+
+        // 页签观测器: 只读会话头部 tablist 的选中态, 与 fge 几何观测器分开,
+        // 回调仅做字符串比较 + 条件 setState, 开销可忽略。
+        React.useEffect(function () {
+          function readActiveLabel() {
+            var list = findSessionTablist();
+            if (!list) return null;
+            var tabs = Array.prototype.slice.call(list.querySelectorAll('[role="tab"]'));
+            for (var i = 0; i < tabs.length; i++) {
+              var t = tabs[i];
+              var sel = t.getAttribute && t.getAttribute('aria-selected') === 'true';
+              if (!sel) {
+                var cls = typeof t.className === 'string' ? t.className : '';
+                sel = /(^|\s)(active|selected|is-active)(\s|$)/.test(cls);
+              }
+              if (sel) return (t.textContent || '').trim();
+            }
+            return null;
+          }
+          function sync() {
+            var label = readActiveLabel();
+            var next = typeof label === 'string' && label !== '' && label !== '对话' ? label : null;
+            if (next === null) everChatRef.current = true; // 观测到对话态
+            setAway(function (prev) {
+              return prev === next ? prev : next;
+            });
+          }
+          sync();
+          var obs = new MutationObserver(sync);
+          obs.observe(document.body, {
+            subtree: true,
+            childList: true,
+            attributes: true,
+            attributeFilter: ['class', 'aria-selected'],
+          });
+          return function () {
+            obs.disconnect();
+          };
+        }, []);
+
         var cacheKey = info ? info.repoRoot || info.cwd : null;
         var root = sessionCwd || (info ? info.cwd : null);
 
@@ -2304,7 +2452,9 @@ window.__ModuleLoader__.load({
                 if (!alive || !st || !st.ok) return;
                 setStatus(st);
                 var cached = readCache(info.repoRoot);
-                if (cached) {
+                // 离场中不接受缓存回放(会顶掉强制收起态); 回对话后由快照还原负责
+                if (cached && !awayRef.current) {
+                  cacheAppliedRef.current = true;
                   if (typeof cached.pin === 'boolean') setPin(cached.pin);
                   if (typeof cached.leftW === 'number') setLeftW(cached.leftW);
                   if (typeof cached.rightW === 'number') setRightW(cached.rightW);
@@ -2322,9 +2472,10 @@ window.__ModuleLoader__.load({
         );
 
         // 持久化 cwd 缓存(含固定态: 让「固定+展开」跨会话/刷新保留)
+        // 离场中的强制收起态不落缓存 —— 否则刷新后快照语义被污染
         React.useEffect(
           function () {
-            if (!cacheKey) return;
+            if (!cacheKey || awayRef.current) return;
             writeCache(cacheKey, {
               pin: pin,
               leftW: leftW,
@@ -2531,6 +2682,48 @@ window.__ModuleLoader__.load({
           setHistoryOpen(false);
         }, []);
 
+        // 保持区追踪器的触发回调指向最新 hide*(每渲染刷新, 见 makeSideTracker)
+        hideLeftRef.current = hideLeft;
+        hideRightRef.current = hideRight;
+
+        // 离场/回归转换: 进非对话页签 → 快照并强制收起(联动关闭全部悬浮栏);
+        // 切回对话 → 还原快照。挂载即离场(如刷新后落在数据库页签)不算"进入":
+        // 不产生快照, 切回对话时回退默认的展开+固定 —— 即使 cwd 缓存先行回放
+        // (cacheAppliedRef)也不把回放值当作进入前状态。
+        React.useEffect(
+          function () {
+            awayRef.current = !!away;
+            if (away && !awaySnapTakenRef.current) {
+              awaySnapTakenRef.current = true;
+              if (everChatRef.current && !cacheAppliedRef.current) {
+                awaySnapRef.current = { pin: pin, leftOpen: leftOpen, rightOpen: rightOpen };
+              }
+              setPin(false);
+              setLeftOpen(false);
+              setRightOpen(false);
+              setContent(null);
+              setDiff(null);
+              setLinkage(null);
+              setHistoryOpen(false);
+            } else if (!away && awaySnapTakenRef.current) {
+              awaySnapTakenRef.current = false;
+              var snap = awaySnapRef.current;
+              awaySnapRef.current = null;
+              if (snap) {
+                if (typeof snap.pin === 'boolean') setPin(snap.pin);
+                if (typeof snap.leftOpen === 'boolean') setLeftOpen(snap.leftOpen);
+                if (typeof snap.rightOpen === 'boolean') setRightOpen(snap.rightOpen);
+              } else {
+                // 无快照 → 回退默认展开+固定(共识口径)
+                setPin(true);
+                setLeftOpen(true);
+                setRightOpen(true);
+              }
+            }
+          },
+          [away],
+        );
+
         // 布局计算
         // 可显示仍看「完整留白能容纳最小宽度」; 最大宽度 = 完整留白的 2/3(减少 1/3),
         // 面板拖不到对话区边缘, 留出更从容的留白。
@@ -2672,6 +2865,8 @@ window.__ModuleLoader__.load({
                 cwd: info.cwd,
                 root: root,
                 pin: pin,
+                pinDisabled: !!away,
+                track: leftTrack,
                 onPin: togglePin,
                 onRefresh: refresh,
                 onCollapse: hideLeft,
@@ -2696,6 +2891,8 @@ window.__ModuleLoader__.load({
                 status: status,
                 repoRoot: info.repoRoot,
                 pin: pin,
+                pinDisabled: !!away,
+                track: rightTrack,
                 onPin: togglePin,
                 onRefresh: refresh,
                 onCollapse: hideRight,
@@ -2725,6 +2922,8 @@ window.__ModuleLoader__.load({
           content
             ? React.createElement(ContentPanel, {
                 style: contentStyle,
+                track: leftTrack,
+                region: 'cf',
                 root: root,
                 rel: content.rel,
                 onClose: function () {
@@ -2736,6 +2935,8 @@ window.__ModuleLoader__.load({
           diff
             ? React.createElement(DiffPanel, {
                 style: diffStyle,
+                track: rightTrack,
+                region: 'df',
                 root: root,
                 change: diff.change,
                 repoRoot: info.repoRoot,
@@ -2749,6 +2950,8 @@ window.__ModuleLoader__.load({
           historyOpen && info.repoRoot
             ? React.createElement(HistoryPanel, {
                 style: diffStyle, // 与 diff 浮层互斥共享锚位(开一关一)
+                track: rightTrack,
+                region: 'hs',
                 root: root,
                 repoRoot: info.repoRoot,
                 refName: historyRefName,

@@ -16,6 +16,8 @@ test:
     node scripts/verify-ds-balance.mjs
     node plugins/file-git-explorer/tests/git.test.mjs
     node plugins/file-git-explorer/tests/verify.mjs
+    node plugins/db-console/tests/pg.test.mjs
+    node plugins/db-console/tests/smoke.mjs
 
 # ---- E2E (需真实 llama-server, 仅手动) ----
 e2e:

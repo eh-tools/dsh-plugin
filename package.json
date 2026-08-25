@@ -16,8 +16,8 @@
   "scripts": {
     "lint": "eslint .",
     "format": "prettier --write .",
-    "test": "node plugins/tool-vision/tests/smoke.mjs && node plugins/paste-image/tests/save.test.mjs && node scripts/verify-ds-balance.mjs && node plugins/file-git-explorer/tests/git.test.mjs && node plugins/file-git-explorer/tests/verify.mjs",
-    "check": "eslint . && prettier --check . && node plugins/tool-vision/tests/smoke.mjs && node plugins/paste-image/tests/save.test.mjs && node scripts/verify-ds-balance.mjs && node plugins/file-git-explorer/tests/git.test.mjs && node plugins/file-git-explorer/tests/verify.mjs"
+    "test": "node plugins/tool-vision/tests/smoke.mjs && node plugins/paste-image/tests/save.test.mjs && node scripts/verify-ds-balance.mjs && node plugins/file-git-explorer/tests/git.test.mjs && node plugins/file-git-explorer/tests/verify.mjs && node plugins/db-console/tests/pg.test.mjs && node plugins/db-console/tests/smoke.mjs",
+    "check": "eslint . && prettier --check . && node plugins/tool-vision/tests/smoke.mjs && node plugins/paste-image/tests/save.test.mjs && node scripts/verify-ds-balance.mjs && node plugins/file-git-explorer/tests/git.test.mjs && node plugins/file-git-explorer/tests/verify.mjs && node plugins/db-console/tests/pg.test.mjs && node plugins/db-console/tests/smoke.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
