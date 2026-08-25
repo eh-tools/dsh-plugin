@@ -1,7 +1,14 @@
 {
   "kind": "static",
   "name": "dsh-file-git-explorer",
-  "purpose": "左侧文件树(可见/隐藏/忽略三区, 根 = cwd, 逐级懒加载) + 右侧 git 树(当前分支只读下拉、工作区变更列表、悬浮 diff)。两面板夹在会话 header 与 composer card 之间, 可拉伸、可收起为细条、图钉锁定, 不覆盖主对话区。静态双半 npm 包, 随 web profile 启动自动加载。",
-  "files": ["package.json", "cordis.patch.yml", "lib/index.js", "lib/client.js", "lib/git.js"],
+  "purpose": "左侧文件树(可见/隐藏/忽略三区, 根 = cwd, 逐级懒加载, 底部 shell 行: ✓执行/✕停止的单槽后台命令行) + 右侧 git 树(当前分支只读下拉、工作区变更列表、悬浮 diff)。两面板夹在会话 header 与 composer card 之间, 可拉伸、可收起为细条、图钉锁定, 不覆盖主对话区。静态双半 npm 包, 随 web profile 启动自动加载。",
+  "files": [
+    "package.json",
+    "cordis.patch.yml",
+    "lib/index.js",
+    "lib/client.js",
+    "lib/git.js",
+    "lib/shell.js"
+  ],
   "install": "dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer"
 }
