@@ -3099,6 +3099,26 @@ window.__ModuleLoader__.load({
         var leftShow = leftOpen && leftCanShow;
         var rightShow = rightOpen && rightCanShow;
 
+        // 细条净空广播: 把「该侧当前是否挂着可悬停细条」写进根级 CSS 变量
+        // (--dsh-fge-strip-clear-l / -r), 供同页其他视图(数据库页签等)内缩
+        // 内容、避开细条的悬停展开区。数值 = 细条宽 26 + 吸边偏移 8 + 视觉间隙 6。
+        // fge 卸载/不可渲染时变量随清理归零, 对方无需感知 fge 存在与否。
+        React.useEffect(
+          function () {
+            var s = document.documentElement.style;
+            s.setProperty('--dsh-fge-strip-clear-l', leftCanShow && !leftShow ? '40px' : '0px');
+            s.setProperty('--dsh-fge-strip-clear-r', rightCanShow && !rightShow ? '40px' : '0px');
+          },
+          [leftCanShow, leftShow, rightCanShow, rightShow],
+        );
+        React.useEffect(function () {
+          return function () {
+            var s = document.documentElement.style;
+            s.removeProperty('--dsh-fge-strip-clear-l');
+            s.removeProperty('--dsh-fge-strip-clear-r');
+          };
+        }, []);
+
         // 自动刷新(git 状态): turn 结束(running true→false)时由上方事件触发。
         // 冷却 1s; 仅当右侧面板可见(rightShow)时真正重取, 否则挂起待面板展开时补刷。
         autoRefreshFnRef.current = function () {
