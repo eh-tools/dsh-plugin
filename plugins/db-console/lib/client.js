@@ -120,7 +120,10 @@ window.__ModuleLoader__.load({
         '.dbc-col .t{color:var(--dsw-alias-label-caption);}' +
         '.dbc-main{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0;}' +
         // 编辑器 —— 回声 composer 卡片
-        '.dbc-editor{flex:none;height:38%;min-height:160px;display:flex;flex-direction:column;' +
+        // 高度用视口钳制而非百分比: % 依赖祖先链有确定高, 一旦断链 textarea
+        // 会按内容自撑, 长 SQL 直接把页面拉成超长
+        '.dbc-editor{flex:none;display:flex;flex-direction:column;' +
+        'height:clamp(170px, 32vh, 320px);' +
         'margin:10px 10px 0;background:var(--dsw-specific-input-major);' +
         'border:1px solid var(--dsw-alias-border-l2-darkmode-thin);border-radius:14px;' +
         'box-shadow:var(--dsw-shadow-lv2);overflow:hidden;transition:border-color .12s var(--ds-ease-in-out);}' +
@@ -130,7 +133,7 @@ window.__ModuleLoader__.load({
         'font-family:var(--ds-font-family-code);font-size:13px;line-height:22px;' +
         'white-space:pre-wrap;word-break:break-all;overflow-wrap:break-word;tab-size:2;}' +
         '.dbc-hl{pointer-events:none;overflow:hidden;color:var(--dsw-alias-label-primary);background:none;}' +
-        '.dbc-ta{width:100%;height:100%;resize:none;background:none;outline:none;' +
+        '.dbc-ta{width:100%;height:100%;resize:none;background:none;outline:none;overflow:auto;' +
         'color:transparent;-webkit-text-fill-color:transparent;caret-color:var(--dsw-alias-state-business-primary);}' +
         '.dbc-ta::placeholder{color:var(--dsw-alias-label-caption);}' +
         '.dbc-ta::selection{background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 30%,transparent);}' +
@@ -155,7 +158,7 @@ window.__ModuleLoader__.load({
         'margin:10px;padding:10px 12px;background:var(--dsw-alias-bg-base);' +
         'border:1px solid var(--dsw-alias-border-l1);border-radius:12px;}' +
         '.dbc-rstat{font:var(--dsw-font-xxs-12);color:var(--dsw-alias-label-secondary);}' +
-        '.dbc-gridwrap{overflow:auto;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;max-height:46%;}' +
+        '.dbc-gridwrap{overflow:auto;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;max-height:300px;}' +
         '.dbc-grid{width:100%;border-collapse:separate;border-spacing:0;font:var(--dsw-font-xxs-12);}' +
         '.dbc-grid th{position:sticky;top:0;height:30px;text-align:left;padding:0 8px;z-index:1;' +
         'background:var(--dsw-specific-sidebar-fill);color:var(--dsw-alias-label-tertiary);font-weight:500;' +
@@ -212,6 +215,38 @@ window.__ModuleLoader__.load({
         } catch (e) {
           return false;
         }
+      }
+
+      // ---- 工作区记忆(localStorage, 按隔离键) ----
+      // 记住每个项目的: SQL 草稿 / schema 树 / 最近一次结果。
+      // 切会话、切页签、刷新后回到同一工作区即还原。结果超 256KB 不落缓存。
+      function dbcNS(key) {
+        return 'dsh.db-console:' + key;
+      }
+      function dbcLoadJSON(key, slot) {
+        try {
+          var raw = localStorage.getItem(dbcNS(key) + ':' + slot);
+          if (!raw) return null;
+          return JSON.parse(raw);
+        } catch (e) {
+          return null;
+        }
+      }
+      function dbcSave(key, slot, value) {
+        try {
+          if (value === null || value === undefined)
+            localStorage.removeItem(dbcNS(key) + ':' + slot);
+          else localStorage.setItem(dbcNS(key) + ':' + slot, JSON.stringify(value));
+        } catch (e) {
+          /* 配额满/隐私模式: 静默放弃 */
+        }
+      }
+      function dbcClearAll(key) {
+        ['sql', 'schema', 'result'].forEach(function (slot) {
+          try {
+            localStorage.removeItem(dbcNS(key) + ':' + slot);
+          } catch (e) {}
+        });
       }
 
       // ---- SQL 高亮 tokenizer(整段扫描, 输出转义后的 HTML) ----
@@ -726,6 +761,15 @@ window.__ModuleLoader__.load({
                   maskedUrl: res.maskedUrl,
                   summary: res.summary,
                 });
+                // 工作区记忆回放(SQL 草稿 / schema 树 / 最近结果)
+                if (res.key) {
+                  var sv = dbcLoadJSON(res.key, 'sql');
+                  if (typeof sv === 'string' && sv !== '') setSql(sv);
+                  var sc = dbcLoadJSON(res.key, 'schema');
+                  if (Array.isArray(sc) && sc.length) setSchema(sc);
+                  var rs = dbcLoadJSON(res.key, 'result');
+                  if (rs && Array.isArray(rs.parts)) setResult(rs);
+                }
                 if (res.connected && res.db) {
                   setConn('open');
                   setDbInfo(res.db);
@@ -846,6 +890,8 @@ window.__ModuleLoader__.load({
             return;
           }
           setConfirmDel(false);
+          var delKey = cfg ? cfg.key : null;
+          if (delKey) dbcClearAll(delKey); // 删配置即清工作区记忆
           api('config.delete', { root: sessionCwd || '' }).then(function () {
             setCfg({ key: cfg ? cfg.key : null, url: null, maskedUrl: null, summary: null });
             setConn('idle');
@@ -1017,6 +1063,33 @@ window.__ModuleLoader__.load({
             document.body.classList.remove('dbc-on');
           };
         }, []);
+
+        // 工作区记忆写回(有隔离键才写; result 截断 256KB)
+        var cfgKey = cfg ? cfg.key : null;
+        React.useEffect(
+          function () {
+            if (!cfgKey) return;
+            dbcSave(cfgKey, 'sql', sql);
+          },
+          [cfgKey, sql],
+        );
+        React.useEffect(
+          function () {
+            if (!cfgKey || !schema) return;
+            dbcSave(cfgKey, 'schema', schema);
+          },
+          [cfgKey, schema],
+        );
+        React.useEffect(
+          function () {
+            if (!cfgKey || !result || result.pending) return;
+            try {
+              if (JSON.stringify(result).length <= 262144) dbcSave(cfgKey, 'result', result);
+              else dbcSave(cfgKey, 'result', null);
+            } catch (e) {}
+          },
+          [cfgKey, result],
+        );
 
         // 卸载清理 toast 定时器
         React.useEffect(function () {
