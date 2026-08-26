@@ -790,10 +790,7 @@ window.__ModuleLoader__.load({
                   setConn('open');
                   setDbInfo(res.db);
                 }
-                // 结果回放不依赖连接状态 —— result.last 查的是 Host 内存,
-                // 与连接池无关; 旧进程无此接口时 http 404, catch 静默
                 dbg('config.get key=', res.key, 'connected=', !!res.connected);
-                loadLastResult();
                 hydratingRef.current = false;
               })
               .catch(function (e) {
@@ -808,20 +805,6 @@ window.__ModuleLoader__.load({
           },
           [sessionCwd],
         );
-
-        /** 取 Host 记忆的最近一次执行结果(装载/重连后调用, 不要求已连接)。 */
-        function loadLastResult() {
-          api('result.last', { root: sessionCwd || '' })
-            .then(function (res) {
-              var has = !!(res && res.ok && res.result && Array.isArray(res.result.parts));
-              dbg('result.last has=', has);
-              if (has) setResult(res.result);
-            })
-            .catch(function (e) {
-              // 典型原因: dsh 进程未重启, 旧代码没有 result.last 接口(http 404)
-              dbg('result.last failed:', e && e.message);
-            });
-        }
 
         function loadSchema() {
           setSchemaBusy(true);
@@ -848,7 +831,6 @@ window.__ModuleLoader__.load({
                 setDbInfo(res.db);
                 setEditMode(false);
                 loadSchema();
-                loadLastResult(); // Host 记忆的最近结果(重连不丢)
               } else {
                 setConn('idle');
                 setConnErr((res && res.error) || '连接失败');
@@ -1104,7 +1086,7 @@ window.__ModuleLoader__.load({
         }, []);
 
         // 工作区记忆写回(有隔离键且回放完成后才写, 防跨项目串染;
-        // 结果不进 localStorage —— 走 Host 内存 result.last)
+        // 结果不做任何持久化 —— 切走即清, 按用户决定)
         var cfgKey = cfg ? cfg.key : null;
         React.useEffect(
           function () {
