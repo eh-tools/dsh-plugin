@@ -94,8 +94,11 @@ window.__ModuleLoader__.load({
         '.dbc-help summary{cursor:pointer;color:var(--dsw-alias-label-tertiary);}' +
         // 工作台骨架
         '.dbc-body{flex:1;display:flex;min-height:0;}' +
+        // schema 树面板 —— 编辑器同款圆角卡片(specific-input-major + 细边 + lv2 影)
         '.dbc-side{width:256px;flex:none;display:flex;flex-direction:column;min-height:0;' +
-        'border-right:1px solid var(--dsw-alias-border-l2);}' +
+        'margin:10px 0 10px 10px;background:var(--dsw-specific-input-major);' +
+        'border:1px solid var(--dsw-alias-border-l2-darkmode-thin);border-radius:14px;' +
+        'box-shadow:var(--dsw-shadow-lv2);overflow:hidden;}' +
         '.dbc-side-head{flex:none;height:30px;display:flex;align-items:center;justify-content:space-between;' +
         'padding:0 8px;background:var(--dsw-specific-sidebar-fill);color:var(--dsw-alias-label-tertiary);' +
         'font:500 var(--dsw-font-xxs-12);border-bottom:1px solid var(--dsw-alias-border-l2);}' +
@@ -165,7 +168,9 @@ window.__ModuleLoader__.load({
         '.dbc-toast{position:fixed;left:50%;bottom:76px;transform:translateX(-50%);z-index:200;' +
         'pointer-events:none;padding:6px 14px;border-radius:14px;font:var(--dsw-font-xs-13);' +
         'background:var(--dsw-alias-toast-bg);color:var(--dsw-static-neutral-bluish-00);' +
-        'box-shadow:var(--dsw-shadow-lv2);}';
+        'box-shadow:var(--dsw-shadow-lv2);}' +
+        // 数据库页激活期间隐藏会话输入框(挂在 body 类上, 离开视图即恢复)
+        'body.dbc-on [data-composer-card]{display:none !important;}';
 
       var styleEl = null;
       function ensureStyles() {
@@ -1004,6 +1009,14 @@ window.__ModuleLoader__.load({
             hlRef.current.scrollLeft = ta.scrollLeft;
           }
         }
+
+        // 激活标记: 全局 CSS 据 body.dbc-on 隐藏会话输入框; 离开视图即恢复
+        React.useEffect(function () {
+          document.body.classList.add('dbc-on');
+          return function () {
+            document.body.classList.remove('dbc-on');
+          };
+        }, []);
 
         // 卸载清理 toast 定时器
         React.useEffect(function () {

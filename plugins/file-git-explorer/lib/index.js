@@ -16,10 +16,10 @@
  *   POST /fge/api/search  → { root?, query } → 按名搜索命中项(三区徽标, 截断上限)
  *   POST /fge/api/log     → { repoRoot, ref?, skip?, limit? } → 分页提交列表 + head
  *   POST /fge/api/show    → { repoRoot, hash, path? } → 单提交详情/merge 标记/单文件 diff
- *   POST /fge/api/shellStart  → { root?, command } → 单槽启动后台命令(挂 ctx.jobs, kind 'shell')
- *   POST /fge/api/shellState  → {} → 当前槽任务快照(GUI 刷新恢复用)
- *   POST /fge/api/shellOutput → { outFrom?, errFrom? } → 尾部输出增量(绝对字符位切片)
- *   POST /fge/api/shellStop   → {} → 终止当前槽任务(TERM→宽限→KILL 整树)
+ *   POST /fge/api/shellStart  → { root?, command } → 该工作区启动后台命令(挂 ctx.jobs, kind 'shell')
+ *   POST /fge/api/shellState  → { root? } → 该工作区槽内任务快照(GUI 刷新恢复用)
+ *   POST /fge/api/shellOutput → { root?, outFrom?, errFrom? } → 尾部输出增量(绝对字符位切片)
+ *   POST /fge/api/shellStop   → { root? } → 终止该工作区当前任务(TERM→宽限→KILL 整树)
  *
  * git 一律经 subprocess 服务执行(argv 数组, 无 shell), 路径全部做防穿越校验:
  * 文件树/file 只能落在 root 之下, diff/status 的仓库根必须是绝对路径。
@@ -641,11 +641,28 @@ export function apply(ctx) {
   }
 
   /**
-   * 单槽记账: 同一时刻至多一条 running/stopping 任务(宿主侧全局口径,
-   * 跨 GUI 刷新/多开成立)。任务终结后记录保留(shellState/shellOutput 仍可查),
-   * 直到下一次 start 覆盖。
+   * 单槽记账: 每个工作区(cwd)各自至多一条 running/stopping 任务(宿主侧记账,
+   * 跨 GUI 刷新/多开成立; 不同工作区互不可见、可并行)。任务终结后记录保留
+   * (shellState/shellOutput 仍可查), 直到该工作区下一次 start 覆盖;
+   * 终态槽总量超上限时按 FIFO 淘汰最旧的终态记录(运行中永不淘汰)。
    */
-  let shellSlot = null;
+  const shellSlots = new Map(); // root(归一绝对路径) → slot
+  const SHELL_SLOT_CAP = 50;
+
+  /** 按请求 root 取槽; root 非法返回 error, 无记录返回 slot:null。 */
+  function slotFor(body) {
+    const base = baseOf(body);
+    if (base === null) return { error: 'invalid-root' };
+    return { base, slot: shellSlots.get(base) ?? null };
+  }
+
+  /** 终态槽超上限时按插入序淘汰最旧的终态记录(运行中的槽不动)。 */
+  function evictTerminalSlots() {
+    for (const [root, slot] of shellSlots) {
+      if (shellSlots.size < SHELL_SLOT_CAP) break;
+      if (slot.status !== 'running' && slot.status !== 'stopping') shellSlots.delete(root);
+    }
+  }
 
   function shellPublic(slot) {
     if (!slot) return null;
@@ -705,8 +722,9 @@ export function apply(ctx) {
     if (jobs === undefined || typeof jobs.start !== 'function') {
       return { ok: false, error: 'jobs-unavailable' };
     }
-    if (shellSlot && (shellSlot.status === 'running' || shellSlot.status === 'stopping')) {
-      return { ok: false, error: 'busy', job: shellPublic(shellSlot) };
+    const current = shellSlots.get(base) ?? null;
+    if (current && (current.status === 'running' || current.status === 'stopping')) {
+      return { ok: false, error: 'busy', job: shellPublic(current) };
     }
     ensureJobController(jobs);
     let handle;
@@ -728,7 +746,8 @@ export function apply(ctx) {
         detail: String((err && err.message) || err || 'spawn failed').slice(0, 200),
       };
     }
-    const slot = (shellSlot = {
+    evictTerminalSlots();
+    const slot = {
       jobId: '',
       label: cmd,
       handle,
@@ -739,7 +758,8 @@ export function apply(ctx) {
       signal: null,
       error: null,
       startedAt: Date.now(),
-    });
+    };
+    shellSlots.set(base, slot);
     try {
       const jobId = jobs.start({
         kind: 'shell',
@@ -797,12 +817,16 @@ export function apply(ctx) {
     return { ok: true, job: shellPublic(slot) };
   }
 
-  function handleShellState() {
-    return { ok: true, job: shellPublic(shellSlot) };
+  function handleShellState(body) {
+    const lookup = slotFor(body);
+    if (lookup.error) return { ok: false, error: lookup.error };
+    return { ok: true, job: shellPublic(lookup.slot) };
   }
 
   function handleShellOutput(body) {
-    const slot = shellSlot;
+    const lookup = slotFor(body);
+    if (lookup.error) return { ok: false, error: lookup.error };
+    const slot = lookup.slot;
     if (!slot) return { ok: true, job: null };
     pumpShell(slot);
     // from/outFrom 的钳制(非有限数 → 0)由 sliceSince 内部统一处理
@@ -815,8 +839,10 @@ export function apply(ctx) {
     };
   }
 
-  function handleShellStop() {
-    const slot = shellSlot;
+  function handleShellStop(body) {
+    const lookup = slotFor(body);
+    if (lookup.error) return { ok: false, error: lookup.error };
+    const slot = lookup.slot;
     if (!slot || (slot.status !== 'running' && slot.status !== 'stopping')) {
       return { ok: true, stopped: false, job: shellPublic(slot) };
     }
