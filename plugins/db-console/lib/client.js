@@ -883,20 +883,25 @@ window.__ModuleLoader__.load({
             });
           }
         }
+        // 补全上下文一律取 textarea 的实时值(ta.value)而非受控 state ——
+        // state 落后最后一次按键一拍, 配上实时的 selectionStart 会把词起点
+        // 算错一位, Enter 上屏就出现「ffrom」这类首字母重复。代际号用于
+        // 作废已排队的 rAF 刷新(接受候选后不再被旧帧重新弹层)。
         function refreshCmp() {
           var ta = taRef.current;
           if (!ta) return;
+          var live = ta.value;
           var caret = ta.selectionStart;
           if (caret === null || typeof caret !== 'number') {
             closeCmp();
             return;
           }
-          var cctx = completionContext(sql, caret);
+          var cctx = completionContext(live, caret);
           if (cctx.word === '' && !cctx.dotTable) {
             closeCmp();
             return;
           }
-          var items = buildCandidates(cctx, sql, schema);
+          var items = buildCandidates(cctx, live, schema);
           if (!items.length) {
             closeCmp();
             return;
@@ -909,12 +914,21 @@ window.__ModuleLoader__.load({
             return t + 1;
           });
         }
+        function scheduleRefresh() {
+          var seq = (cmp.seq = (cmp.seq || 0) + 1);
+          requestAnimationFrame(function () {
+            if (cmp.seq === seq) refreshCmp();
+          });
+        }
         function acceptCmp(label) {
           var ta = taRef.current;
           if (!ta) return;
+          cmp.seq = (cmp.seq || 0) + 1; // 作废挂起的刷新, 防止上屏后被旧帧重开弹层
+          var live = ta.value;
           var caret = ta.selectionStart;
-          if (caret === null || cmp.ctxStart < 0) return;
-          var next = sql.slice(0, cmp.ctxStart) + label + sql.slice(caret);
+          if (caret === null || typeof caret !== 'number' || cmp.ctxStart < 0) return;
+          if (cmp.ctxStart > caret) return; // 防御: 锚点越界(理论不达)直接放弃
+          var next = live.slice(0, cmp.ctxStart) + label + live.slice(caret);
           setSql(next);
           closeCmp();
           requestAnimationFrame(function () {
@@ -928,8 +942,12 @@ window.__ModuleLoader__.load({
         function insertAtCursor(text) {
           var ta = taRef.current;
           if (!ta) return;
-          var caret = ta.selectionStart === null ? sql.length : ta.selectionStart;
-          var next = sql.slice(0, caret) + text + sql.slice(caret);
+          var live = ta.value;
+          var caret =
+            ta.selectionStart === null || typeof ta.selectionStart !== 'number'
+              ? live.length
+              : ta.selectionStart;
+          var next = live.slice(0, caret) + text + live.slice(caret);
           setSql(next);
           requestAnimationFrame(function () {
             if (taRef.current) {
@@ -1252,7 +1270,7 @@ window.__ModuleLoader__.load({
                     onKeyDown: onTaKeyDown,
                     onChange: function (e) {
                       setSql(e.target.value);
-                      requestAnimationFrame(refreshCmp);
+                      scheduleRefresh();
                     },
                     onClick: closeCmp,
                     onBlur: function () {
