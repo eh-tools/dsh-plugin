@@ -33,6 +33,13 @@ window.__ModuleLoader__.load({
       ensureStyles();
 
       // ---- 与 host 通信 ----
+      // 诊断开关: URL 带 ?dbcdebug=1 时向控制台输出关键链路
+      var DBG = /[?&]dbcdebug=1/.test(window.location.search);
+      function dbg() {
+        if (!DBG) return;
+        var args = ['[dbc]'].concat(Array.prototype.slice.call(arguments));
+        console.log.apply(console, args);
+      }
       function api(method, body) {
         return fetch('/dbc/api/' + method, {
           method: 'POST',
@@ -782,8 +789,11 @@ window.__ModuleLoader__.load({
                 if (res.connected && res.db) {
                   setConn('open');
                   setDbInfo(res.db);
-                  loadLastResult();
                 }
+                // 结果回放不依赖连接状态 —— result.last 查的是 Host 内存,
+                // 与连接池无关; 旧进程无此接口时 http 404, catch 静默
+                dbg('config.get key=', res.key, 'connected=', !!res.connected);
+                loadLastResult();
                 hydratingRef.current = false;
               })
               .catch(function (e) {
@@ -799,15 +809,18 @@ window.__ModuleLoader__.load({
           [sessionCwd],
         );
 
-        /** 取 Host 记忆的最近一次执行结果(连接成功/装载即连时调用)。 */
+        /** 取 Host 记忆的最近一次执行结果(装载/重连后调用, 不要求已连接)。 */
         function loadLastResult() {
           api('result.last', { root: sessionCwd || '' })
             .then(function (res) {
-              if (res && res.ok && res.result && Array.isArray(res.result.parts)) {
-                setResult(res.result);
-              }
+              var has = !!(res && res.ok && res.result && Array.isArray(res.result.parts));
+              dbg('result.last has=', has);
+              if (has) setResult(res.result);
             })
-            .catch(function () {});
+            .catch(function (e) {
+              // 典型原因: dsh 进程未重启, 旧代码没有 result.last 接口(http 404)
+              dbg('result.last failed:', e && e.message);
+            });
         }
 
         function loadSchema() {
