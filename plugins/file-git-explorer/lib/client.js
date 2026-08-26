@@ -3101,13 +3101,14 @@ window.__ModuleLoader__.load({
 
         // 细条净空广播: 把「该侧当前是否挂着可悬停细条」写进根级 CSS 变量
         // (--dsh-fge-strip-clear-l / -r), 供同页其他视图(数据库页签等)内缩
-        // 内容、避开细条的悬停展开区。数值 = 细条宽 26 + 吸边偏移 8 + 视觉间隙 6。
+        // 内容、避开细条的悬停展开区。数值 = 细条右缘 34(宽26+吸边8) + 富余 26,
+        // 共 60px —— 实测 40px 时鼠标贴边仍会误触展开。
         // fge 卸载/不可渲染时变量随清理归零, 对方无需感知 fge 存在与否。
         React.useEffect(
           function () {
             var s = document.documentElement.style;
-            s.setProperty('--dsh-fge-strip-clear-l', leftCanShow && !leftShow ? '40px' : '0px');
-            s.setProperty('--dsh-fge-strip-clear-r', rightCanShow && !rightShow ? '40px' : '0px');
+            s.setProperty('--dsh-fge-strip-clear-l', leftCanShow && !leftShow ? '60px' : '0px');
+            s.setProperty('--dsh-fge-strip-clear-r', rightCanShow && !rightShow ? '60px' : '0px');
           },
           [leftCanShow, leftShow, rightCanShow, rightShow],
         );
