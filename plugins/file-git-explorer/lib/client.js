@@ -3113,18 +3113,22 @@ window.__ModuleLoader__.load({
         var leftShow = leftOpen && leftCanShow;
         var rightShow = rightOpen && rightCanShow;
 
-        // 细条净空广播: 把「该侧当前是否挂着可悬停细条」写进根级 CSS 变量
+        // 净空广播: 把「该侧树面板对同页内容的占位」写进根级 CSS 变量
         // (--dsh-fge-strip-clear-l / -r), 供同页其他视图(数据库页签等)内缩
-        // 内容、避开细条的悬停展开区。数值 = 细条右缘 34(宽26+吸边8) + 富余 26,
-        // 共 60px —— 实测 40px 时鼠标贴边仍会误触展开。
+        // 内容。三态: 无树=0 / 细条=60px(细条右缘34+富余26) /
+        // 面板展开=实宽+14(吸边8+间隙6) —— 展开时页面同步让位, 不被覆盖。
         // fge 卸载/不可渲染时变量随清理归零, 对方无需感知 fge 存在与否。
         React.useEffect(
           function () {
             var s = document.documentElement.style;
-            s.setProperty('--dsh-fge-strip-clear-l', leftCanShow && !leftShow ? '60px' : '0px');
-            s.setProperty('--dsh-fge-strip-clear-r', rightCanShow && !rightShow ? '60px' : '0px');
+            function sideVal(canShow, show, width) {
+              if (!canShow) return '0px';
+              return show ? Math.round(width + 14) + 'px' : '60px';
+            }
+            s.setProperty('--dsh-fge-strip-clear-l', sideVal(leftCanShow, leftShow, leftWidth));
+            s.setProperty('--dsh-fge-strip-clear-r', sideVal(rightCanShow, rightShow, rightWidth));
           },
-          [leftCanShow, leftShow, rightCanShow, rightShow],
+          [leftCanShow, leftShow, leftWidth, rightCanShow, rightShow, rightWidth],
         );
         React.useEffect(function () {
           return function () {
