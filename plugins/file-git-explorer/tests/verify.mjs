@@ -442,12 +442,13 @@ ok('show: 详情/diff/非法 hash');
     }
 }
 
-// 14. shell 行: 单槽生命周期(start/state/output/stop)
+// 14. shell 行: 槽按工作区(root)隔离的生命周期(start/state/output/stop)
 //     命令经 $SHELL -c 执行(POSIX 前提与全文件一致); 断言不依赖具体解释器。
+const CWD = process.cwd();
 
-// 轮询辅助: 模拟客户端游标, 累积增量直到谓词命中或超时
-async function drainUntil(pred, timeoutMs = 8000) {
-    const cur = { outFrom: 0, errFrom: 0 };
+// 轮询辅助: 模拟客户端游标, 累积增量直到谓词命中或超时(游标绑定同一 root)
+async function drainUntil(pred, timeoutMs = 8000, root = CWD) {
+    const cur = { root, outFrom: 0, errFrom: 0 };
     const acc = { out: '', err: '', res: null };
     const deadline = Date.now() + timeoutMs;
     for (;;) {
@@ -464,7 +465,7 @@ async function drainUntil(pred, timeoutMs = 8000) {
     }
 }
 
-// 14a. 无任务时 state/output 返回 job:null
+// 14a. 无任务时 state/output 返回 job:null(缺省 root 回退进程 cwd)
 const stEmpty = await callAt('POST', base('shellState'), {});
 assert.equal(stEmpty.body.ok, true);
 assert.equal(stEmpty.body.job, null);
@@ -472,18 +473,21 @@ const outEmpty = await callAt('POST', base('shellOutput'), {});
 assert.equal(outEmpty.body.job, null);
 ok('shellState/shellOutput: 无任务时 job:null');
 
-// 14b. 非法命令拒绝
+// 14b. 非法命令 / 非法 root 拒绝
 for (const bad of ['', '   ', 'x'.repeat(4001), null, 42]) {
     const r = await callAt('POST', base('shellStart'), { command: bad });
     assert.equal(r.body.ok, false, 'command=' + JSON.stringify(bad) + ' 应拒绝');
     assert.equal(r.body.error, 'invalid-command');
 }
-ok('shellStart: 非法命令(invalid-command)');
+const badRootStop = await callAt('POST', base('shellStop'), { root: 'relative/path' });
+assert.equal(badRootStop.body.ok, false);
+assert.equal(badRootStop.body.error, 'invalid-root');
+ok('shellStart/shellStop: 非法命令(invalid-command)/非法 root(invalid-root)');
 
 // 14c. 快命令: echo → completed / exit 0 / 输出可见
 {
     const started = await callAt('POST', base('shellStart'), {
-        root: process.cwd(),
+        root: CWD,
         command: 'echo fge-shell-ok',
     });
     assert.equal(started.body.ok, true);
@@ -503,21 +507,21 @@ ok('shellStart: 非法命令(invalid-command)');
     assert.equal(fin.res.job.exitCode, 0);
     ok('shellStart echo: completed/exit 0 + 尾部输出可见');
 
-    // 终态记录保留: state 仍可查
-    const after = await callAt('POST', base('shellState'), {});
+    // 终态记录保留: 同 root 的 state 仍可查
+    const after = await callAt('POST', base('shellState'), { root: CWD });
     assert.equal(after.body.job.status, 'completed');
 }
 
-// 14d. 单槽: 运行中再 start → busy; stop → killed(SIGTERM); 随后可再次启动
+// 14d. 单工作区单槽: 运行中再 start → busy; stop → killed(SIGTERM); 随后可再次启动
 {
-    const long = await callAt('POST', base('shellStart'), { command: 'sleep 2' });
+    const long = await callAt('POST', base('shellStart'), { root: CWD, command: 'sleep 2' });
     assert.equal(long.body.ok, true);
-    const busy = await callAt('POST', base('shellStart'), { command: 'echo nope' });
+    const busy = await callAt('POST', base('shellStart'), { root: CWD, command: 'echo nope' });
     assert.equal(busy.body.ok, false);
     assert.equal(busy.body.error, 'busy');
     assert.equal(busy.body.job.id, long.body.job.id);
 
-    const stopped = await callAt('POST', base('shellStop'), {});
+    const stopped = await callAt('POST', base('shellStop'), { root: CWD });
     assert.equal(stopped.body.stopped, true);
     assert.equal(stopped.body.job.status, 'stopping');
 
@@ -529,7 +533,7 @@ ok('shellStart: 非法命令(invalid-command)');
     ok('shellStop: 单槽 busy 拒绝 + TERM→killed(SIGTERM)');
 
     // 槽位释放: 再次启动可用
-    const again = await callAt('POST', base('shellStart'), { command: 'echo again-ok' });
+    const again = await callAt('POST', base('shellStart'), { root: CWD, command: 'echo again-ok' });
     assert.equal(again.body.ok, true);
     const fin2 = await drainUntil((a) => a.res.done && a.out.includes('again-ok'));
     assert.equal(fin2.res.job.exitCode, 0);
@@ -539,6 +543,7 @@ ok('shellStart: 非法命令(invalid-command)');
 // 14e. spawn 失败归一为 failed(done 契约不 reject)
 {
     const bad = await callAt('POST', base('shellStart'), {
+        root: CWD,
         command: 'fge-no-such-binary-xyz',
     });
     assert.equal(bad.body.ok, true); // 进程已起(shell 在), 由 shell 报非零退出
@@ -548,6 +553,46 @@ ok('shellStart: 非法命令(invalid-command)');
         'shell 层报错应为 completed(非零退出)或 failed',
     );
     ok('shell 不存在命令: 归一终态、不悬挂');
+}
+
+// 14f. 工作区隔离: 不同 root 各自单槽、互不可见、可并行; ✕ 只作用于本工作区
+{
+    const dirA = fs.mkdtempSync(path.join(os.tmpdir(), 'fge-sh-a-'));
+    const dirB = fs.mkdtempSync(path.join(os.tmpdir(), 'fge-sh-b-'));
+    try {
+        const longA = await callAt('POST', base('shellStart'), { root: dirA, command: 'sleep 2' });
+        assert.equal(longA.body.ok, true);
+
+        // 切到 B: 看不到 A 的任务, 且能立即启动自己的(B 不被 A busy)
+        const stB = await callAt('POST', base('shellState'), { root: dirB });
+        assert.equal(stB.body.job, null, 'B 的槽不应看见 A 的任务');
+        const stA = await callAt('POST', base('shellState'), { root: dirA });
+        assert.equal(stA.body.job.status, 'running');
+
+        const echoB = await callAt('POST', base('shellStart'), {
+            root: dirB,
+            command: 'echo b-ok',
+        });
+        assert.equal(echoB.body.ok, true, '不同工作区应可并行各跑各的');
+
+        // 输出互不串台: B 能看到自己的输出; 同期 A 仍在跑
+        const finB = await drainUntil((a) => a.res.done && a.out.includes('b-ok'), 8000, dirB);
+        assert.equal(finB.res.job.exitCode, 0);
+        const midA = await callAt('POST', base('shellState'), { root: dirA });
+        assert.equal(midA.body.job.status, 'running', 'B 完成不应影响 A');
+
+        // ✕ 只停本工作区: 停 B 不动 A, 再停 A
+        const stopB = await callAt('POST', base('shellStop'), { root: dirB });
+        assert.equal(stopB.body.stopped, false, 'B 已终结, stop 应 no-op');
+        const stopA = await callAt('POST', base('shellStop'), { root: dirA });
+        assert.equal(stopA.body.stopped, true);
+        const finA = await drainUntil((a) => a.res.job.status === 'killed', 8000, dirA);
+        assert.equal(finA.res.job.signal, 'SIGTERM');
+        ok('shell 工作区隔离: 双槽并行/互不可见/✕ 只作用本区');
+    } finally {
+        fs.rmSync(dirA, { recursive: true, force: true });
+        fs.rmSync(dirB, { recursive: true, force: true });
+    }
 }
 
 console.log('\nHOST LOGIC CHECKS PASSED (' + passed + ' groups)');

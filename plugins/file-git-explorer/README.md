@@ -70,8 +70,9 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer
 - **挂后台任务**: 启动即注册为 DSH 后台任务(kind `shell`, label = 命令原文), 出现在各会话头部的任务弹层并计入徽标;
   无主任务 —— 完成**不通知模型**。GUI 任务列表只读, 故 ✕ 是人停止任务的唯一入口
   (整棵进程树 TERM → 3s → KILL)。
-- **单槽**: 同一时刻全局至多一条 running/stopping(宿主侧记账, 跨刷新 / 多标签成立);
-  GUI 刷新后自动认领仍在跑的任务(running 态 + ✕ 照常可停); 运行中输入框可编辑但 ✓ 置灰; 无运行时长上限。
+- **单槽(按工作区)**: 每个工作区各自至多一条 running/stopping(宿主侧按 root 记账, 跨刷新 / 多标签成立;
+  不同工作区可并行各跑各的); 切工作区只显示本区任务 —— 刷新后自动认领本区仍在跑的任务(running 态 + ✕ 照常可停);
+  运行中输入框可编辑但 ✓ 置灰; ✕ 只停当前工作区那条; 无运行时长上限; 终态槽超上限按 FIFO 淘汰(运行中永不淘汰)。
 - **尾部输出窗**: 状态行(`● 运行中… / ✓ 退出 N / ■ 已停止(SIGTERM) / ⚠ 错误`)旁可展开的滚动区,
   运行中每 ~1s 拉一次增量(offset 制非消费式读), 显示尾部各流 ~16K 字符, 自动滚底; stderr 以 `[stderr]` 段落区分。
 
@@ -111,9 +112,9 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer
 | `POST /fge/api/log`         | `{root?, repoRoot, ref?, skip?, limit?}` | `{ref, head, commits[{hash, short, author, at, subject}]}`         |
 | `POST /fge/api/show`        | `{root?, repoRoot, hash, path?}`         | `{kind: 'commit'\|'merge'\|'diff', message, files[], text}`        |
 | `POST /fge/api/shellStart`  | `{root?, command}`                       | `{job{id, label, status, ...}}`; busy / invalid-command 等拒绝     |
-| `POST /fge/api/shellState`  | `{}`                                     | `{job \| null}`(GUI 刷新恢复用)                                    |
-| `POST /fge/api/shellOutput` | `{outFrom?, errFrom?}`                   | `{job, done, out{text,next,base,lossy}, err{...}}`(绝对字符位增量) |
-| `POST /fge/api/shellStop`   | `{}`                                     | `{stopped, job}`(TERM→3s→KILL 整树)                                |
+| `POST /fge/api/shellState`  | `{root?}`                                | `{job \| null}`(本工作区槽, GUI 刷新恢复用)                        |
+| `POST /fge/api/shellOutput` | `{root?, outFrom?, errFrom?}`            | `{job, done, out{text,next,base,lossy}, err{...}}`(绝对字符位增量) |
+| `POST /fge/api/shellStop`   | `{root?}`                                | `{stopped, job}`(TERM→3s→KILL 整树, 只作用本工作区)                |
 
 git 一律经 `subprocess` 服务执行(argv 数组, 无 shell)。shell 行是唯一经用户 shell 解释命令串的入口
 (解释器解析见 `lib/shell.js`, 同样只服务栅栏之后的本机请求), 启动即挂 `ctx.jobs`(kind `shell`, 无主任务)。

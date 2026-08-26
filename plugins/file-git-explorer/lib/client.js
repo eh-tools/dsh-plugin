@@ -1159,44 +1159,54 @@ window.__ModuleLoader__.load({
           [cacheKey],
         );
 
-        // 挂载时向 host 认领当前槽任务(GUI 刷新/重开后恢复 running 态与 ✕ 可用性)
-        React.useEffect(function () {
-          var dead = false;
-          api('shellState', {})
-            .then(function (r) {
-              if (dead || !r || !r.ok || !r.job) return;
-              setJob(r.job);
-              setOpen(true);
-              // 认领已终结的任务时轮询不会跑, 单次拉尾部输出填充
-              if (r.job.status !== 'running' && r.job.status !== 'stopping') {
-                api('shellOutput', { outFrom: 0, errFrom: 0 })
-                  .then(function (o) {
-                    if (dead || !o || !o.ok) return;
-                    setOutText(
-                      o.out && o.out.text !== ''
-                        ? (o.out.lossy ? '[…输出有缺口…]\n' : '') + o.out.text
-                        : '',
-                    );
-                    setErrText(
-                      o.err && o.err.text !== ''
-                        ? (o.err.lossy ? '[…输出有缺口…]\n' : '') + o.err.text
-                        : '',
-                    );
-                  })
-                  .catch(function () {});
-              }
-            })
-            .catch(function () {});
-          return function () {
-            dead = true;
-          };
-        }, []);
+        // 挂载/切工作区时认领该工作区自己的槽任务(刷新恢复 running 态与 ✕ 可用性;
+        // 槽按 root 隔离 —— 切走即重置展示态, 不显示上一个工作区的记录)
+        React.useEffect(
+          function () {
+            var dead = false;
+            setJob(null);
+            setErrMsg(null);
+            setOutText('');
+            setErrText('');
+            fromRef.current = { out: 0, err: 0 };
+            api('shellState', { root: props.root })
+              .then(function (r) {
+                if (dead || !r || !r.ok || !r.job) return;
+                setJob(r.job);
+                setOpen(true);
+                // 认领已终结的任务时轮询不会跑, 单次拉尾部输出填充
+                if (r.job.status !== 'running' && r.job.status !== 'stopping') {
+                  api('shellOutput', { root: props.root, outFrom: 0, errFrom: 0 })
+                    .then(function (o) {
+                      if (dead || !o || !o.ok) return;
+                      setOutText(
+                        o.out && o.out.text !== ''
+                          ? (o.out.lossy ? '[…输出有缺口…]\n' : '') + o.out.text
+                          : '',
+                      );
+                      setErrText(
+                        o.err && o.err.text !== ''
+                          ? (o.err.lossy ? '[…输出有缺口…]\n' : '') + o.err.text
+                          : '',
+                      );
+                    })
+                    .catch(function () {});
+                }
+              })
+              .catch(function () {});
+            return function () {
+              dead = true;
+            };
+          },
+          [props.root],
+        );
 
-        // 运行中轮询尾部输出; done=true 的那一拍带最终状态与残余输出
+        // 运行中轮询本工作区槽的尾部输出; done=true 的那一拍带最终状态与残余输出
         React.useEffect(
           function () {
             if (!busy) return undefined;
             var dead = false;
+            var root = props.root; // 轮询锁定发起时的工作区, 切换即被 cleanup 作废
             var applySeg = function (which, seg, setText) {
               if (!seg) return;
               var add = seg.lossy ? '[…输出有缺口…]\n' : '';
@@ -1211,7 +1221,11 @@ window.__ModuleLoader__.load({
               fromRef.current[which] = seg.next;
             };
             var tick = function () {
-              api('shellOutput', { outFrom: fromRef.current.out, errFrom: fromRef.current.err })
+              api('shellOutput', {
+                root: root,
+                outFrom: fromRef.current.out,
+                errFrom: fromRef.current.err,
+              })
                 .then(function (r) {
                   if (dead || !r || !r.ok || !r.job) return;
                   setJob(r.job);
@@ -1227,7 +1241,7 @@ window.__ModuleLoader__.load({
               clearInterval(t);
             };
           },
-          [busy],
+          [busy, props.root],
         );
 
         // 内容变化 / 展开时滚到底部
@@ -1279,7 +1293,7 @@ window.__ModuleLoader__.load({
 
         var stop = function () {
           if (!busy) return;
-          api('shellStop', {})
+          api('shellStop', { root: props.root })
             .then(function (r) {
               if (r && r.ok && r.job) setJob(r.job);
             })
