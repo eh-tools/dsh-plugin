@@ -14,6 +14,7 @@ import {
     groupSchemaTree,
     truncateRows,
     resolveScopeKey,
+    safeFileName,
 } from '../lib/pg.js';
 
 // ---- validateConnectionUrl ----
@@ -186,4 +187,13 @@ test('scopeKey: 无 .git 退化为起点自身(realpath)', async () => {
     const start = path.resolve('/plain/dir');
     const out = await resolveScopeKey(start, fakeFs(new Map()));
     assert.equal(out, start);
+});
+
+// ---- safeFileName ----
+
+test('文件名: 隔离键编码后不逃逸存储目录', () => {
+    const name = safeFileName('/Users/a1/workspace/dsh-plugin');
+    assert.ok(name.endsWith('.json'));
+    assert.ok(!name.includes('/'), '编码后不得含路径分隔符');
+    assert.match(name, /^%2F/); // 首字符 '/' 被编码
 });

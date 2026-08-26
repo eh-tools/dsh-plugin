@@ -198,3 +198,11 @@ async function real(p, fs) {
     return p;
   }
 }
+
+/**
+ * 最近结果落盘的文件名: 隔离键(绝对路径)整体 encodeURIComponent,
+ * 保证斜杠等字符不逃逸出存储目录。
+ */
+export function safeFileName(key) {
+  return encodeURIComponent(String(key)) + '.json';
+}

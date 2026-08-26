@@ -40,6 +40,7 @@ import {
   groupSchemaTree,
   truncateRows,
   resolveScopeKey,
+  safeFileName,
 } from './pg.js';
 
 const { Pool } = pgPkg;
@@ -142,9 +143,49 @@ export function apply(ctx) {
   const scopeKeyCache = new Map();
   /** connect 去重: scopeKey → Promise */
   const connecting = new Map();
-  /** 每项目最近一次执行结果(内存, 随进程常驻): scopeKey → 展示结构。
-   *  放 Host 而非浏览器 localStorage —— 无大小顾虑, 切工作区/刷新浏览器都不丢。 */
+  /** 每项目最近一次执行结果: scopeKey → 展示结构。
+   *  L1 = 进程内存(热路径), L2 = ~/.dsh/storages/db-console-results/ 落盘
+   *  (重启 dsh / 刷新浏览器 / 切工作区都不丢)。写盘异步串行, 失败仅告警。 */
   const lastResults = new Map();
+  /** 结果落盘串行化锁。 */
+  let resultChain = Promise.resolve();
+
+  function resultFilePath(key) {
+    return path.join(dshHomeDir(), 'storages', 'db-console-results', safeFileName(key));
+  }
+
+  function persistLastResult(key, payload) {
+    resultChain = resultChain.then(async () => {
+      try {
+        const file = resultFilePath(key);
+        await fsp.mkdir(path.dirname(file), { recursive: true });
+        const tmp = file + '.tmp.' + process.pid;
+        await fsp.writeFile(
+          tmp,
+          JSON.stringify({ key, savedAt: Date.now(), result: payload }),
+          'utf8',
+        );
+        await fsp.rename(tmp, file);
+      } catch (err) {
+        console.error('db-console: persist last result failed', err && err.message);
+      }
+    });
+    return resultChain;
+  }
+
+  async function readPersistedLastResult(key) {
+    try {
+      const raw = await fsp.readFile(resultFilePath(key), 'utf8');
+      const parsed = JSON.parse(raw);
+      return parsed && parsed.result ? parsed.result : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function dropPersistedLastResult(key) {
+    return fsp.rm(resultFilePath(key), { force: true }).catch(() => {});
+  }
   /** 配置存取串行化锁(防并发保存丢更新)。 */
   let storeChain = Promise.resolve();
 
@@ -304,6 +345,7 @@ export function apply(ctx) {
       await entry.pool.end().catch(() => {});
     }
     lastResults.delete(key); // 删配置即清最近结果
+    dropPersistedLastResult(key);
     return { ok: true };
   }
 
@@ -388,7 +430,8 @@ export function apply(ctx) {
       let payload;
       if (Array.isArray(raw)) payload = { kind: 'multi', parts: raw.map(shapeResult) };
       else payload = { kind: 'single', ...shapeResult(raw) };
-      lastResults.set(key, payload); // 记忆最近一次结果(切页签/工作区/刷新不丢)
+      lastResults.set(key, payload); // L1 内存
+      persistLastResult(key, payload); // L2 落盘(重启 dsh 也不丢)
       return { ok: true, ...payload };
     } catch (err) {
       throw new DbError(friendlyPgError(err));
@@ -398,8 +441,12 @@ export function apply(ctx) {
   /** 取该项目最近一次执行结果(无则 null)。 */
   async function handleResultLast(body) {
     const key = await scopeKeyOf(body);
-    const saved = lastResults.get(key) || null;
-    return { ok: true, result: saved };
+    const cached = lastResults.get(key);
+    if (cached) return { ok: true, result: cached };
+    // L1 未命中(如 dsh 刚重启) → 读 L2 落盘并回填内存
+    const persisted = await readPersistedLastResult(key);
+    if (persisted) lastResults.set(key, persisted);
+    return { ok: true, result: persisted };
   }
 
   // ---- 路由与信任栅栏(与 file-git-explorer 同款) ----
