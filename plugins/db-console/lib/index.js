@@ -14,6 +14,7 @@
  *   POST /dbc/api/disconnect     { root? } → 关池
  *   POST /dbc/api/schema         { root? } → information_schema 内省整树
  *   POST /dbc/api/query          { root?, sql } → 原样执行(不拦截), 行集截断返回
+ *   POST /dbc/api/result.last    { root? } → 该项目最近一次执行结果(Host 内存)
  *
  * 隔离口径(CONTEXT.md § db-console): 隔离键 = 会话工作区向上找到的第一个
  * .git 所在目录(仓库根), 无仓库退化为 cwd 本身 —— 与 file-git-explorer 的
@@ -141,6 +142,9 @@ export function apply(ctx) {
   const scopeKeyCache = new Map();
   /** connect 去重: scopeKey → Promise */
   const connecting = new Map();
+  /** 每项目最近一次执行结果(内存, 随进程常驻): scopeKey → 展示结构。
+   *  放 Host 而非浏览器 localStorage —— 无大小顾虑, 切工作区/刷新浏览器都不丢。 */
+  const lastResults = new Map();
   /** 配置存取串行化锁(防并发保存丢更新)。 */
   let storeChain = Promise.resolve();
 
@@ -299,6 +303,7 @@ export function apply(ctx) {
       pools.delete(key);
       await entry.pool.end().catch(() => {});
     }
+    lastResults.delete(key); // 删配置即清最近结果
     return { ok: true };
   }
 
@@ -380,13 +385,21 @@ export function apply(ctx) {
     try {
       const raw = await pool.query(sql);
       // 多语句(simple query protocol)返回数组; 展示层逐段渲染
-      if (Array.isArray(raw)) {
-        return { ok: true, kind: 'multi', parts: raw.map(shapeResult) };
-      }
-      return { ok: true, ...shapeResult(raw) };
+      let payload;
+      if (Array.isArray(raw)) payload = { kind: 'multi', parts: raw.map(shapeResult) };
+      else payload = { kind: 'single', ...shapeResult(raw) };
+      lastResults.set(key, payload); // 记忆最近一次结果(切页签/工作区/刷新不丢)
+      return { ok: true, ...payload };
     } catch (err) {
       throw new DbError(friendlyPgError(err));
     }
+  }
+
+  /** 取该项目最近一次执行结果(无则 null)。 */
+  async function handleResultLast(body) {
+    const key = await scopeKeyOf(body);
+    const saved = lastResults.get(key) || null;
+    return { ok: true, result: saved };
   }
 
   // ---- 路由与信任栅栏(与 file-git-explorer 同款) ----
@@ -400,6 +413,7 @@ export function apply(ctx) {
     disconnect: handleDisconnect,
     schema: handleSchema,
     query: handleQuery,
+    'result.last': handleResultLast,
   };
 
   function isTrustedRequest(req) {
@@ -505,5 +519,6 @@ export function apply(ctx) {
       entry.pool.end().catch(() => {});
     }
     pools.clear();
+    lastResults.clear();
   });
 }
