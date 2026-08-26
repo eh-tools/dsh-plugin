@@ -96,7 +96,7 @@ window.__ModuleLoader__.load({
         '.dbc-body{flex:1;display:flex;min-height:0;}' +
         // schema 树面板 —— 编辑器同款圆角卡片(specific-input-major + 细边 + lv2 影)
         '.dbc-side{width:256px;flex:none;display:flex;flex-direction:column;min-height:0;' +
-        'margin:10px 0 10px 10px;background:var(--dsw-specific-input-major);' +
+        'margin:10px 0 8px 10px;background:var(--dsw-specific-input-major);' +
         'border:1px solid var(--dsw-alias-border-l2-darkmode-thin);border-radius:14px;' +
         'box-shadow:var(--dsw-shadow-lv2);overflow:hidden;}' +
         '.dbc-side-head{flex:none;height:30px;display:flex;align-items:center;justify-content:space-between;' +
@@ -124,7 +124,7 @@ window.__ModuleLoader__.load({
         // 会按内容自撑, 长 SQL 直接把页面拉成超长
         '.dbc-editor{flex:none;display:flex;flex-direction:column;' +
         'height:clamp(170px, 32vh, 320px);' +
-        'margin:10px 10px 0;background:var(--dsw-specific-input-major);' +
+        'margin:10px 10px 8px;background:var(--dsw-specific-input-major);' +
         'border:1px solid var(--dsw-alias-border-l2-darkmode-thin);border-radius:14px;' +
         'box-shadow:var(--dsw-shadow-lv2);overflow:hidden;transition:border-color .12s var(--ds-ease-in-out);}' +
         '.dbc-editor:focus-within{border-color:var(--dsw-alias-state-business-primary);}' +
@@ -155,7 +155,7 @@ window.__ModuleLoader__.load({
         '.dbc-cmp .k{color:var(--dsw-alias-label-caption);font-size:11px;}' +
         // 结果面板
         '.dbc-results{flex:1;min-height:120px;display:flex;flex-direction:column;gap:8px;overflow:auto;' +
-        'margin:10px;padding:10px 12px;background:var(--dsw-alias-bg-base);' +
+        'margin:0 10px 8px;padding:8px 12px;background:var(--dsw-alias-bg-base);' +
         'border:1px solid var(--dsw-alias-border-l1);border-radius:12px;}' +
         '.dbc-rstat{font:var(--dsw-font-xxs-12);color:var(--dsw-alias-label-secondary);}' +
         '.dbc-gridwrap{overflow:auto;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;max-height:300px;}' +
@@ -746,13 +746,20 @@ window.__ModuleLoader__.load({
         }
 
         // 首次装载: 拉配置; 若 host 侧已连接则直接进入工作台
+        // hydratingRef: 会话/工作区切换后、回放完成前, 禁止把上一项目的
+        // 内存状态写进新键(防串染)。
+        var hydratingRef = React.useRef(true);
         React.useEffect(
           function () {
+            hydratingRef.current = true; // 换了 cwd → 一切记忆待回放
             var alive = true;
             api('config.get', { root: sessionCwd || '' })
               .then(function (res) {
                 if (!alive || !res || !res.ok) {
-                  if (alive) setLoadErr((res && res.error) || '加载失败');
+                  if (alive) {
+                    setLoadErr((res && res.error) || '加载失败');
+                    hydratingRef.current = false;
+                  }
                   return;
                 }
                 setCfg({
@@ -761,22 +768,29 @@ window.__ModuleLoader__.load({
                   maskedUrl: res.maskedUrl,
                   summary: res.summary,
                 });
-                // 工作区记忆回放(SQL 草稿 / schema 树 / 最近结果)
+                // 工作区记忆回放(SQL 草稿 / schema 树; 结果走 Host 记忆)
                 if (res.key) {
                   var sv = dbcLoadJSON(res.key, 'sql');
                   if (typeof sv === 'string' && sv !== '') setSql(sv);
+                  else setSql('-- Ctrl/Cmd+Enter 执行\nSELECT 1;\n');
                   var sc = dbcLoadJSON(res.key, 'schema');
                   if (Array.isArray(sc) && sc.length) setSchema(sc);
-                  var rs = dbcLoadJSON(res.key, 'result');
-                  if (rs && Array.isArray(rs.parts)) setResult(rs);
+                  else setSchema(null);
+                } else {
+                  setSchema(null);
                 }
                 if (res.connected && res.db) {
                   setConn('open');
                   setDbInfo(res.db);
+                  loadLastResult();
                 }
+                hydratingRef.current = false;
               })
               .catch(function (e) {
-                if (alive) setLoadErr(String(e && e.message));
+                if (alive) {
+                  setLoadErr(String(e && e.message));
+                  hydratingRef.current = false;
+                }
               });
             return function () {
               alive = false;
@@ -784,6 +798,17 @@ window.__ModuleLoader__.load({
           },
           [sessionCwd],
         );
+
+        /** 取 Host 记忆的最近一次执行结果(连接成功/装载即连时调用)。 */
+        function loadLastResult() {
+          api('result.last', { root: sessionCwd || '' })
+            .then(function (res) {
+              if (res && res.ok && res.result && Array.isArray(res.result.parts)) {
+                setResult(res.result);
+              }
+            })
+            .catch(function () {});
+        }
 
         function loadSchema() {
           setSchemaBusy(true);
@@ -810,6 +835,7 @@ window.__ModuleLoader__.load({
                 setDbInfo(res.db);
                 setEditMode(false);
                 loadSchema();
+                loadLastResult(); // Host 记忆的最近结果(重连不丢)
               } else {
                 setConn('idle');
                 setConnErr((res && res.error) || '连接失败');
@@ -1064,31 +1090,22 @@ window.__ModuleLoader__.load({
           };
         }, []);
 
-        // 工作区记忆写回(有隔离键才写; result 截断 256KB)
+        // 工作区记忆写回(有隔离键且回放完成后才写, 防跨项目串染;
+        // 结果不进 localStorage —— 走 Host 内存 result.last)
         var cfgKey = cfg ? cfg.key : null;
         React.useEffect(
           function () {
-            if (!cfgKey) return;
+            if (!cfgKey || hydratingRef.current) return;
             dbcSave(cfgKey, 'sql', sql);
           },
           [cfgKey, sql],
         );
         React.useEffect(
           function () {
-            if (!cfgKey || !schema) return;
+            if (!cfgKey || hydratingRef.current || !schema) return;
             dbcSave(cfgKey, 'schema', schema);
           },
           [cfgKey, schema],
-        );
-        React.useEffect(
-          function () {
-            if (!cfgKey || !result || result.pending) return;
-            try {
-              if (JSON.stringify(result).length <= 262144) dbcSave(cfgKey, 'result', result);
-              else dbcSave(cfgKey, 'result', null);
-            } catch (e) {}
-          },
-          [cfgKey, result],
         );
 
         // 卸载清理 toast 定时器
