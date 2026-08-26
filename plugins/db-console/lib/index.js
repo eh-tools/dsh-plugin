@@ -14,7 +14,6 @@
  *   POST /dbc/api/disconnect     { root? } → 关池
  *   POST /dbc/api/schema         { root? } → information_schema 内省整树
  *   POST /dbc/api/query          { root?, sql } → 原样执行(不拦截), 行集截断返回
- *   POST /dbc/api/result.last    { root? } → 该项目最近一次执行结果(Host 内存)
  *
  * 隔离口径(CONTEXT.md § db-console): 隔离键 = 会话工作区向上找到的第一个
  * .git 所在目录(仓库根), 无仓库退化为 cwd 本身 —— 与 file-git-explorer 的
@@ -40,7 +39,6 @@ import {
   groupSchemaTree,
   truncateRows,
   resolveScopeKey,
-  safeFileName,
 } from './pg.js';
 
 const { Pool } = pgPkg;
@@ -143,49 +141,6 @@ export function apply(ctx) {
   const scopeKeyCache = new Map();
   /** connect 去重: scopeKey → Promise */
   const connecting = new Map();
-  /** 每项目最近一次执行结果: scopeKey → 展示结构。
-   *  L1 = 进程内存(热路径), L2 = ~/.dsh/storages/db-console-results/ 落盘
-   *  (重启 dsh / 刷新浏览器 / 切工作区都不丢)。写盘异步串行, 失败仅告警。 */
-  const lastResults = new Map();
-  /** 结果落盘串行化锁。 */
-  let resultChain = Promise.resolve();
-
-  function resultFilePath(key) {
-    return path.join(dshHomeDir(), 'storages', 'db-console-results', safeFileName(key));
-  }
-
-  function persistLastResult(key, payload) {
-    resultChain = resultChain.then(async () => {
-      try {
-        const file = resultFilePath(key);
-        await fsp.mkdir(path.dirname(file), { recursive: true });
-        const tmp = file + '.tmp.' + process.pid;
-        await fsp.writeFile(
-          tmp,
-          JSON.stringify({ key, savedAt: Date.now(), result: payload }),
-          'utf8',
-        );
-        await fsp.rename(tmp, file);
-      } catch (err) {
-        console.error('db-console: persist last result failed', err && err.message);
-      }
-    });
-    return resultChain;
-  }
-
-  async function readPersistedLastResult(key) {
-    try {
-      const raw = await fsp.readFile(resultFilePath(key), 'utf8');
-      const parsed = JSON.parse(raw);
-      return parsed && parsed.result ? parsed.result : null;
-    } catch {
-      return null;
-    }
-  }
-
-  function dropPersistedLastResult(key) {
-    return fsp.rm(resultFilePath(key), { force: true }).catch(() => {});
-  }
   /** 配置存取串行化锁(防并发保存丢更新)。 */
   let storeChain = Promise.resolve();
 
@@ -344,8 +299,6 @@ export function apply(ctx) {
       pools.delete(key);
       await entry.pool.end().catch(() => {});
     }
-    lastResults.delete(key); // 删配置即清最近结果
-    dropPersistedLastResult(key);
     return { ok: true };
   }
 
@@ -427,26 +380,11 @@ export function apply(ctx) {
     try {
       const raw = await pool.query(sql);
       // 多语句(simple query protocol)返回数组; 展示层逐段渲染
-      let payload;
-      if (Array.isArray(raw)) payload = { kind: 'multi', parts: raw.map(shapeResult) };
-      else payload = { kind: 'single', ...shapeResult(raw) };
-      lastResults.set(key, payload); // L1 内存
-      persistLastResult(key, payload); // L2 落盘(重启 dsh 也不丢)
-      return { ok: true, ...payload };
+      if (Array.isArray(raw)) return { ok: true, kind: 'multi', parts: raw.map(shapeResult) };
+      return { ok: true, ...shapeResult(raw) };
     } catch (err) {
       throw new DbError(friendlyPgError(err));
     }
-  }
-
-  /** 取该项目最近一次执行结果(无则 null)。 */
-  async function handleResultLast(body) {
-    const key = await scopeKeyOf(body);
-    const cached = lastResults.get(key);
-    if (cached) return { ok: true, result: cached };
-    // L1 未命中(如 dsh 刚重启) → 读 L2 落盘并回填内存
-    const persisted = await readPersistedLastResult(key);
-    if (persisted) lastResults.set(key, persisted);
-    return { ok: true, result: persisted };
   }
 
   // ---- 路由与信任栅栏(与 file-git-explorer 同款) ----
@@ -460,7 +398,6 @@ export function apply(ctx) {
     disconnect: handleDisconnect,
     schema: handleSchema,
     query: handleQuery,
-    'result.last': handleResultLast,
   };
 
   function isTrustedRequest(req) {
@@ -566,6 +503,5 @@ export function apply(ctx) {
       entry.pool.end().catch(() => {});
     }
     pools.clear();
-    lastResults.clear();
   });
 }
