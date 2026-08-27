@@ -1692,8 +1692,10 @@ window.__ModuleLoader__.load({
           setValue(h[idx]);
         };
 
-        // 运行状态点: 绿色=运行中/启动中, 红色=已停止(默认)。渲染在输入框右缘。
+        // 运行状态点: 绿色=运行中/启动中, 红色=已停止。渲染在输入框右缘;
+        // 仅在有意义时显示 —— 空闲(无 job)或输入框为空时不显示任何点。
         var runActive = starting || jobBusy;
+        var showDot = runActive || (!!job && value.trim() !== '');
 
         var tailText =
           outText + (errText !== '' ? (outText !== '' ? '\n' : '') + '[stderr]\n' + errText : '');
@@ -1777,10 +1779,12 @@ window.__ModuleLoader__.load({
                   }
                 },
               }),
-              // 运行状态点: 输入框右缘内部, pointer-events 穿透不挡输入
-              React.createElement('span', {
-                className: 'fge-shell-dot' + (runActive ? ' fge-shell-dot-run' : ''),
-              }),
+              // 运行状态点: 输入框右缘内部, pointer-events 穿透不挡输入; 空闲/空输入不渲染
+              showDot
+                ? React.createElement('span', {
+                    className: 'fge-shell-dot' + (runActive ? ' fge-shell-dot-run' : ''),
+                  })
+                : null,
             ),
             React.createElement(
               'button',
