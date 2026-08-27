@@ -190,7 +190,8 @@ window.__ModuleLoader__.load({
         '.fge-msg{margin:0 0 8px;padding:6px 8px;background:var(--dsw-alias-bg-layer-2);border-radius:6px;' +
         'white-space:pre-wrap;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-primary);font-family:inherit;}' +
         // ---- shell 行(shell bar) ----
-        '.fge-shell-row{display:flex;align-items:center;gap:4px;padding:4px 6px;border-top:1px solid var(--dsw-alias-border-l1);flex:none;}' +
+        '.fge-shell-row{display:flex;align-items:center;gap:3px;padding:4px 6px;border-top:1px solid var(--dsw-alias-border-l1);flex:none;}' +
+        '.fge-shell-row .fge-btn{padding:2px 4px;}' + // 行内按钮紧凑化, 给输入框让宽
         '.fge-shell-input{flex:1;min-width:0;background:transparent;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;' +
         'padding:3px 8px;font-size:12px;color:var(--dsw-alias-label-primary);' +
         'font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}' +
@@ -201,19 +202,17 @@ window.__ModuleLoader__.load({
         // 输入框末端的运行状态点: 红色=已停止(默认) 绿色=运行中/启动中; 绝对定位于
         // 输入框右缘, pointer-events 穿透, 不遮挡文本输入(输入框右侧留出点位)。
         '.fge-shell-inputwrap{position:relative;flex:1;min-width:0;display:flex;align-items:center;}' +
-        '.fge-shell-inputwrap .fge-shell-input{flex:1;min-width:0;width:100%;box-sizing:border-box;padding-right:22px;}' +
-        '.fge-shell-dot{position:absolute;right:9px;top:50%;transform:translateY(-50%);' +
+        '.fge-shell-inputwrap .fge-shell-input{flex:1;min-width:0;width:100%;box-sizing:border-box;padding-right:20px;}' +
+        '.fge-shell-dot{position:absolute;right:8px;top:50%;transform:translateY(-50%);' +
         'width:8px;height:8px;border-radius:50%;pointer-events:none;' +
         'background:var(--dsw-alias-state-error-primary);}' +
         '.fge-shell-dot.fge-shell-dot-run{background:var(--dsw-alias-state-success-primary);}' +
-        // 输出窗头部: 收起的开关(状态点已进输入框, 输出窗自带收起入口)
-        '.fge-shell-tailhead{flex:none;display:flex;align-items:center;gap:4px;padding:2px 6px 2px 8px;' +
-        'border-top:1px solid var(--dsw-alias-border-l1);font-size:10px;' +
-        'color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));}' +
-        '.fge-shell-taillabel{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
-        '.fge-shell-tail{flex:none;max-height:150px;overflow:auto;margin:0;padding:4px 8px;border-top:1px solid var(--dsw-alias-border-l1);' +
+        // 输出窗: 常驻显示, 默认一行高(自动滚底显示最新一行); 点击行首箭头展开完整
+        '.fge-shell-tail{flex:none;max-height:1.6em;overflow:hidden;margin:0;padding:4px 8px;' +
+        'border-top:1px solid var(--dsw-alias-border-l1);' +
         'font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:1.5;' +
-        'white-space:pre-wrap;word-break:break-all;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-1);}';
+        'white-space:pre-wrap;word-break:break-all;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-1);}' +
+        '.fge-shell-tail.fge-shell-tail-open{max-height:150px;overflow:auto;}';
 
       // ---- 文件编辑(textarea)与树内写操作样式 ----
       STYLE_CSS +=
@@ -1530,7 +1529,7 @@ window.__ModuleLoader__.load({
               .then(function (r) {
                 if (dead || !r || !r.ok || !r.job) return;
                 setJob(r.job);
-                setOpen(true);
+                // 输出窗常驻一行显示, 认领任务不自动展开
                 // 认领已终结的任务时轮询不会跑, 单次拉尾部输出填充
                 if (r.job.status !== 'running' && r.job.status !== 'stopping') {
                   // 终态任务: 把命令文本放回输入框(与「执行后命令保留不清空」一致),
@@ -1641,7 +1640,6 @@ window.__ModuleLoader__.load({
                             : '启动失败';
                 setOutText('⚠ 启动失败：' + txt);
                 setErrText('');
-                setOpen(true);
                 return;
               }
               histRef.current = pushHist(histRef.current, cmd);
@@ -1652,13 +1650,11 @@ window.__ModuleLoader__.load({
               setOutText('');
               setErrText('');
               setJob(r.job);
-              setOpen(true);
             })
             .catch(function () {
               setStarting(false);
               setOutText('⚠ 启动失败：网络错误');
               setErrText('');
-              setOpen(true);
             });
         };
 
@@ -1705,37 +1701,30 @@ window.__ModuleLoader__.load({
         return React.createElement(
           React.Fragment,
           null,
-          open
-            ? React.createElement(
-                React.Fragment,
-                null,
-                // 输出窗头部: 标签 + 收起按钮(状态点已进输入框, 输出窗自带开关)
-                React.createElement(
-                  'div',
-                  { className: 'fge-shell-tailhead' },
-                  React.createElement('span', { className: 'fge-shell-taillabel' }, '输出'),
-                  React.createElement(
-                    'button',
-                    {
-                      className: 'fge-btn',
-                      title: '收起输出',
-                      onClick: function () {
-                        setOpen(false);
-                      },
-                    },
-                    React.createElement(CaretIcon, { open: false }),
-                  ),
-                ),
-                React.createElement(
-                  'pre',
-                  { className: 'fge-shell-tail', ref: preRef },
-                  tailText !== '' ? tailText : '(尚无输出)',
-                ),
-              )
-            : null,
+          // 输出窗常驻显示, 默认一行高(自动滚底显示最新一行), 箭头展开完整
+          React.createElement(
+            'pre',
+            {
+              className: 'fge-shell-tail' + (open ? ' fge-shell-tail-open' : ''),
+              ref: preRef,
+            },
+            tailText !== '' ? tailText : '(尚无输出)',
+          ),
           React.createElement(
             'div',
             { className: 'fge-shell-row' },
+            // 行首小箭头: 一行 ↔ 完整显示输出窗(执行按钮不再控制显示)
+            React.createElement(
+              'button',
+              {
+                className: 'fge-btn' + (open ? ' fge-btn-active' : ''),
+                title: open ? '收起输出为一行' : '展开完整输出',
+                onClick: function () {
+                  setOpen(!open);
+                },
+              },
+              React.createElement(CaretIcon, { open: open }),
+            ),
             React.createElement(
               'div',
               { className: 'fge-shell-inputwrap' },
@@ -1750,8 +1739,8 @@ window.__ModuleLoader__.load({
                   if (busy) return; // 运行中只读, 防御性兜底
                   setValue(e.target.value);
                   histIdxRef.current = null;
-                  // 修改命令 = 作废上一任务: 状态点回到红色(默认), 输出窗收起
-                  // (输出内容保留可查, 点头部箭头可再展开)
+                  // 修改命令 = 作废上一任务: 状态点回到红色(默认), 输出窗回到一行
+                  // (输出内容保留可查, 行首箭头可再展开)
                   setJob(null);
                   setOpen(false);
                 },
