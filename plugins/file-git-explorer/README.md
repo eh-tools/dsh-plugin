@@ -1,6 +1,6 @@
 # dsh-file-git-explorer
 
-左右树浏览插件 —— 左侧**文件树**(可见 / 隐藏 / 忽略三区, 根 = 当前会话工作区, 支持按名搜索) + 右侧 **git 树**(当前分支只读下拉、工作区变更列表、悬浮 diff、查看分支的**提交历史**)。两个面板夹在会话 header 与 composer card 之间, 可左右拉伸、可收起为细条、图钉锁定, 不覆盖主对话区。
+左右树浏览插件 —— 左侧**文件树**(可见 / 隐藏 / 忽略三区, 根 = 当前会话工作区, 支持按名搜索, 底部带 **shell 行**: ✓ 执行 / ✕ 停止的单槽后台命令行) + 右侧 **git 树**(当前分支只读下拉、工作区变更列表、悬浮 diff、查看分支的**提交历史**)。两个面板夹在会话 header 与 composer card 之间, 可左右拉伸、可收起为细条、图钉锁定, 不覆盖主对话区。
 
 静态双半插件(host + client bundle), 随 web profile 启动自动加载。
 
@@ -48,6 +48,15 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer
 - 点文件同时触发**联动**: 右侧 git 树若存在该文件 diff, 滚动定位并闪现高亮; **不自动打开 diff**; 无 diff 则无操作。
 - 目录单击 = 展开 / 折叠切换。
 
+#### 文件编辑与树内写操作
+
+- **编辑**: 内容悬浮面板头部的「编辑」把高亮预览切换为**纯 textarea**(只读视图保持原样, 不引入编辑器依赖)。**⌘S / Ctrl+S** 保存, **Esc** 退出编辑; 未保存时标题带 `•` 点并给出确认(关闭 / 退出编辑均会拦截询问); Tab 插入两个空格。
+- **保存的并发保护**: 读取时返回 `mtimeMs`, 保存时回传做**乐观校验** —— 磁盘已被外部改动(如 agent 同时在写)时**拒绝保存并提示冲突**, 可「重新加载磁盘版」或「仍要覆盖写入」(Shift+⌘S 亦可强制)。内容上限 1 MiB 与预览对称, 超出时保存按钮禁用并提示。
+- **保存后自动刷新右侧 git 状态**(变更列表 / 徽标随之更新); 树内结构变化(新建 / 重命名 / 删除)则**局部重载受影响目录**, 不打断展开状态。
+- **新建**: 每分区头部 `+` 在当前分区根新建; 目录行的悬停 `+` 在其内新建(自动展开)。名称**以 `/` 结尾 = 建目录**, 可写 `a/b/c.ts` 嵌套(父目录自动补建); 文件名重名报「同名条目已存在」。
+- **重命名 / 删除**: 行悬停出现 `✎` / `✕`; 重命名行内输入、Enter 确认; 删除先经确认框(**目录 = 连同全部内容递归删除, 不可恢复**), 非空目录在 host 侧同样要求显式 `recursive` 才放行。
+- 已打开的内容面板**跟随重命名**(含祖先目录改名)并**在删除时自动关闭**; 所有写操作拒绝触及 `.git` 段(路径逐段校验)。
+
 #### 文件搜索(name search)
 
 - 头部**放大镜**展开搜索框, 输入防抖 ~150ms 即时按名检索——大小写不敏感子串匹配
@@ -58,6 +67,23 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer
   点击**目录**命中 → 关闭搜索并在对应分区树内逐级 reveal 展开到目标并高亮
   (混合链如 `src/.env` 在该区不可达时, 退化为高亮可达的最深祖先)。
 - 非 git 工作区回退 fs 递归扫描(不跟符号链接, 无忽略区); 会话切根自动清空搜索态。
+
+#### shell 行(shell bar)
+
+左树底部常驻的命令执行行: 输入框 + **✓ 执行** / **✕ 停止**两钮(单色线稿 SVG), 语义见 CONTEXT.md「shell 行 / 单槽 / 尾部输出窗」。
+
+- **执行**: ✓ 或 **Enter**(IME 组合期不触发; `preventDefault + stopPropagation` 隔离应用层按键链)。
+  命令在**会话工作区**(与文件树同根)以**用户默认 shell** 解释——POSIX 取 `$SHELL`(不可用回退 `/bin/sh`), Windows 取 `pwsh` 回退 `powershell`; 解析结果按进程缓存。命令串 trim 后非空、≤4000 字符, 越界拒绝(`invalid-command`)。
+- **不消失**: 执行后命令文本保留在输入框(不清空); ↑/↓ 在历史间导航(相邻去重, 上限 100 条),
+  历史随仓库根持久化(`fge-cache-v1` 的 `shellHistory` 字段)。Esc = 输入框失焦(stopPropagation, 不波及常驻 Esc 监听)。
+- **挂后台任务**: 启动即注册为 DSH 后台任务(kind `shell`, label = 命令原文), 出现在各会话头部的任务弹层并计入徽标;
+  无主任务 —— 完成**不通知模型**。GUI 任务列表只读, 故 ✕ 是人停止任务的唯一入口
+  (整棵进程树 TERM → 3s → KILL)。
+- **单槽(按工作区)**: 每个工作区各自至多一条 running/stopping(宿主侧按 root 记账, 跨刷新 / 多标签成立;
+  不同工作区可并行各跑各的); 切工作区只显示本区任务 —— 刷新后自动认领本区仍在跑的任务(running 态 + ✕ 照常可停);
+  运行中输入框可编辑但 ✓ 置灰; ✕ 只停当前工作区那条; 无运行时长上限; 终态槽超上限按 FIFO 淘汰(运行中永不淘汰)。
+- **尾部输出窗**: 状态行(`● 运行中… / ✓ 退出 N / ■ 已停止(SIGTERM) / ⚠ 错误`)旁可展开的滚动区,
+  运行中每 ~1s 拉一次增量(offset 制非消费式读), 显示尾部各流 ~16K 字符, 自动滚底; stderr 以 `[stderr]` 段落区分。
 
 ### 右侧 git 树
 
@@ -84,18 +110,33 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer
 
 信任栅栏与 `dsh-ds-balance` 同款: 仅回环地址 + `x-dsh-plugin: 1` 头 + POST。所有路径做防穿越校验(文件树/file 只能落在请求 `root` 之下, `root`/`repoRoot` 必须是绝对路径)。
 
-| 路由                   | 请求体                                   | 返回                                                         |
-| ---------------------- | ---------------------------------------- | ------------------------------------------------------------ |
-| `POST /fge/api/info`   | `{root?}`                                | `{cwd(=root), repoRoot, branch, head}`                       |
-| `POST /fge/api/tree`   | `{root?, path, mode, reveal}`            | 目录三区条目 `[{name, rel, type, dot, ignored, subIgnored}]` |
-| `POST /fge/api/status` | `{root?, repoRoot}`                      | `{current, head, branches[], changes[]}`                     |
-| `POST /fge/api/diff`   | `{root?, repoRoot, path, status, from}`  | `{kind: 'diff'\|'untracked', text, ...}`                     |
-| `POST /fge/api/file`   | `{root?, path}`                          | `{text, binary, truncated, size}`                            |
-| `POST /fge/api/search` | `{root?, query}`                         | `{matches[{rel, type, zone, nameHit}], truncated}`           |
-| `POST /fge/api/log`    | `{root?, repoRoot, ref?, skip?, limit?}` | `{ref, head, commits[{hash, short, author, at, subject}]}`   |
-| `POST /fge/api/show`   | `{root?, repoRoot, hash, path?}`         | `{kind: 'commit'\|'merge'\|'diff', message, files[], text}`  |
+| 路由                        | 请求体                                     | 返回                                                               |
+| --------------------------- | ------------------------------------------ | ------------------------------------------------------------------ |
+| `POST /fge/api/info`        | `{root?}`                                  | `{cwd(=root), repoRoot, branch, head}`                             |
+| `POST /fge/api/tree`        | `{root?, path, mode, reveal}`              | 目录三区条目 `[{name, rel, type, dot, ignored, subIgnored}]`       |
+| `POST /fge/api/status`      | `{root?, repoRoot}`                        | `{current, head, branches[], changes[]}`                           |
+| `POST /fge/api/diff`        | `{root?, repoRoot, path, status, from}`    | `{kind: 'diff'\|'untracked', text, ...}`                           |
+| `POST /fge/api/file`        | `{root?, path}`                            | `{text, binary, truncated, size, mtimeMs}`(mtimeMs 供保存校验)     |
+| `POST /fge/api/search`      | `{root?, query}`                           | `{matches[{rel, type, zone, nameHit}], truncated}`                 |
+| `POST /fge/api/log`         | `{root?, repoRoot, ref?, skip?, limit?}`   | `{ref, head, commits[{hash, short, author, at, subject}]}`         |
+| `POST /fge/api/show`        | `{root?, repoRoot, hash, path?}`           | `{kind: 'commit'\|'merge'\|'diff', message, files[], text}`        |
+| `POST /fge/api/save`        | `{root?, path, content, mtimeMs?, force?}` | `{size, mtimeMs}`; conflict / too-large / invalid-path 等拒绝      |
+| `POST /fge/api/create`      | `{root?, path, kind: 'file'\|'dir'}`       | `{kind, size, mtimeMs}`; 父目录自动补建, 同名 exists 拒绝          |
+| `POST /fge/api/rename`      | `{root?, path, newName}`                   | `{}`; 同目录重命名, 目标已存在 exists / 非法名 invalid-name 拒绝   |
+| `POST /fge/api/remove`      | `{root?, path, recursive?}`                | `{}`; 目录需显式 recursive=true(否则非空 not-empty 拒绝)           |
+| `POST /fge/api/shellStart`  | `{root?, command}`                         | `{job{id, label, status, ...}}`; busy / invalid-command 等拒绝     |
+| `POST /fge/api/shellState`  | `{root?}`                                  | `{job \| null}`(本工作区槽, GUI 刷新恢复用)                        |
+| `POST /fge/api/shellOutput` | `{root?, outFrom?, errFrom?}`              | `{job, done, out{text,next,base,lossy}, err{...}}`(绝对字符位增量) |
+| `POST /fge/api/shellStop`   | `{root?}`                                  | `{stopped, job}`(TERM→3s→KILL 整树, 只作用本工作区)                |
 
-git 一律经 `subprocess` 服务执行(argv 数组, 无 shell)。
+git 一律经 `subprocess` 服务执行(argv 数组, 无 shell)。shell 行是唯一经用户 shell 解释命令串的入口
+(解释器解析见 `lib/shell.js`, 同样只服务栅栏之后的本机请求), 启动即挂 `ctx.jobs`(kind `shell`, 无主任务)。
+
+写类接口(save/create/rename/remove)的约束:
+
+- **路径逐段白校验**: 每段必须通过 `validSegmentName`(拒 `.` / `..` / `.git`、`/ \ : * ? " < > |`、NUL、首尾空格、超 255 字符; 空段如 `a//b` 同样拒绝), 再经 `resolveWithin` 防穿越 —— `.git` 段在写类接口上不可建 / 不可写 / 不可改 / 不可删。
+- **save**: `content` 必须为字符串且 ≤1 MiB(`too-large`); 携带 `mtimeMs` 时做乐观并发校验, 磁盘 mtime 差 >1ms 且未 `force` → `conflict`(附磁盘现状, 客户端提示重载或强制覆盖)。save 路由单独放宽请求体上限(3 MiB, 覆盖 JSON 转义最坏 2 倍膨胀), 其余路由仍为 256 KiB。
+- **create**: 父目录自动补建(`mkdir -p` 语义); 目标已存在 → `exists`。**rename**: 只允许单段合法名、同目录内; 目标占用 → `exists`。**remove**: 文件 / 符号链接直接删; 目录必须显式 `recursive: true`(`rm -rf` 语义), 否则非空目录 `not-empty` 拒绝; 根路径(`rel === ''`)不可删。
 
 ## 实现事实(已用真实仓库实测钉死)
 
@@ -115,11 +156,13 @@ git 一律经 `subprocess` 服务执行(argv 数组, 无 shell)。
 
 ```bash
 node tests/git.test.mjs    # 纯函数层单测(status 解析 / 三区划分 / 防穿越 / diff 参数)
+node tests/shell.test.mjs  # shell 行纯函数层单测(解释器解析 / 历史 / 尾部窗口数学)
+node tests/edit.test.mjs   # 写类接口单测(save 并发冲突 / create / rename / remove, 临时目录)
 node tests/verify.mjs      # host 集成冒烟(真实 git, 需在仓库内运行)
 eslint .                   # 仓库统一 lint(client bundle 按惯例忽略)
 ```
 
-> 两者均已接入根 `package.json` 的 `test` / `check` 与 `justfile test`。
+> 三者均已接入根 `package.json` 的 `test` / `check` 与 `justfile test`。
 
 ## 术语
 

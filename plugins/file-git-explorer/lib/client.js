@@ -190,7 +190,59 @@ window.__ModuleLoader__.load({
         '.fge-cfile:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);}' +
         '.fge-cfile-path{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;}' +
         '.fge-msg{margin:0 0 8px;padding:6px 8px;background:var(--dsw-alias-bg-layer-2);border-radius:6px;' +
-        'white-space:pre-wrap;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-primary);font-family:inherit;}';
+        'white-space:pre-wrap;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-primary);font-family:inherit;}' +
+        // ---- shell 行(shell bar) ----
+        '.fge-shell-row{display:flex;align-items:center;gap:4px;padding:4px 8px;border-top:1px solid var(--dsw-alias-border-l1);flex:none;}' +
+        '.fge-shell-input{flex:1;min-width:0;background:transparent;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;' +
+        'padding:3px 8px;font-size:12px;color:var(--dsw-alias-label-primary);' +
+        'font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}' +
+        '.fge-shell-input:focus{outline:none;border-color:var(--dsw-alias-brand-primary);}' +
+        '.fge-shell-input::placeholder{color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));}' +
+        '.fge-shell-status{flex:none;font-size:11px;line-height:18px;white-space:nowrap;' +
+        'color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));}' +
+        '.fge-shell-status.fge-shell-run{color:var(--dsw-alias-brand-primary);}' +
+        '.fge-shell-status.fge-shell-ok{color:var(--dsw-alias-state-success-primary);}' +
+        '.fge-shell-status.fge-shell-err{color:#e5484d;}' +
+        '.fge-shell-tail{flex:none;max-height:150px;overflow:auto;margin:0;padding:4px 8px;border-top:1px solid var(--dsw-alias-border-l1);' +
+        'font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:1.5;' +
+        'white-space:pre-wrap;word-break:break-all;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-1);}';
+
+      // ---- 文件编辑(textarea)与树内写操作样式 ----
+      STYLE_CSS +=
+        '.fge-section-head{display:flex;align-items:center;gap:4px;}' +
+        '.fge-section-head-sp{flex:1;min-width:6px;}' +
+        '.fge-headplus{flex:none;display:inline-flex;border:0;background:transparent;color:inherit;cursor:pointer;' +
+        'padding:1px 5px;border-radius:4px;font-size:13px;line-height:1;opacity:.65;font-family:inherit;}' +
+        '.fge-headplus:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-brand-primary);opacity:1;}' +
+        '.fge-rowacts{display:none;margin-left:auto;flex:none;align-items:center;gap:1px;}' +
+        '.fge-node:hover .fge-rowacts,.fge-node:focus-within .fge-rowacts{display:inline-flex;}' +
+        '.fge-rowact{border:0;background:transparent;color:inherit;cursor:pointer;padding:1px 3px;' +
+        'font-size:12px;line-height:1;border-radius:3px;opacity:.55;font-family:inherit;}' +
+        '.fge-node:hover .fge-rowact{opacity:1;}' +
+        '.fge-rowact:hover{color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-layer-2);}' +
+        '.fge-rowact.fge-danger:hover{color:var(--dsw-alias-state-error-primary);}' +
+        '.fge-oprow{display:flex;flex-wrap:wrap;align-items:center;gap:4px;}' +
+        '.fge-opinput{flex:1;min-width:80px;background:var(--dsw-alias-bg-layer-2);' +
+        'border:1px solid color-mix(in srgb,var(--dsw-alias-brand-primary) 45%,transparent);border-radius:6px;' +
+        'color:var(--dsw-alias-label-primary);padding:2px 8px;font-size:12px;outline:none;font-family:inherit;}' +
+        '.fge-opinput::placeholder{color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));}' +
+        '.fge-ophint{flex:none;font-size:10px;color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));white-space:nowrap;}' +
+        '.fge-operr{flex-basis:100%;font-size:11px;line-height:1.35;color:var(--dsw-alias-state-error-primary);padding-left:2px;}' +
+        '.fge-editorcol{flex:1;min-height:0;display:flex;flex-direction:column;}' +
+        '.fge-editbar{flex:none;display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:11px;' +
+        'color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));}' +
+        '.fge-editbar-dirty{color:var(--dsw-alias-state-warn-primary);font-weight:600;}' +
+        '.fge-editbar-saved{color:var(--dsw-alias-state-success-primary);}' +
+        '.fge-textarea{flex:1;min-height:0;width:100%;box-sizing:border-box;background:var(--dsw-alias-bg-base);' +
+        'color:var(--dsw-alias-label-primary);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:8px;' +
+        'font-family:Consolas,Menlo,monospace;font-size:12px;line-height:1.5;white-space:pre;overflow:auto;' +
+        'resize:none;outline:none;tab-size:2;}' +
+        '.fge-textarea:focus{border-color:color-mix(in srgb,var(--dsw-alias-brand-primary) 55%,transparent);}' +
+        '.fge-saveerr{flex:none;margin-bottom:6px;font-size:11px;color:var(--dsw-alias-state-error-primary);}' +
+        '.fge-conflict{flex:none;margin-bottom:6px;padding:6px 8px;border:1px solid ' +
+        'color-mix(in srgb,var(--dsw-alias-state-warn-primary) 45%,transparent);' +
+        'background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 12%,transparent);border-radius:6px;' +
+        'font-size:11px;line-height:1.5;color:var(--dsw-alias-label-primary);}';
       var styleTag = null;
       function ensureStyles() {
         if (styleTag !== null) return;
@@ -244,6 +296,29 @@ window.__ModuleLoader__.load({
           .replace(/'/g, '&#39;');
       }
 
+      // ---- 会话头部 tablist 认领(观测器与几何回退共用) ----
+      // 页面可能存在其他 tablist(设置弹窗等), 以包含「对话」页签者为准;
+      // 都不含时退回第一个。
+      function findSessionTablist() {
+        var lists = [];
+        try {
+          lists = Array.prototype.slice.call(document.querySelectorAll('[role="tablist"]'));
+        } catch (e) {
+          lists = [];
+        }
+        if (!lists.length) return null;
+        function tabsOf(list) {
+          return Array.prototype.slice.call(list.querySelectorAll('[role="tab"]'));
+        }
+        for (var li = 0; li < lists.length; li++) {
+          var hasChat = tabsOf(lists[li]).some(function (t) {
+            return (t.textContent || '').trim() === '对话';
+          });
+          if (hasChat) return lists[li];
+        }
+        return lists[0];
+      }
+
       // ---- 几何: 稳定 data 属性锚点 ----
       // top   = [data-conversation-scroll] 顶部(== header/tablist 边框线)
       // bottom= 滚动容器底边(对话列底, 统一基准):
@@ -254,22 +329,45 @@ window.__ModuleLoader__.load({
       // 对话列宽 = --dsh-chat-content-width(定义在会话根, 滚动容器可继承)
       function measureGeometry() {
         var scrollBody = document.querySelector('[data-conversation-scroll]');
-        if (!scrollBody) return null;
-        var rect = scrollBody.getBoundingClientRect();
-        var top = rect.top;
-        var bottom = rect.bottom;
-        var contentW =
-          parseFloat(getComputedStyle(scrollBody).getPropertyValue('--dsh-chat-content-width')) ||
-          748;
-        var gap = Math.max(0, (rect.width - contentW) / 2);
+        if (scrollBody) {
+          var rect = scrollBody.getBoundingClientRect();
+          var top = rect.top;
+          var bottom = rect.bottom;
+          var contentW =
+            parseFloat(getComputedStyle(scrollBody).getPropertyValue('--dsh-chat-content-width')) ||
+            748;
+          var gap = Math.max(0, (rect.width - contentW) / 2);
+          return {
+            top: top,
+            bottom: bottom,
+            sbLeft: rect.left,
+            sbRight: rect.right,
+            convLeft: rect.left + gap,
+            convRight: rect.right - gap,
+            height: Math.max(0, bottom - top),
+          };
+        }
+        // 非对话视图(轨迹/数据库等页签): 无对话滚动容器。退化为以会话头部
+        // tablist 底缘为顶、视口底为底、tablist 所在列左右缘为横向界 —— 保证
+        // 细条在非对话视图仍可悬停展开(数据库页签下复制文件地址依赖此路径)。
+        // 连 hero 空态(无 tablist)都缺失时维持旧行为返回 null(整组不渲染)。
+        // tablist 认领规则与观测器一致(见 findSessionTablist)。
+        var tabsEl = findSessionTablist();
+        if (!tabsEl) return null;
+        var tr = tabsEl.getBoundingClientRect();
+        if (!tr || (tr.width === 0 && tr.height === 0)) return null;
+        var fbTop = tr.bottom + 6;
+        var fbBottom = window.innerHeight - 12;
+        var fbContentW = 748;
+        var fbGap = Math.max(0, (tr.width - fbContentW) / 2);
         return {
-          top: top,
-          bottom: bottom,
-          sbLeft: rect.left,
-          sbRight: rect.right,
-          convLeft: rect.left + gap,
-          convRight: rect.right - gap,
-          height: Math.max(0, bottom - top),
+          top: fbTop,
+          bottom: fbBottom,
+          sbLeft: tr.left,
+          sbRight: tr.right,
+          convLeft: tr.left + fbGap,
+          convRight: tr.right - fbGap,
+          height: Math.max(0, fbBottom - fbTop),
         };
       }
 
@@ -529,50 +627,56 @@ window.__ModuleLoader__.load({
         return (s.byId && s.byId[s.current]) || null;
       }
 
-      // 延迟收起(张顿一点): 鼠标离开后用 delay(ms) 宽限, 期间移回则取消。
-      // keepOnFloatOnly=true(侧栏): 只有移到悬浮栏才豁免收起(与悬浮栏联动);
-      //                =false(悬浮栏): 移到任意 fge 元素都豁免(避免悬浮栏关闭其源侧栏)。
-      function useDampedHide(ms, onHide, keepOnFloatOnly) {
-        var ref = React.useRef(null);
-        function clear() {
-          if (ref.current) {
-            clearTimeout(ref.current);
-            ref.current = null;
+      // 延迟收起 —— 保持区(union)追踪器: 一侧的侧栏与其全部悬浮栏共享一个
+      // 「鼠标在场」区域集; 只要指针还在任一已登记区域就不收起, 全部离开后才
+      // 启动 HIDE_DELAY_MS 宽限定时器, 期间进入任一区域则取消。
+      // 区域登记名约定: 左侧 lp=文件树面板 cf=内容悬浮栏;
+      //                右侧 rp=git树面板 df=diff悬浮栏 hs=提交历史悬浮栏。
+      // (分支下拉/历史分组菜单是面板 DOM 子孙, 指针移入不触发面板 mouseleave,
+      //  无需登记。)
+      var HIDE_DELAY_MS = 360;
+      function makeSideTracker(onFire) {
+        var timer = null;
+        var active = {};
+        function anyActive() {
+          for (var k in active) if (active[k]) return true;
+          return false;
+        }
+        function clearT() {
+          if (timer) {
+            clearTimeout(timer);
+            timer = null;
           }
         }
-        function enter() {
-          clear();
-        }
-        function leave(e) {
-          var to = e && e.relatedTarget;
-          if (to && to.closest) {
-            var inFloat = to.closest('.fge-float');
-            var inRoot = to.closest('[data-fge-root]');
-            // 分支下拉(右树的 fge-branch-menu / 历史面板的 fge-hmenu)几何上可落在
-            // 源面板矩形之外, 单独豁免, 避免移入菜单就触发延迟收起。
-            var inMenu = to.closest('.fge-branch-menu,.fge-hmenu');
-            if ((keepOnFloatOnly ? inFloat : inRoot) || inMenu) {
-              clear();
-              return;
+        return {
+          enter: function (name) {
+            active[name] = true;
+            clearT();
+          },
+          leave: function (name) {
+            active[name] = false;
+            if (!anyActive()) {
+              clearT();
+              timer = setTimeout(function () {
+                timer = null;
+                onFire();
+              }, HIDE_DELAY_MS);
             }
-          }
-          clear();
-          ref.current = setTimeout(function () {
-            ref.current = null;
-            onHide();
-          }, ms);
-        }
-        React.useEffect(function () {
-          return function () {
-            clear();
-          };
-        }, []);
-        return { enter: enter, leave: leave };
+          },
+          dispose: function () {
+            clearT();
+          },
+        };
       }
 
       // ---- 懒加载树(每个分区一棵) ----
       // props: mode, root, refreshTick, onFileClick(rel, name, type),
       //        revealReq({rel, zone, tick} | null) —— 搜索结果点目录时的树内定位
+      //        ops —— 树内写操作(create(parentRel,name,kind)/rename(row,newName)/
+      //               remove(row), 均返回 Promise<{ok,error?,openRel?,openName?}>),
+      //               由 LeftPanel 实现; 操作成功后经 ops 内部 fireReload 按需局部刷新。
+      //        reloadReq({seq, rel}) —— 局部重载请求(挂到具体目录, 不作废展开状态)
+      //        rootCreateReq({seq}) —— 本分区头"+"触发的根级新建
       function LazyTree(props) {
         var mode = props.mode;
         var root = props.root;
@@ -590,6 +694,16 @@ window.__ModuleLoader__.load({
         var setLoading = loadingState[1];
         var mounted = React.useRef(true);
         var bodyRef = React.useRef(null);
+
+        // ---- 树内写操作(新建/重命名)的行内待输入态 ----
+        var pendState = React.useState(null); // {kind:'create'|'rename', rel, row?, err?}
+        var pend = pendState[0];
+        var setPend = pendState[1];
+        var nameState = React.useState('');
+        var name = nameState[0];
+        var setName = nameState[1];
+        var handledReloadRef = React.useRef(-1);
+        var handledRootCreateRef = React.useRef(-1);
 
         var loadChildren = function (rel, reveal) {
           setLoading(rel);
@@ -616,6 +730,8 @@ window.__ModuleLoader__.load({
             setCache({});
             setExpanded({});
             setSelected(null);
+            setPend(null);
+            setName('');
             loadChildren('', false);
             return function () {
               mounted.current = false;
@@ -623,6 +739,33 @@ window.__ModuleLoader__.load({
           },
           // 根变化(工作区切换)时同样作废整棵树
           [props.refreshTick, root],
+        );
+
+        // 局部重载请求: 只拉目标目录缓存并覆盖, 不清空展开/选中状态。
+        // seq 去重保证同一事件只被每个分区的 LazyTree 各消费一次。
+        React.useEffect(
+          function () {
+            var rq = props.reloadReq;
+            if (!rq) return;
+            if (handledReloadRef.current === rq.seq) return;
+            handledReloadRef.current = rq.seq;
+            loadChildren(rq.rel, false);
+          },
+          [props.reloadReq],
+        );
+
+        // 分区头"+": 在该分区根开启"新建"待输入行
+        React.useEffect(
+          function () {
+            var rc = props.rootCreateReq;
+            if (!rc) return;
+            if (handledRootCreateRef.current === rc.seq) return;
+            handledRootCreateRef.current = rc.seq;
+            setPend({ kind: 'create', rel: '', row: null });
+            setName('');
+            if (cache[''] === undefined) loadChildren('', false);
+          },
+          [props.rootCreateReq],
         );
 
         // 树内 reveal(搜索结果点目录): 沿路径逐级加载 + 展开, 最后选中并闪现目标。
@@ -730,6 +873,94 @@ window.__ModuleLoader__.load({
           if (!cache[e.rel]) loadChildren(e.rel, revealFor(e));
         };
 
+        // ---- 行内写操作 ----
+        var startCreateIn = function (row) {
+          setPend({ kind: 'create', rel: row.rel, row: row });
+          setName('');
+          if (!expanded[row.rel]) {
+            var next = {};
+            for (var k in expanded) next[k] = true;
+            next[row.rel] = true;
+            setExpanded(next);
+            if (!cache[row.rel]) loadChildren(row.rel, revealFor(row));
+          }
+        };
+        var startRename = function (row) {
+          setPend({ kind: 'rename', rel: row.rel, row: row });
+          setName(row.name);
+        };
+        var askRemove = function (row) {
+          props.ops.remove(row); // 确认与错误提示由 ops 实现(LeftPanel 层)
+        };
+
+        /** ops 失败码 → 行内短文案; cancelled(用户取消确认框)静默。 */
+        var opErrorText = function (res) {
+          if (res && res.ok) return null;
+          var code = res && res.error ? String(res.error) : '失败';
+          if (code === 'cancelled') return null;
+          if (code === 'exists') return '同名条目已存在';
+          if (code === 'invalid-path' || code === 'invalid-name')
+            return '名称含非法字符或路径不合法';
+          if (code === 'not-found') return '目标已不存在（可点头部刷新）';
+          if (code === 'not-empty') return '目录非空';
+          if (code === 'rpc-failed' || code === 'failed') return '请求失败';
+          return code;
+        };
+
+        var submitOp = function () {
+          if (!pend) return;
+          var raw = String(name).trim();
+          if (raw === '') {
+            setPend(null);
+            setName('');
+            return;
+          }
+          if (pend.kind === 'rename') {
+            if (pend.row && raw === pend.row.name) {
+              setPend(null);
+              setName('');
+              return;
+            }
+            props.ops
+              .rename(pend.row, raw)
+              .then(function (res) {
+                if (res && res.ok) {
+                  setPend(null);
+                  setName('');
+                } else {
+                  var msg = opErrorText(res);
+                  setPend(msg === null ? null : Object.assign({}, pend, { err: msg }));
+                }
+              })
+              .catch(function () {
+                setPend(Object.assign({}, pend, { err: '请求失败' }));
+              });
+            return;
+          }
+          // create: 以 / 结尾建目录(多个斜杠取末段), 其余建文件; 名称可含 / 嵌套
+          var isDir = raw.charAt(raw.length - 1) === '/';
+          var clean = isDir ? raw.replace(/\/+$/, '') : raw;
+          if (clean === '') {
+            setPend(Object.assign({}, pend, { err: '请输入名称' }));
+            return;
+          }
+          props.ops
+            .create(pend.rel, clean, isDir ? 'dir' : 'file')
+            .then(function (res) {
+              if (res && res.ok) {
+                setPend(null);
+                setName('');
+                if (res.openRel) props.onFileClick(res.openRel, res.openName, 'file');
+              } else {
+                var msg2 = opErrorText(res);
+                setPend(msg2 === null ? null : Object.assign({}, pend, { err: msg2 }));
+              }
+            })
+            .catch(function () {
+              setPend(Object.assign({}, pend, { err: '请求失败' }));
+            });
+        };
+
         // 深度优先展开 → 行列表
         var rows = [];
         (function walk(rel, depth) {
@@ -749,35 +980,168 @@ window.__ModuleLoader__.load({
           }
         })('', 0);
 
+        var nodeElFor = function (row) {
+          var icon = row.type === 'dir' ? (expanded[row.rel] ? '▾' : '▸') : '·';
+          return React.createElement(
+            'div',
+            {
+              key: row.rel,
+              className:
+                'fge-node' +
+                (row.type === 'dir' ? ' fge-dir' : '') +
+                (selected === row.rel ? ' fge-selected' : ''),
+              'data-fge-node': row.rel,
+              onClick: function () {
+                toggle(row);
+              },
+              style: { paddingLeft: 6 + row.depth * 14 },
+              title: row.rel,
+            },
+            React.createElement('span', { className: 'fge-node-icon' }, icon),
+            React.createElement('span', { className: 'fge-node-name' }, row.name),
+            props.ops
+              ? React.createElement(
+                  'span',
+                  {
+                    className: 'fge-rowacts',
+                    onClick: function (e) {
+                      e.stopPropagation(); // 点操作按钮不当成"切换该行"
+                    },
+                  },
+                  row.type === 'dir'
+                    ? React.createElement(
+                        'button',
+                        {
+                          className: 'fge-rowact',
+                          title: '新建子项（名称以 / 结尾建目录）',
+                          onClick: function () {
+                            startCreateIn(row);
+                          },
+                        },
+                        '+',
+                      )
+                    : null,
+                  React.createElement(
+                    'button',
+                    {
+                      className: 'fge-rowact',
+                      title: '重命名',
+                      onClick: function () {
+                        startRename(row);
+                      },
+                    },
+                    '✎',
+                  ),
+                  React.createElement(
+                    'button',
+                    {
+                      className: 'fge-rowact fge-danger',
+                      title: row.type === 'dir' ? '删除目录(含全部内容)' : '删除文件',
+                      onClick: function () {
+                        askRemove(row);
+                      },
+                    },
+                    '✕',
+                  ),
+                )
+              : null,
+          );
+        };
+
+        /** 待输入行(create/rename 共用): Enter 提交, Esc 取消; 错误显示在行内。 */
+        var opRowElFor = function (depth, keySuffix) {
+          return React.createElement(
+            'div',
+            {
+              key: 'op-' + keySuffix,
+              className: 'fge-oprow',
+              style: { paddingLeft: 6 + depth * 14 },
+            },
+            React.createElement('input', {
+              className: 'fge-opinput',
+              value: name,
+              autoFocus: true,
+              placeholder:
+                pend.kind === 'create' ? '名称（以 / 结尾建目录，可用 a/b 嵌套）' : '新名称',
+              onFocus: function (ev) {
+                if (pend.kind === 'rename' && ev.target.select) ev.target.select();
+              },
+              onChange: function (ev) {
+                setName(ev.target.value);
+              },
+              onKeyDown: function (ev) {
+                if (ev.key === 'Enter') {
+                  ev.preventDefault();
+                  submitOp();
+                } else if (ev.key === 'Escape') {
+                  ev.stopPropagation();
+                  ev.preventDefault();
+                  setPend(null);
+                  setName('');
+                } else if (ev.key === ' ' || ev.key === 'Tab') {
+                  ev.stopPropagation(); // 空格/Tab 不冒泡触发面板快捷键语义
+                }
+              },
+            }),
+            React.createElement(
+              'button',
+              {
+                className: 'fge-rowact',
+                style: { opacity: 1 },
+                title: '确认',
+                onClick: function (ev) {
+                  ev.stopPropagation();
+                  submitOp();
+                },
+              },
+              '✓',
+            ),
+            React.createElement(
+              'button',
+              {
+                className: 'fge-rowact fge-danger',
+                style: { opacity: 1 },
+                title: '取消',
+                onClick: function (ev) {
+                  ev.stopPropagation();
+                  setPend(null);
+                  setName('');
+                },
+              },
+              '✕',
+            ),
+            React.createElement(
+              'span',
+              { className: 'fge-ophint' },
+              pend.kind === 'create' ? 'Enter 确认 · Esc 取消' : 'Enter 重命名 · Esc 取消',
+            ),
+            pend.err ? React.createElement('span', { className: 'fge-operr' }, pend.err) : null,
+          );
+        };
+
         var rootLoaded = cache[''] !== undefined;
+        var rootPending = !!pend && pend.kind === 'create' && pend.rel === '';
+        // 逐行装配: 行间按需插入待输入行(根级在最前, 目录/条目在其行后)
+        var rowEls = [];
+        if (rootPending) rowEls.push(opRowElFor(0, 'root'));
+        for (var ri = 0; ri < rows.length; ri++) {
+          var r = rows[ri];
+          rowEls.push(nodeElFor(r));
+          if (pend && pend.rel === r.rel) {
+            if (pend.kind === 'create') rowEls.push(opRowElFor(r.depth + 1, 'create:' + r.rel));
+            else if (pend.row && pend.row.rel === r.rel)
+              rowEls.push(opRowElFor(r.depth, 'rename:' + r.rel));
+          }
+        }
+
         var children = React.createElement(
           'div',
           { className: 'fge-tree', ref: bodyRef },
-          rows.map(function (row) {
-            var icon = row.type === 'dir' ? (expanded[row.rel] ? '▾' : '▸') : '·';
-            return React.createElement(
-              'div',
-              {
-                key: row.rel,
-                className:
-                  'fge-node' +
-                  (row.type === 'dir' ? ' fge-dir' : '') +
-                  (selected === row.rel ? ' fge-selected' : ''),
-                'data-fge-node': row.rel,
-                onClick: function () {
-                  toggle(row);
-                },
-                style: { paddingLeft: 6 + row.depth * 14 },
-                title: row.rel,
-              },
-              React.createElement('span', { className: 'fge-node-icon' }, icon),
-              React.createElement('span', { className: 'fge-node-name' }, row.name),
-            );
-          }),
-          loading !== null
+          rowEls,
+          loading !== null && !rootPending
             ? React.createElement('div', { className: 'fge-loading', key: 'loading' }, '加载中…')
             : null,
-          rootLoaded && rows.length === 0
+          rootLoaded && rows.length === 0 && !rootPending
             ? React.createElement('div', { className: 'fge-empty', key: 'empty' }, '(空)')
             : null,
         );
@@ -875,7 +1239,7 @@ window.__ModuleLoader__.load({
         );
       }
 
-      // ---- 关闭图标(✕) ----
+      // ---- 关闭/停止图标(✕) ----
       function CloseIcon() {
         return React.createElement(
           'svg',
@@ -892,6 +1256,26 @@ window.__ModuleLoader__.load({
             style: { display: 'block' },
           },
           React.createElement('path', { d: 'M18 6L6 18M6 6l12 12' }),
+        );
+      }
+
+      // ---- 对号图标(✓, shell 行执行) ----
+      function CheckIcon() {
+        return React.createElement(
+          'svg',
+          {
+            width: 14,
+            height: 14,
+            viewBox: '0 0 24 24',
+            fill: 'none',
+            stroke: 'currentColor',
+            strokeWidth: 2,
+            strokeLinecap: 'round',
+            strokeLinejoin: 'round',
+            'aria-hidden': 'true',
+            style: { display: 'block' },
+          },
+          React.createElement('path', { d: 'M20 6L9 17l-5-5' }),
         );
       }
 
@@ -1025,13 +1409,350 @@ window.__ModuleLoader__.load({
         );
       }
 
+      // ---- shell 行(shell bar): 左树底部命令执行行 ----
+      // 单槽(宿主侧记账): ✓ 启动即挂 ctx.jobs(kind 'shell', 无主, 完成不通知模型);
+      // 运行中每秒拉一次尾部输出增量; GUI 刷新后经 shellState 认领仍在跑的任务。
+      var SHELL_POLL_MS = 1000;
+      var SHELL_TAIL_CHARS = 16 * 1024; // 客户端显示缓冲上限(与 host 每流缓冲同量级)
+      var SHELL_HISTORY_MAX = 100;
+
+      // 历史(相邻去重 + 上限截断)与 lib/shell.js 的 pushHistory 同算法 —— client
+      // bundle 无法 import host ESM, 两处必须同步改; 可执行规约见 tests/shell.test.mjs。
+      function pushHist(list, cmd) {
+        if (list.length > 0 && list[list.length - 1] === cmd) return list;
+        var next = list.concat([cmd]);
+        return next.length > SHELL_HISTORY_MAX ? next.slice(next.length - SHELL_HISTORY_MAX) : next;
+      }
+
+      function ShellBar(props) {
+        var cacheKey = props.cacheKey;
+        var valueState = React.useState('');
+        var value = valueState[0];
+        var setValue = valueState[1];
+        var jobState = React.useState(null); // {id,label,status,exitCode,signal,error}
+        var job = jobState[0];
+        var setJob = jobState[1];
+        var errMsgState = React.useState(null);
+        var errMsg = errMsgState[0];
+        var setErrMsg = errMsgState[1];
+        var openState = React.useState(false);
+        var open = openState[0];
+        var setOpen = openState[1];
+        var outTextState = React.useState('');
+        var outText = outTextState[0];
+        var setOutText = outTextState[1];
+        var errTextState = React.useState('');
+        var errText = errTextState[0];
+        var setErrText = errTextState[1];
+        var inputRef = React.useRef(null);
+        var preRef = React.useRef(null);
+        var histRef = React.useRef([]);
+        var histIdxRef = React.useRef(null); // null = 实时输入
+        var draftRef = React.useRef(''); // 离开实时输入时的草稿
+        var fromRef = React.useRef({ out: 0, err: 0 }); // 已读到的绝对字符位
+        var busy = !!job && (job.status === 'running' || job.status === 'stopping');
+
+        // 历史随仓库根懒加载(cwd 缓存搭车: shellHistory 字段)
+        React.useEffect(
+          function () {
+            var cached = cacheKey ? readCache(cacheKey) : null;
+            histRef.current =
+              cached && Array.isArray(cached.shellHistory)
+                ? cached.shellHistory.filter(function (x) {
+                    return typeof x === 'string';
+                  })
+                : [];
+            histIdxRef.current = null;
+          },
+          [cacheKey],
+        );
+
+        // 挂载/切工作区时认领该工作区自己的槽任务(刷新恢复 running 态与 ✕ 可用性;
+        // 槽按 root 隔离 —— 切走即重置展示态, 不显示上一个工作区的记录)
+        React.useEffect(
+          function () {
+            var dead = false;
+            setJob(null);
+            setErrMsg(null);
+            setOutText('');
+            setErrText('');
+            fromRef.current = { out: 0, err: 0 };
+            api('shellState', { root: props.root })
+              .then(function (r) {
+                if (dead || !r || !r.ok || !r.job) return;
+                setJob(r.job);
+                setOpen(true);
+                // 认领已终结的任务时轮询不会跑, 单次拉尾部输出填充
+                if (r.job.status !== 'running' && r.job.status !== 'stopping') {
+                  api('shellOutput', { root: props.root, outFrom: 0, errFrom: 0 })
+                    .then(function (o) {
+                      if (dead || !o || !o.ok) return;
+                      setOutText(
+                        o.out && o.out.text !== ''
+                          ? (o.out.lossy ? '[…输出有缺口…]\n' : '') + o.out.text
+                          : '',
+                      );
+                      setErrText(
+                        o.err && o.err.text !== ''
+                          ? (o.err.lossy ? '[…输出有缺口…]\n' : '') + o.err.text
+                          : '',
+                      );
+                    })
+                    .catch(function () {});
+                }
+              })
+              .catch(function () {});
+            return function () {
+              dead = true;
+            };
+          },
+          [props.root],
+        );
+
+        // 运行中轮询本工作区槽的尾部输出; done=true 的那一拍带最终状态与残余输出
+        React.useEffect(
+          function () {
+            if (!busy) return undefined;
+            var dead = false;
+            var root = props.root; // 轮询锁定发起时的工作区, 切换即被 cleanup 作废
+            var applySeg = function (which, seg, setText) {
+              if (!seg) return;
+              var add = seg.lossy ? '[…输出有缺口…]\n' : '';
+              if (seg.text !== '') {
+                setText(function (prev) {
+                  var nextText = prev + add + seg.text;
+                  return nextText.length > SHELL_TAIL_CHARS * 2
+                    ? nextText.slice(-SHELL_TAIL_CHARS * 2)
+                    : nextText;
+                });
+              }
+              fromRef.current[which] = seg.next;
+            };
+            var tick = function () {
+              api('shellOutput', {
+                root: root,
+                outFrom: fromRef.current.out,
+                errFrom: fromRef.current.err,
+              })
+                .then(function (r) {
+                  if (dead || !r || !r.ok || !r.job) return;
+                  setJob(r.job);
+                  applySeg('out', r.out, setOutText);
+                  applySeg('err', r.err, setErrText);
+                })
+                .catch(function () {});
+            };
+            tick();
+            var t = setInterval(tick, SHELL_POLL_MS);
+            return function () {
+              dead = true;
+              clearInterval(t);
+            };
+          },
+          [busy, props.root],
+        );
+
+        // 内容变化 / 展开时滚到底部
+        React.useEffect(
+          function () {
+            var el = preRef.current;
+            if (el) el.scrollTop = el.scrollHeight;
+          },
+          [outText, errText, open],
+        );
+
+        var exec = function () {
+          var cmd = value.trim();
+          if (cmd === '' || busy) return;
+          api('shellStart', { root: props.root, command: cmd })
+            .then(function (r) {
+              if (!r || !r.ok) {
+                var reason = r && r.error;
+                setErrMsg(
+                  reason === 'busy'
+                    ? '已有任务在运行'
+                    : reason === 'jobs-unavailable'
+                      ? '后台任务服务不可用'
+                      : reason === 'subprocess-unavailable'
+                        ? '子进程服务不可用'
+                        : reason === 'invalid-command'
+                          ? '命令无效'
+                          : reason === 'spawn-failed'
+                            ? '进程启动失败' + (r && r.detail ? '(' + r.detail + ')' : '')
+                            : '启动失败',
+                );
+                return;
+              }
+              setErrMsg(null);
+              histRef.current = pushHist(histRef.current, cmd);
+              histIdxRef.current = null;
+              draftRef.current = '';
+              if (cacheKey) writeCache(cacheKey, { shellHistory: histRef.current });
+              fromRef.current = { out: 0, err: 0 };
+              setOutText('');
+              setErrText('');
+              setJob(r.job);
+              setOpen(true);
+            })
+            .catch(function () {
+              setErrMsg('启动失败(网络错误)');
+            });
+        };
+
+        var stop = function () {
+          if (!busy) return;
+          api('shellStop', { root: props.root })
+            .then(function (r) {
+              if (r && r.ok && r.job) setJob(r.job);
+            })
+            .catch(function () {});
+        };
+
+        // ↑/↓ 历史导航: 离开实时输入时记草稿, 走到底再 ↓ 回到草稿
+        var navHistory = function (dir) {
+          var h = histRef.current;
+          if (!h || h.length === 0) return;
+          var idx = histIdxRef.current;
+          if (dir === 'up') {
+            if (idx === null) {
+              draftRef.current = value;
+              idx = h.length - 1;
+            } else if (idx > 0) {
+              idx -= 1;
+            } else return;
+          } else {
+            if (idx === null) return;
+            idx += 1;
+            if (idx >= h.length) {
+              histIdxRef.current = null;
+              setValue(draftRef.current);
+              return;
+            }
+          }
+          histIdxRef.current = idx;
+          setValue(h[idx]);
+        };
+
+        var statusInfo = null;
+        if (errMsg !== null) statusInfo = { cls: ' fge-shell-err', text: errMsg };
+        else if (job) {
+          if (job.status === 'running') statusInfo = { cls: ' fge-shell-run', text: '● 运行中…' };
+          else if (job.status === 'stopping')
+            statusInfo = { cls: ' fge-shell-run', text: '○ 正在停止…' };
+          else if (job.status === 'completed')
+            statusInfo =
+              job.exitCode === 0
+                ? { cls: ' fge-shell-ok', text: '✓ 退出 0' }
+                : { cls: ' fge-shell-err', text: '✗ 退出 ' + job.exitCode };
+          else if (job.status === 'killed')
+            statusInfo = {
+              cls: ' fge-shell-err',
+              text: '■ 已停止' + (job.signal ? '(' + job.signal + ')' : ''),
+            };
+          else statusInfo = { cls: ' fge-shell-err', text: '⚠ ' + (job.error || '执行失败') };
+        }
+
+        var tailText =
+          outText + (errText !== '' ? (outText !== '' ? '\n' : '') + '[stderr]\n' + errText : '');
+
+        return React.createElement(
+          React.Fragment,
+          null,
+          open
+            ? React.createElement(
+                'pre',
+                { className: 'fge-shell-tail', ref: preRef },
+                tailText !== '' ? tailText : '(尚无输出)',
+              )
+            : null,
+          React.createElement(
+            'div',
+            { className: 'fge-shell-row' },
+            React.createElement(
+              'button',
+              {
+                className: 'fge-btn' + (open ? ' fge-btn-active' : ''),
+                title: job ? '展开/收起输出' : '暂无任务输出',
+                disabled: !job,
+                onClick: function () {
+                  setOpen(!open);
+                },
+              },
+              React.createElement(CaretIcon, { open: open }),
+            ),
+            React.createElement('input', {
+              ref: inputRef,
+              className: 'fge-shell-input',
+              value: value,
+              placeholder: 'shell 命令(⏎ 执行)',
+              spellCheck: false,
+              onChange: function (e) {
+                setValue(e.target.value);
+                histIdxRef.current = null;
+              },
+              onKeyDown: function (e) {
+                if (e.key === 'Enter') {
+                  // IME 组合期不触发; preventDefault+stopPropagation 隔离应用层按键链
+                  if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  exec();
+                } else if (e.key === 'ArrowUp') {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  navHistory('up');
+                } else if (e.key === 'ArrowDown') {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  navHistory('down');
+                } else if (e.key === 'Escape') {
+                  // 只失焦: 不波及插件的常驻 window Esc 监听(会关悬浮窗)
+                  e.stopPropagation();
+                  if (inputRef.current) inputRef.current.blur();
+                }
+              },
+            }),
+            statusInfo
+              ? React.createElement(
+                  'span',
+                  {
+                    className: 'fge-shell-status' + statusInfo.cls,
+                    title: job ? job.label : statusInfo.text,
+                  },
+                  statusInfo.text,
+                )
+              : null,
+            React.createElement(
+              'button',
+              {
+                className: 'fge-btn',
+                title: busy ? '已有任务在运行' : '执行',
+                disabled: busy || value.trim() === '',
+                onClick: exec,
+              },
+              React.createElement(CheckIcon, null),
+            ),
+            React.createElement(
+              'button',
+              {
+                className: 'fge-btn',
+                title: '停止当前任务',
+                disabled: !busy,
+                onClick: stop,
+              },
+              React.createElement(CloseIcon, null),
+            ),
+          ),
+        );
+      }
+
       // ---- 左侧文件树面板 ----
       function LeftPanel(props) {
         var copiedState = React.useState(false);
         var copied = copiedState[0];
         var setCopied = copiedState[1];
-        // 延迟收起: 悬停离开后宽限, 移到悬浮栏(打开的预览/diff)则豁免(联动)
-        var damp = useDampedHide(360, props.onHide, true);
+        // 延迟收起: 由 FgeRoot 下发的保持区追踪器驱动(lp 区), 见 makeSideTracker
+        var track = props.track;
         // 路径按面板可用宽度做中间省略(保头保尾), 点击整段复制完整路径
         var subWidth = (props.style && props.style.width) || 320;
         var subMax = Math.max(12, Math.floor((subWidth - 104) / 5.6));
@@ -1068,6 +1789,97 @@ window.__ModuleLoader__.load({
           setQuery('');
           setRes(null);
         }, []);
+
+        // ---- 树内写操作(新建/重命名/删除的 client 编排) ----
+        // 成功 → 局部重载(reloadReq 只重拉目标目录缓存, 不动展开/选中态) +
+        // 广播事件(onTreeEvent: 改/删联动已打开的悬浮面板) + 状态刷新(onMutate)。
+        var opSeqRef = React.useRef(0);
+        var reloadReqState = React.useState(null); // {seq, rel}
+        var reloadReq = reloadReqState[0];
+        var setReloadReq = reloadReqState[1];
+        var rootCreateSeqRef = React.useRef(0);
+        var rootCreateState = React.useState(null); // {seq, zone}
+        var rootCreateReq = rootCreateState[0];
+        var setRootCreateReq = rootCreateState[1];
+
+        var dirOf = function (rel) {
+          var i = rel.lastIndexOf('/');
+          return i < 0 ? '' : rel.slice(0, i);
+        };
+        var fireReload = function (parentRel) {
+          opSeqRef.current += 1;
+          setReloadReq({ seq: opSeqRef.current, rel: parentRel });
+        };
+        var notifyMutated = function () {
+          if (typeof props.onMutate === 'function') props.onMutate();
+        };
+        var notifyEvent = function (evt) {
+          if (typeof props.onTreeEvent === 'function') props.onTreeEvent(evt);
+        };
+        var ops = {
+          create: function (parentRel, cleanName, kind) {
+            var relPath = parentRel === '' ? cleanName : parentRel + '/' + cleanName;
+            return api('create', { root: props.root, path: relPath, kind: kind })
+              .then(function (res) {
+                if (res && res.ok) {
+                  fireReload(parentRel);
+                  notifyMutated();
+                  if (kind === 'file') return { ok: true, openRel: relPath, openName: cleanName };
+                  return { ok: true };
+                }
+                return res || { ok: false, error: 'failed' };
+              })
+              .catch(function () {
+                return { ok: false, error: 'rpc-failed' };
+              });
+          },
+          rename: function (row, newName) {
+            return api('rename', { root: props.root, path: row.rel, newName: newName })
+              .then(function (res) {
+                if (res && res.ok) {
+                  fireReload(dirOf(row.rel));
+                  var to = dirOf(row.rel) === '' ? newName : dirOf(row.rel) + '/' + newName;
+                  notifyEvent({ type: 'renamed', from: row.rel, to: to });
+                  notifyMutated();
+                }
+                return res || { ok: false, error: 'failed' };
+              })
+              .catch(function () {
+                return { ok: false, error: 'rpc-failed' };
+              });
+          },
+          remove: function (row) {
+            var msg =
+              row.type === 'dir'
+                ? '删除目录 “' + row.name + '” 及其全部内容？此操作不可恢复。'
+                : '删除文件 “' + row.name + '”？此操作不可恢复。';
+            if (!window.confirm(msg)) return Promise.resolve({ ok: false, error: 'cancelled' });
+            return api('remove', {
+              root: props.root,
+              path: row.rel,
+              recursive: row.type === 'dir',
+            })
+              .then(function (res) {
+                if (res && res.ok) {
+                  fireReload(dirOf(row.rel));
+                  notifyEvent({ type: 'deleted', rel: row.rel });
+                  notifyMutated();
+                } else if (res && res.error !== 'cancelled') {
+                  window.alert('删除失败：' + (res.error || 'unknown'));
+                }
+                return res || { ok: false, error: 'failed' };
+              })
+              .catch(function () {
+                window.alert('删除失败：请求错误');
+                return { ok: false, error: 'rpc-failed' };
+              });
+          },
+        };
+        /** 分区头"+" → 该分区根的新建待输入行 */
+        var rootCreate = function (zone) {
+          rootCreateSeqRef.current += 1;
+          setRootCreateReq({ seq: rootCreateSeqRef.current, zone: zone });
+        };
 
         // 根切换: 关闭搜索与定位态(树本身也会随 root 作废)
         React.useEffect(
@@ -1146,8 +1958,12 @@ window.__ModuleLoader__.load({
             className: 'fge-panel',
             'data-fge-root': '1',
             style: props.style,
-            onMouseEnter: damp.enter,
-            onMouseLeave: damp.leave,
+            onMouseEnter: function () {
+              track.enter('lp');
+            },
+            onMouseLeave: function () {
+              track.leave('lp');
+            },
           },
           React.createElement(
             'div',
@@ -1178,8 +1994,13 @@ window.__ModuleLoader__.load({
               'button',
               {
                 className: 'fge-btn' + (props.pin ? ' fge-btn-active' : ''),
-                title: props.pin ? '已固定: 点击解除固定' : '图钉: 固定后两个面板都不能收起',
+                title: props.pinDisabled
+                  ? '非对话视图下暂不可操作图钉'
+                  : props.pin
+                    ? '已固定: 点击解除固定'
+                    : '图钉: 固定后两个面板都不能收起',
                 onClick: props.onPin,
+                disabled: !!props.pinDisabled,
               },
               React.createElement(PinIcon, null),
             ),
@@ -1245,7 +2066,23 @@ window.__ModuleLoader__.load({
                 React.createElement(
                   'div',
                   { className: 'fge-section', style: { flex: '3' } },
-                  React.createElement('div', { className: 'fge-section-head' }, '可显示文件'),
+                  React.createElement(
+                    'div',
+                    { className: 'fge-section-head' },
+                    React.createElement('span', null, '可显示文件'),
+                    React.createElement('span', { className: 'fge-section-head-sp' }),
+                    React.createElement(
+                      'button',
+                      {
+                        className: 'fge-headplus',
+                        title: '在此分区根新建（名称以 / 结尾建目录，可用 a/b 嵌套）',
+                        onClick: function () {
+                          rootCreate('visible');
+                        },
+                      },
+                      '+',
+                    ),
+                  ),
                   React.createElement(
                     'div',
                     { className: 'fge-section-body' },
@@ -1254,6 +2091,10 @@ window.__ModuleLoader__.load({
                       root: props.root,
                       refreshTick: props.refreshTick,
                       onFileClick: props.onFileClick,
+                      ops: ops,
+                      reloadReq: reloadReq,
+                      rootCreateReq:
+                        rootCreateReq && rootCreateReq.zone === 'visible' ? rootCreateReq : null,
                       revealReq:
                         revealReq && revealModeFor(revealReq.zone, revealReq.rel) === 'visible'
                           ? revealReq
@@ -1264,7 +2105,23 @@ window.__ModuleLoader__.load({
                 React.createElement(
                   'div',
                   { className: 'fge-section', style: { flex: '1' } },
-                  React.createElement('div', { className: 'fge-section-head' }, '隐藏文件'),
+                  React.createElement(
+                    'div',
+                    { className: 'fge-section-head' },
+                    React.createElement('span', null, '隐藏文件'),
+                    React.createElement('span', { className: 'fge-section-head-sp' }),
+                    React.createElement(
+                      'button',
+                      {
+                        className: 'fge-headplus',
+                        title: '在此分区根新建（如 .env.local）',
+                        onClick: function () {
+                          rootCreate('hidden');
+                        },
+                      },
+                      '+',
+                    ),
+                  ),
                   React.createElement(
                     'div',
                     { className: 'fge-section-body' },
@@ -1273,6 +2130,10 @@ window.__ModuleLoader__.load({
                       root: props.root,
                       refreshTick: props.refreshTick,
                       onFileClick: props.onFileClick,
+                      ops: ops,
+                      reloadReq: reloadReq,
+                      rootCreateReq:
+                        rootCreateReq && rootCreateReq.zone === 'hidden' ? rootCreateReq : null,
                       revealReq:
                         revealReq && revealModeFor(revealReq.zone, revealReq.rel) === 'hidden'
                           ? revealReq
@@ -1283,7 +2144,23 @@ window.__ModuleLoader__.load({
                 React.createElement(
                   'div',
                   { className: 'fge-section', style: { flex: '1' } },
-                  React.createElement('div', { className: 'fge-section-head' }, '忽略文件'),
+                  React.createElement(
+                    'div',
+                    { className: 'fge-section-head' },
+                    React.createElement('span', null, '忽略文件'),
+                    React.createElement('span', { className: 'fge-section-head-sp' }),
+                    React.createElement(
+                      'button',
+                      {
+                        className: 'fge-headplus',
+                        title: '在此分区根新建（通常直接建在可见区即可）',
+                        onClick: function () {
+                          rootCreate('ignored');
+                        },
+                      },
+                      '+',
+                    ),
+                  ),
                   React.createElement(
                     'div',
                     { className: 'fge-section-body' },
@@ -1292,6 +2169,10 @@ window.__ModuleLoader__.load({
                       root: props.root,
                       refreshTick: props.refreshTick,
                       onFileClick: props.onFileClick,
+                      ops: ops,
+                      reloadReq: reloadReq,
+                      rootCreateReq:
+                        rootCreateReq && rootCreateReq.zone === 'ignored' ? rootCreateReq : null,
                       revealReq:
                         revealReq && revealModeFor(revealReq.zone, revealReq.rel) === 'ignored'
                           ? revealReq
@@ -1300,6 +2181,7 @@ window.__ModuleLoader__.load({
                   ),
                 ),
               ),
+          React.createElement(ShellBar, { root: props.root, cacheKey: props.cacheKey }),
           React.createElement('div', {
             className: 'fge-resize fge-resize-left',
             onPointerDown: props.onResizeStart,
@@ -1321,8 +2203,8 @@ window.__ModuleLoader__.load({
           },
           [props.floatOpen],
         );
-        // 延迟收起: 悬停离开后宽限, 移到悬浮栏(branch menu 或 diff)则豁免(联动)
-        var damp = useDampedHide(360, props.onHide, true);
+        // 延迟收起: 由 FgeRoot 下发的保持区追踪器驱动(rp 区), 见 makeSideTracker
+        var track = props.track;
 
         var changes = props.status && props.status.changes ? props.status.changes : [];
         var current = props.status ? props.status.current : null;
@@ -1409,8 +2291,12 @@ window.__ModuleLoader__.load({
             className: 'fge-panel',
             'data-fge-root': '1',
             style: props.style,
-            onMouseEnter: damp.enter,
-            onMouseLeave: damp.leave,
+            onMouseEnter: function () {
+              track.enter('rp');
+            },
+            onMouseLeave: function () {
+              track.leave('rp');
+            },
           },
           React.createElement(
             'div',
@@ -1454,8 +2340,13 @@ window.__ModuleLoader__.load({
               'button',
               {
                 className: 'fge-btn' + (props.pin ? ' fge-btn-active' : ''),
-                title: props.pin ? '已固定: 点击解除固定' : '图钉: 固定后两个面板都不能收起',
+                title: props.pinDisabled
+                  ? '非对话视图下暂不可操作图钉'
+                  : props.pin
+                    ? '已固定: 点击解除固定'
+                    : '图钉: 固定后两个面板都不能收起',
                 onClick: props.onPin,
+                disabled: !!props.pinDisabled,
               },
               React.createElement(PinIcon, null),
             ),
@@ -1511,16 +2402,21 @@ window.__ModuleLoader__.load({
 
       // ---- 悬浮面板公共外壳(头部徽标 + 标题 + 关闭 + 内容区) ----
       function FloatPanel(props) {
-        // 延迟收起(悬浮栏): 离开后宽限; 移到任一侧栏/细条/其他悬浮栏则豁免
-        var damp = useDampedHide(360, props.onHide, false);
+        // 延迟收起(悬浮栏): 由 FgeRoot 下发的保持区追踪器驱动(region 由调用方指定)
+        var track = props.track;
+        var region = props.region || 'fl';
         return React.createElement(
           'div',
           {
             className: 'fge-float',
             'data-fge-root': '1',
             style: props.style,
-            onMouseEnter: damp.enter,
-            onMouseLeave: damp.leave,
+            onMouseEnter: function () {
+              track.enter(region);
+            },
+            onMouseLeave: function () {
+              track.leave(region);
+            },
           },
           React.createElement(
             'div',
@@ -1554,6 +2450,9 @@ window.__ModuleLoader__.load({
       }
 
       // ---- 内容悬浮面板(左树文件 → 向右浮出, 可越对话区) ----
+      // 纯 textarea 编辑态: ⌘S/Ctrl+S 保存, Esc 退出编辑; mtimeMs 乐观并发 ——
+      // host 报 conflict 时提示"重新加载磁盘版 / 强制覆盖"。二进制与超限文件保持只读。
+      var MAX_EDIT_CHARS = 1024 * 1024;
       function ContentPanel(props) {
         var dataState = React.useState(null);
         var data = dataState[0];
@@ -1561,17 +2460,55 @@ window.__ModuleLoader__.load({
         var errState = React.useState(null);
         var err = errState[0];
         var setErr = errState[1];
+        var editingState = React.useState(false);
+        var editing = editingState[0];
+        var setEditing = editingState[1];
+        var draftState = React.useState('');
+        var draft = draftState[0];
+        var setDraft = draftState[1];
+        var savingState = React.useState(false);
+        var saving = savingState[0];
+        var setSaving = savingState[1];
+        var saveErrState = React.useState(null); // {conflict?:true, msg}
+        var saveErr = saveErrState[0];
+        var setSaveErr = saveErrState[1];
+        var savedFlashState = React.useState(false);
+        var savedFlash = savedFlashState[0];
+        var setSavedFlash = savedFlashState[1];
+        var reloadSeqRef = React.useRef(0); // 冲突后手动重载递增
+        var reloadSeqReload = React.useState(0);
+        var reloadSeq = reloadSeqReload[0];
+        var setReloadSeq = reloadSeqReload[1];
+        var flashTimerRef = React.useRef(null);
+
+        var canEdit = !!data && !data.binary && !data.truncated && typeof data.text === 'string';
+        var dirty = editing && canEdit && draft !== data.text;
+
+        // 卸载/换文件时清保存闪现定时器
+        React.useEffect(
+          function () {
+            return function () {
+              if (flashTimerRef.current !== null) clearTimeout(flashTimerRef.current);
+            };
+          },
+          [props.root, props.rel],
+        );
 
         React.useEffect(
           function () {
             var alive = true;
             setData(null);
             setErr(null);
+            setSaveErr(null);
+            setSavedFlash(false);
             api('file', { root: props.root, path: props.rel })
               .then(function (res) {
                 if (!alive) return;
-                if (res && res.ok) setData(res);
-                else setErr((res && res.error) || 'failed');
+                if (res && res.ok) {
+                  setData(res);
+                  setDraft(typeof res.text === 'string' ? res.text : '');
+                  setEditing(false);
+                } else setErr((res && res.error) || 'failed');
               })
               .catch(function () {
                 if (alive) setErr('rpc-failed');
@@ -1580,14 +2517,216 @@ window.__ModuleLoader__.load({
               alive = false;
             };
           },
-          [props.root, props.rel],
+          [props.root, props.rel, reloadSeq],
         );
 
+        var flashSaved = function () {
+          setSavedFlash(true);
+          if (flashTimerRef.current !== null) clearTimeout(flashTimerRef.current);
+          flashTimerRef.current = setTimeout(function () {
+            flashTimerRef.current = null;
+            setSavedFlash(false);
+          }, 1400);
+        };
+
+        var performSave = function (force) {
+          if (!canEdit || saving || data === null) return;
+          if (!dirty && force !== true) return; // 无改动不空写
+          if (draft.length > MAX_EDIT_CHARS) {
+            setSaveErr({ msg: '内容超过 1 MiB 上限，无法保存。' });
+            return;
+          }
+          setSaving(true);
+          setSaveErr(null);
+          api('save', {
+            root: props.root,
+            path: props.rel,
+            content: draft,
+            mtimeMs: data.mtimeMs,
+            force: force === true,
+          })
+            .then(function (res) {
+              setSaving(false);
+              if (res && res.ok) {
+                setData(
+                  Object.assign({}, data, { text: draft, size: res.size, mtimeMs: res.mtimeMs }),
+                );
+                flashSaved();
+                if (typeof props.onSaved === 'function') props.onSaved();
+              } else if (res && res.error === 'conflict') {
+                setSaveErr({
+                  conflict: true,
+                  msg: '文件在磁盘上已被外部修改（如 agent 同时改动）。',
+                });
+              } else {
+                setSaveErr({ msg: '保存失败：' + ((res && res.error) || 'failed') });
+              }
+            })
+            .catch(function () {
+              setSaving(false);
+              setSaveErr({ msg: '请求失败，保存未完成。' });
+            });
+        };
+
+        var exitEditing = function () {
+          if (dirty && !window.confirm('放弃未保存的更改？')) return;
+          setEditing(false);
+          setDraft(data !== null && typeof data.text === 'string' ? data.text : '');
+          setSaveErr(null);
+        };
+        var toggleEdit = function () {
+          if (!canEdit || data === null || err !== null) return;
+          if (editing) exitEditing();
+          else {
+            setDraft(data.text || '');
+            setSaveErr(null);
+            setEditing(true);
+          }
+        };
+        var doClose = function () {
+          if (dirty && !window.confirm('有未保存的更改，仍要关闭？')) return;
+          props.onClose();
+        };
+
+        var editorRef = React.useRef(null);
+        var onEditorKeyDown = function (e) {
+          if ((e.metaKey || e.ctrlKey) && String(e.key).toLowerCase() === 's') {
+            e.preventDefault();
+            e.stopPropagation();
+            performSave(e.shiftKey === true ? true : false); // Shift+⌘S = 忽略外部修改强制写
+            return;
+          }
+          if (e.key === 'Tab') {
+            e.preventDefault();
+            var el = e.target;
+            var s = typeof el.selectionStart === 'number' ? el.selectionStart : draft.length;
+            var t = typeof el.selectionEnd === 'number' ? el.selectionEnd : s;
+            var next = draft.slice(0, s) + '  ' + draft.slice(t);
+            setDraft(next);
+            setTimeout(function () {
+              if (
+                editorRef.current !== null &&
+                typeof editorRef.current.setSelectionRange === 'function'
+              ) {
+                editorRef.current.setSelectionRange(s + 2, s + 2);
+              }
+            }, 0);
+            return;
+          }
+          if (e.key === 'Escape') {
+            e.stopPropagation(); // 只退出编辑态, 不冒泡触发全局关面板
+            exitEditing();
+          }
+        };
+
+        var headExtra = canEdit
+          ? React.createElement(
+              React.Fragment,
+              null,
+              React.createElement(
+                'button',
+                {
+                  className: 'fge-btn' + (editing ? ' fge-btn-active' : ''),
+                  title: editing ? '退出编辑' : '编辑此文件',
+                  onClick: toggleEdit,
+                },
+                editing ? '退出' : '编辑',
+              ),
+              React.createElement(
+                'button',
+                {
+                  className: 'fge-btn',
+                  title: '保存(⌘S；Shift+⌘S 忽略外部修改强制写入)',
+                  onClick: function () {
+                    performSave(false);
+                  },
+                  disabled: !dirty || saving,
+                },
+                saving ? '保存中…' : '保存',
+              ),
+            )
+          : null;
+
         var body = null;
+        var editBodyStyle =
+          editing && canEdit ? { overflow: 'hidden', display: 'flex' } : undefined;
         if (err !== null) {
           body = React.createElement('div', { className: 'fge-note' }, '读取失败: ' + err);
         } else if (data === null) {
           body = React.createElement('div', { className: 'fge-note' }, '加载中…');
+        } else if (editing && canEdit) {
+          var barText = savedFlash ? '✓ 已保存' : dirty ? '未保存更改' : '已同步';
+          var conflictBox =
+            saveErr !== null && saveErr.conflict
+              ? React.createElement(
+                  'div',
+                  { className: 'fge-conflict' },
+                  saveErr.msg,
+                  React.createElement('br', null),
+                  '覆盖将丢弃磁盘上的新版本；重新加载会放弃当前编辑内容。',
+                  ' ',
+                  React.createElement(
+                    'button',
+                    {
+                      className: 'fge-btn',
+                      onClick: function () {
+                        performSave(true);
+                      },
+                    },
+                    '仍要覆盖写入',
+                  ),
+                  ' ',
+                  React.createElement(
+                    'button',
+                    {
+                      className: 'fge-btn',
+                      onClick: function () {
+                        if (dirty && !window.confirm('放弃当前编辑内容并加载磁盘最新版本？')) {
+                          return;
+                        }
+                        setSaveErr(null);
+                        reloadSeqRef.current += 1;
+                        setReloadSeq(reloadSeqRef.current);
+                      },
+                    },
+                    '重新加载磁盘版',
+                  ),
+                )
+              : null;
+          body = React.createElement(
+            'div',
+            { className: 'fge-editorcol' },
+            React.createElement(
+              'div',
+              { className: 'fge-editbar' },
+              React.createElement(
+                'span',
+                {
+                  className: savedFlash
+                    ? 'fge-editbar-saved'
+                    : dirty
+                      ? 'fge-editbar-dirty'
+                      : undefined,
+                },
+                barText,
+              ),
+              React.createElement('span', { style: { marginLeft: 'auto' } }, '⌘S 保存 · Esc 退出'),
+            ),
+            conflictBox,
+            saveErr !== null && !saveErr.conflict
+              ? React.createElement('div', { className: 'fge-saveerr' }, saveErr.msg)
+              : null,
+            React.createElement('textarea', {
+              className: 'fge-textarea',
+              ref: editorRef,
+              value: draft,
+              spellCheck: false,
+              onChange: function (e) {
+                setDraft(e.target.value);
+              },
+              onKeyDown: onEditorKeyDown,
+            }),
+          );
         } else if (data.binary) {
           body = React.createElement(
             'div',
@@ -1611,9 +2750,13 @@ window.__ModuleLoader__.load({
           FloatPanel,
           {
             style: props.style,
-            title: props.rel,
-            onClose: props.onClose,
+            track: props.track,
+            region: props.region || 'cf',
+            title: props.rel + (dirty ? ' •' : ''),
+            headExtra: headExtra,
+            onClose: doClose,
             onHide: props.onHide,
+            bodyProps: editBodyStyle !== undefined ? { style: editBodyStyle } : undefined,
           },
           body,
         );
@@ -1693,6 +2836,8 @@ window.__ModuleLoader__.load({
           {
             style: props.style,
             badge: props.change.status,
+            track: props.track,
+            region: props.region || 'df',
             title: props.change.path,
             onClose: props.onClose,
             onHide: props.onHide,
@@ -2154,6 +3299,8 @@ window.__ModuleLoader__.load({
           {
             style: props.style,
             title: title,
+            track: props.track,
+            region: props.region || 'hs',
             afterTitle: branchPick,
             headExtra: headExtra,
             bodyProps: viewHash === null ? { onScroll: onListScroll } : undefined,
@@ -2254,6 +3401,78 @@ window.__ModuleLoader__.load({
         var statusVersion = statusVersionState[0];
         var setStatusVersion = statusVersionState[1];
 
+        // ---- 视图观测(对话 vs 其他页签) ----
+        // active view ≠ 对话 → 双树强制细条化(快照 pin/open), 切回对话 → 还原快照。
+        // 轨迹/数据库等任何非对话页签一视同仁(fge 是侧栏联动的唯一事实来源,
+        // db-console 等未来页签无需自行广播)。快照只进内存不落盘。
+        var awayState = React.useState(null); // null=对话视图 | 字符串=离场中的页签名
+        var away = awayState[0];
+        var setAway = awayState[1];
+        var awaySnapRef = React.useRef(null);
+        var awaySnapTakenRef = React.useRef(false); // 本轮离场是否已处理过(含无快照情形)
+        var everChatRef = React.useRef(false); // 本次挂载以来是否观测到过对话视图
+        var awayRef = React.useRef(false);
+        var cacheAppliedRef = React.useRef(false); // cwd 缓存是否已回放进当前状态
+
+        // 保持区追踪器(左右各一): onFire 经 ref 取最新 hide*, 避免 stale 闭包
+        var hideLeftRef = React.useRef(null);
+        var hideRightRef = React.useRef(null);
+        var leftTrack = React.useState(function () {
+          return makeSideTracker(function () {
+            if (hideLeftRef.current) hideLeftRef.current();
+          });
+        })[0];
+        var rightTrack = React.useState(function () {
+          return makeSideTracker(function () {
+            if (hideRightRef.current) hideRightRef.current();
+          });
+        })[0];
+        React.useEffect(function () {
+          return function () {
+            leftTrack.dispose();
+            rightTrack.dispose();
+          };
+        }, []);
+
+        // 页签观测器: 只读会话头部 tablist 的选中态, 与 fge 几何观测器分开,
+        // 回调仅做字符串比较 + 条件 setState, 开销可忽略。
+        React.useEffect(function () {
+          function readActiveLabel() {
+            var list = findSessionTablist();
+            if (!list) return null;
+            var tabs = Array.prototype.slice.call(list.querySelectorAll('[role="tab"]'));
+            for (var i = 0; i < tabs.length; i++) {
+              var t = tabs[i];
+              var sel = t.getAttribute && t.getAttribute('aria-selected') === 'true';
+              if (!sel) {
+                var cls = typeof t.className === 'string' ? t.className : '';
+                sel = /(^|\s)(active|selected|is-active)(\s|$)/.test(cls);
+              }
+              if (sel) return (t.textContent || '').trim();
+            }
+            return null;
+          }
+          function sync() {
+            var label = readActiveLabel();
+            var next = typeof label === 'string' && label !== '' && label !== '对话' ? label : null;
+            if (next === null) everChatRef.current = true; // 观测到对话态
+            setAway(function (prev) {
+              return prev === next ? prev : next;
+            });
+          }
+          sync();
+          var obs = new MutationObserver(sync);
+          obs.observe(document.body, {
+            subtree: true,
+            childList: true,
+            attributes: true,
+            attributeFilter: ['class', 'aria-selected'],
+          });
+          return function () {
+            obs.disconnect();
+          };
+        }, []);
+
         var cacheKey = info ? info.repoRoot || info.cwd : null;
         var root = sessionCwd || (info ? info.cwd : null);
 
@@ -2311,7 +3530,9 @@ window.__ModuleLoader__.load({
                 if (!alive || !st || !st.ok) return;
                 setStatus(st);
                 var cached = readCache(info.repoRoot);
-                if (cached) {
+                // 离场中不接受缓存回放(会顶掉强制收起态); 回对话后由快照还原负责
+                if (cached && !awayRef.current) {
+                  cacheAppliedRef.current = true;
                   if (typeof cached.pin === 'boolean') setPin(cached.pin);
                   if (typeof cached.leftW === 'number') setLeftW(cached.leftW);
                   if (typeof cached.rightW === 'number') setRightW(cached.rightW);
@@ -2329,9 +3550,10 @@ window.__ModuleLoader__.load({
         );
 
         // 持久化 cwd 缓存(含固定态: 让「固定+展开」跨会话/刷新保留)
+        // 离场中的强制收起态不落缓存 —— 否则刷新后快照语义被污染
         React.useEffect(
           function () {
-            if (!cacheKey) return;
+            if (!cacheKey || awayRef.current) return;
             writeCache(cacheKey, {
               pin: pin,
               leftW: leftW,
@@ -2482,6 +3704,34 @@ window.__ModuleLoader__.load({
           });
         }, []);
 
+        // 树内写操作事件: 重命名/删除同步已打开的内容悬浮面板(前缀映射),
+        // 避免面板还停在旧路径上(其内容已失效或已被删除)。
+        var onTreeEvent = React.useCallback(function (evt) {
+          if (!evt) return;
+          if (evt.type === 'renamed') {
+            var from = evt.from;
+            var to = evt.to;
+            setContent(function (prev) {
+              if (!prev) return prev;
+              if (prev.rel === from) {
+                var base = to.slice(to.lastIndexOf('/') + 1);
+                return { rel: to, name: base };
+              }
+              if (prev.rel.startsWith(from + '/')) {
+                return { rel: to + prev.rel.slice(from.length), name: prev.name };
+              }
+              return prev;
+            });
+          } else if (evt.type === 'deleted') {
+            var del = evt.rel;
+            setContent(function (prev) {
+              if (!prev) return prev;
+              if (prev.rel === del || prev.rel.startsWith(del + '/')) return null;
+              return prev;
+            });
+          }
+        }, []);
+
         // 提交历史开关: 打开时关闭 diff 浮层(互斥共享锚位)
         var toggleHistory = React.useCallback(
           function () {
@@ -2538,6 +3788,48 @@ window.__ModuleLoader__.load({
           setHistoryOpen(false);
         }, []);
 
+        // 保持区追踪器的触发回调指向最新 hide*(每渲染刷新, 见 makeSideTracker)
+        hideLeftRef.current = hideLeft;
+        hideRightRef.current = hideRight;
+
+        // 离场/回归转换: 进非对话页签 → 快照并强制收起(联动关闭全部悬浮栏);
+        // 切回对话 → 还原快照。挂载即离场(如刷新后落在数据库页签)不算"进入":
+        // 不产生快照, 切回对话时回退默认的展开+固定 —— 即使 cwd 缓存先行回放
+        // (cacheAppliedRef)也不把回放值当作进入前状态。
+        React.useEffect(
+          function () {
+            awayRef.current = !!away;
+            if (away && !awaySnapTakenRef.current) {
+              awaySnapTakenRef.current = true;
+              if (everChatRef.current && !cacheAppliedRef.current) {
+                awaySnapRef.current = { pin: pin, leftOpen: leftOpen, rightOpen: rightOpen };
+              }
+              setPin(false);
+              setLeftOpen(false);
+              setRightOpen(false);
+              setContent(null);
+              setDiff(null);
+              setLinkage(null);
+              setHistoryOpen(false);
+            } else if (!away && awaySnapTakenRef.current) {
+              awaySnapTakenRef.current = false;
+              var snap = awaySnapRef.current;
+              awaySnapRef.current = null;
+              if (snap) {
+                if (typeof snap.pin === 'boolean') setPin(snap.pin);
+                if (typeof snap.leftOpen === 'boolean') setLeftOpen(snap.leftOpen);
+                if (typeof snap.rightOpen === 'boolean') setRightOpen(snap.rightOpen);
+              } else {
+                // 无快照 → 回退默认展开+固定(共识口径)
+                setPin(true);
+                setLeftOpen(true);
+                setRightOpen(true);
+              }
+            }
+          },
+          [away],
+        );
+
         // 布局计算
         // 可显示仍看「完整留白能容纳最小宽度」; 最大宽度 = 完整留白的 2/3(减少 1/3),
         // 面板拖不到对话区边缘, 留出更从容的留白。
@@ -2553,6 +3845,31 @@ window.__ModuleLoader__.load({
         var rightWidth = rightCanShow ? clamp(rightW, MIN_W, rightMaxW) : 0;
         var leftShow = leftOpen && leftCanShow;
         var rightShow = rightOpen && rightCanShow;
+
+        // 净空广播: 把「该侧树面板对同页内容的占位」写进根级 CSS 变量
+        // (--dsh-fge-strip-clear-l / -r), 供同页其他视图(数据库页签等)内缩
+        // 内容。三态: 无树=0 / 细条=60px(细条右缘34+富余26) /
+        // 面板展开=实宽+14(吸边8+间隙6) —— 展开时页面同步让位, 不被覆盖。
+        // fge 卸载/不可渲染时变量随清理归零, 对方无需感知 fge 存在与否。
+        React.useEffect(
+          function () {
+            var s = document.documentElement.style;
+            function sideVal(canShow, show, width) {
+              if (!canShow) return '0px';
+              return show ? Math.round(width + 14) + 'px' : '60px';
+            }
+            s.setProperty('--dsh-fge-strip-clear-l', sideVal(leftCanShow, leftShow, leftWidth));
+            s.setProperty('--dsh-fge-strip-clear-r', sideVal(rightCanShow, rightShow, rightWidth));
+          },
+          [leftCanShow, leftShow, leftWidth, rightCanShow, rightShow, rightWidth],
+        );
+        React.useEffect(function () {
+          return function () {
+            var s = document.documentElement.style;
+            s.removeProperty('--dsh-fge-strip-clear-l');
+            s.removeProperty('--dsh-fge-strip-clear-r');
+          };
+        }, []);
 
         // 自动刷新(git 状态): turn 结束(running true→false)时由上方事件触发。
         // 冷却 1s; 仅当右侧面板可见(rightShow)时真正重取, 否则挂起待面板展开时补刷。
@@ -2678,7 +3995,10 @@ window.__ModuleLoader__.load({
                 style: leftPanelStyle,
                 cwd: info.cwd,
                 root: root,
+                cacheKey: cacheKey,
                 pin: pin,
+                pinDisabled: !!away,
+                track: leftTrack,
                 onPin: togglePin,
                 onRefresh: refresh,
                 onCollapse: hideLeft,
@@ -2686,6 +4006,8 @@ window.__ModuleLoader__.load({
                 onResizeStart: resize('left'),
                 refreshTick: refreshTick,
                 onFileClick: onFileClick,
+                onMutate: refreshStatus,
+                onTreeEvent: onTreeEvent,
               })
             : leftCanShow
               ? React.createElement(Strip, {
@@ -2703,6 +4025,8 @@ window.__ModuleLoader__.load({
                 status: status,
                 repoRoot: info.repoRoot,
                 pin: pin,
+                pinDisabled: !!away,
+                track: rightTrack,
                 onPin: togglePin,
                 onRefresh: refresh,
                 onCollapse: hideRight,
@@ -2731,17 +4055,22 @@ window.__ModuleLoader__.load({
           content
             ? React.createElement(ContentPanel, {
                 style: contentStyle,
+                track: leftTrack,
+                region: 'cf',
                 root: root,
                 rel: content.rel,
                 onClose: function () {
                   setContent(null);
                 },
                 onHide: hideLeft,
+                onSaved: refreshStatus,
               })
             : null,
           diff
             ? React.createElement(DiffPanel, {
                 style: diffStyle,
+                track: rightTrack,
+                region: 'df',
                 root: root,
                 change: diff.change,
                 repoRoot: info.repoRoot,
@@ -2755,6 +4084,8 @@ window.__ModuleLoader__.load({
           historyOpen && info.repoRoot
             ? React.createElement(HistoryPanel, {
                 style: diffStyle, // 与 diff 浮层互斥共享锚位(开一关一)
+                track: rightTrack,
+                region: 'hs',
                 root: root,
                 repoRoot: info.repoRoot,
                 refName: historyRefName,

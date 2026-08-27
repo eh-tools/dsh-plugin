@@ -2,8 +2,9 @@
  * file-git-explorer host 逻辑冒烟测试(真实 git, 无 DSH 环境, 离线可跑)
  *
  * 直接 import 静态双半插件的 lib/index.js, 用 mock ctx(webServer 捕获路由 +
- * 真实 child_process 充当 subprocess 服务)挂载, 再经注册的 HTTP 路由全链路
- * 校验 info / tree(三区划分与 reveal) / status / diff / file / 防穿越 / 信任栅栏。
+ * 真实 child_process 充当 subprocess 服务 + 内存版 jobs 注册表)挂载, 再经注册
+ * 的 HTTP 路由全链路校验 info / tree(三区划分与 reveal) / status / diff / file /
+ * 防穿越 / 信任栅栏 / shell 行(start/state/output/stop 单槽生命周期)。
  *
  * 前置: cwd 必须是一个 git 仓库(仓库自身即是); git 在 PATH 中。
  * 断言与仓库工作区状态无关(不依赖当前分支名、不依赖未提交变更)。
@@ -18,7 +19,7 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import { apply } from '../lib/index.js';
 
-// ---- fake subprocess: 真实 child_process spawn + 收集输出 ----
+// ---- fake subprocess: 真实 child_process spawn + offset 制输出收集 + terminate ----
 function fakeSubprocess() {
     return {
         spawn(spec) {
@@ -37,24 +38,66 @@ function fakeSubprocess() {
             });
             const done = new Promise((resolve, reject) => {
                 cp.on('error', reject);
-                cp.on('close', (code) => resolve({ exitCode: code, signal: null }));
+                cp.on('close', (code, signal) =>
+                    resolve({ exitCode: code, signal: signal ?? null }),
+                );
             });
+            // readFrom(offset): 与真实收集器同形 —— 字节偏移切片 + nextOffset;
+            // 测试数据均为 ASCII, 字符位 == 字节位。
+            const readerOf = (str) => ({
+                readFrom: (offset) => {
+                    const pos = typeof offset === 'number' && offset > 0 ? offset : 0;
+                    return { text: str.slice(pos), nextOffset: str.length, lossy: false };
+                },
+            });
+            let killed = false;
             return {
                 done,
                 stdin: cp.stdin,
                 collected: {
-                    stdout: { readFrom: () => ({ text: out }) },
-                    stderr: { readFrom: () => ({ text: err }) },
+                    stdout: {
+                        readFrom: (o) => readerOf(out).readFrom(o),
+                    },
+                    stderr: {
+                        readFrom: (o) => readerOf(err).readFrom(o),
+                    },
                 },
-                terminate: () => cp.kill(),
+                terminate: () => {
+                    if (killed || cp.exitCode !== null) return false;
+                    killed = true;
+                    cp.kill();
+                    return true;
+                },
             };
         },
     };
 }
 
+// ---- fake jobs: 内存版注册表(记录 start 规格, 吸收 done) ----
+const jobsSvc = (() => {
+    let n = 0;
+    const started = [];
+    return {
+        started,
+        attachController() {},
+        start(spec) {
+            const id = 'shell-' + ++n;
+            started.push({ id, spec });
+            void Promise.resolve()
+                .then(() => spec.run().done)
+                .catch(() => {});
+            return id;
+        },
+    };
+})();
+
 let capturedRoute = null;
 const ctx = {
-    get: (name) => (name === 'subprocess' ? fakeSubprocess() : undefined),
+    get: (name) => {
+        if (name === 'subprocess') return fakeSubprocess();
+        if (name === 'jobs') return jobsSvc;
+        return undefined;
+    },
     webServer: {
         register: (r) => {
             capturedRoute = r;
@@ -396,6 +439,159 @@ ok('show: 详情/diff/非法 hash');
         ok('tree ignored reveal: 忽略目录内部全量展示');
     } finally {
         fs.rmSync(fix, { recursive: true, force: true });
+    }
+}
+
+// 14. shell 行: 槽按工作区(root)隔离的生命周期(start/state/output/stop)
+//     命令经 $SHELL -c 执行(POSIX 前提与全文件一致); 断言不依赖具体解释器。
+const CWD = process.cwd();
+
+// 轮询辅助: 模拟客户端游标, 累积增量直到谓词命中或超时(游标绑定同一 root)
+async function drainUntil(pred, timeoutMs = 8000, root = CWD) {
+    const cur = { root, outFrom: 0, errFrom: 0 };
+    const acc = { out: '', err: '', res: null };
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+        const r = await callAt('POST', base('shellOutput'), cur);
+        assert.equal(r.body.ok, true);
+        acc.res = r.body;
+        if (r.body.out && r.body.out.text) acc.out += r.body.out.text;
+        if (r.body.err && r.body.err.text) acc.err += r.body.err.text;
+        if (r.body.out) cur.outFrom = r.body.out.next;
+        if (r.body.err) cur.errFrom = r.body.err.next;
+        if (pred(acc)) return acc;
+        if (Date.now() > deadline) throw new Error('drainUntil 超时');
+        await new Promise((res) => setTimeout(res, 50));
+    }
+}
+
+// 14a. 无任务时 state/output 返回 job:null(缺省 root 回退进程 cwd)
+const stEmpty = await callAt('POST', base('shellState'), {});
+assert.equal(stEmpty.body.ok, true);
+assert.equal(stEmpty.body.job, null);
+const outEmpty = await callAt('POST', base('shellOutput'), {});
+assert.equal(outEmpty.body.job, null);
+ok('shellState/shellOutput: 无任务时 job:null');
+
+// 14b. 非法命令 / 非法 root 拒绝
+for (const bad of ['', '   ', 'x'.repeat(4001), null, 42]) {
+    const r = await callAt('POST', base('shellStart'), { command: bad });
+    assert.equal(r.body.ok, false, 'command=' + JSON.stringify(bad) + ' 应拒绝');
+    assert.equal(r.body.error, 'invalid-command');
+}
+const badRootStop = await callAt('POST', base('shellStop'), { root: 'relative/path' });
+assert.equal(badRootStop.body.ok, false);
+assert.equal(badRootStop.body.error, 'invalid-root');
+ok('shellStart/shellStop: 非法命令(invalid-command)/非法 root(invalid-root)');
+
+// 14c. 快命令: echo → completed / exit 0 / 输出可见
+{
+    const started = await callAt('POST', base('shellStart'), {
+        root: CWD,
+        command: 'echo fge-shell-ok',
+    });
+    assert.equal(started.body.ok, true);
+    assert.match(started.body.job.id, /^shell-\d+$/);
+    assert.equal(
+        started.body.job.status === 'running' || started.body.job.status === 'completed',
+        true,
+    );
+    // jobs 注册表收到同 kind/label
+    const rec = jobsSvc.started[jobsSvc.started.length - 1];
+    assert.equal(rec.spec.kind, 'shell');
+    assert.equal(rec.spec.label, 'echo fge-shell-ok');
+    assert.equal(typeof rec.spec.run, 'function');
+
+    const fin = await drainUntil((a) => a.res.done && a.out.includes('fge-shell-ok'));
+    assert.equal(fin.res.job.status, 'completed');
+    assert.equal(fin.res.job.exitCode, 0);
+    ok('shellStart echo: completed/exit 0 + 尾部输出可见');
+
+    // 终态记录保留: 同 root 的 state 仍可查
+    const after = await callAt('POST', base('shellState'), { root: CWD });
+    assert.equal(after.body.job.status, 'completed');
+}
+
+// 14d. 单工作区单槽: 运行中再 start → busy; stop → killed(SIGTERM); 随后可再次启动
+{
+    const long = await callAt('POST', base('shellStart'), { root: CWD, command: 'sleep 2' });
+    assert.equal(long.body.ok, true);
+    const busy = await callAt('POST', base('shellStart'), { root: CWD, command: 'echo nope' });
+    assert.equal(busy.body.ok, false);
+    assert.equal(busy.body.error, 'busy');
+    assert.equal(busy.body.job.id, long.body.job.id);
+
+    const stopped = await callAt('POST', base('shellStop'), { root: CWD });
+    assert.equal(stopped.body.stopped, true);
+    assert.equal(stopped.body.job.status, 'stopping');
+
+    const fin = await drainUntil(
+        (a) => a.res.job.status !== 'running' && a.res.job.status !== 'stopping',
+    );
+    assert.equal(fin.res.job.status, 'killed');
+    assert.equal(fin.res.job.signal, 'SIGTERM');
+    ok('shellStop: 单槽 busy 拒绝 + TERM→killed(SIGTERM)');
+
+    // 槽位释放: 再次启动可用
+    const again = await callAt('POST', base('shellStart'), { root: CWD, command: 'echo again-ok' });
+    assert.equal(again.body.ok, true);
+    const fin2 = await drainUntil((a) => a.res.done && a.out.includes('again-ok'));
+    assert.equal(fin2.res.job.exitCode, 0);
+    ok('shell 重启: 终态后单槽释放');
+}
+
+// 14e. spawn 失败归一为 failed(done 契约不 reject)
+{
+    const bad = await callAt('POST', base('shellStart'), {
+        root: CWD,
+        command: 'fge-no-such-binary-xyz',
+    });
+    assert.equal(bad.body.ok, true); // 进程已起(shell 在), 由 shell 报非零退出
+    const fin = await drainUntil((a) => a.res.done);
+    assert.ok(
+        fin.res.job.status === 'completed' || fin.res.job.status === 'failed',
+        'shell 层报错应为 completed(非零退出)或 failed',
+    );
+    ok('shell 不存在命令: 归一终态、不悬挂');
+}
+
+// 14f. 工作区隔离: 不同 root 各自单槽、互不可见、可并行; ✕ 只作用于本工作区
+{
+    const dirA = fs.mkdtempSync(path.join(os.tmpdir(), 'fge-sh-a-'));
+    const dirB = fs.mkdtempSync(path.join(os.tmpdir(), 'fge-sh-b-'));
+    try {
+        const longA = await callAt('POST', base('shellStart'), { root: dirA, command: 'sleep 2' });
+        assert.equal(longA.body.ok, true);
+
+        // 切到 B: 看不到 A 的任务, 且能立即启动自己的(B 不被 A busy)
+        const stB = await callAt('POST', base('shellState'), { root: dirB });
+        assert.equal(stB.body.job, null, 'B 的槽不应看见 A 的任务');
+        const stA = await callAt('POST', base('shellState'), { root: dirA });
+        assert.equal(stA.body.job.status, 'running');
+
+        const echoB = await callAt('POST', base('shellStart'), {
+            root: dirB,
+            command: 'echo b-ok',
+        });
+        assert.equal(echoB.body.ok, true, '不同工作区应可并行各跑各的');
+
+        // 输出互不串台: B 能看到自己的输出; 同期 A 仍在跑
+        const finB = await drainUntil((a) => a.res.done && a.out.includes('b-ok'), 8000, dirB);
+        assert.equal(finB.res.job.exitCode, 0);
+        const midA = await callAt('POST', base('shellState'), { root: dirA });
+        assert.equal(midA.body.job.status, 'running', 'B 完成不应影响 A');
+
+        // ✕ 只停本工作区: 停 B 不动 A, 再停 A
+        const stopB = await callAt('POST', base('shellStop'), { root: dirB });
+        assert.equal(stopB.body.stopped, false, 'B 已终结, stop 应 no-op');
+        const stopA = await callAt('POST', base('shellStop'), { root: dirA });
+        assert.equal(stopA.body.stopped, true);
+        const finA = await drainUntil((a) => a.res.job.status === 'killed', 8000, dirA);
+        assert.equal(finA.res.job.signal, 'SIGTERM');
+        ok('shell 工作区隔离: 双槽并行/互不可见/✕ 只作用本区');
+    } finally {
+        fs.rmSync(dirA, { recursive: true, force: true });
+        fs.rmSync(dirB, { recursive: true, force: true });
     }
 }
 

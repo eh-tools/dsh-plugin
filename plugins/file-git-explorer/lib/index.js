@@ -16,14 +16,28 @@
  *   POST /fge/api/search  → { root?, query } → 按名搜索命中项(三区徽标, 截断上限)
  *   POST /fge/api/log     → { repoRoot, ref?, skip?, limit? } → 分页提交列表 + head
  *   POST /fge/api/show    → { repoRoot, hash, path? } → 单提交详情/merge 标记/单文件 diff
+ *   POST /fge/api/save    → { root?, path, content, mtimeMs?, force? } → 保存文件
+ *       读取时的 mtimeMs 回传做乐观并发校验: 磁盘已变(±1ms)且未 force → conflict;
+ *       内容 ≤1MiB(与 file 预览对称, save 路由单独放宽 body 上限)。
+ *   POST /fge/api/create  → { root?, path, kind: 'file'|'dir' } → 新建(父目录自动补建)
+ *   POST /fge/api/rename  → { root?, path, newName } → 同目录重命名(目标存在即拒绝)
+ *   POST /fge/api/remove  → { root?, path, recursive? } → 删除文件/符号链接/目录
+ *       目录必须显式 recursive=true 才整体删除; 所有写类接口拒绝触及 .git 段。
+ *   POST /fge/api/shellStart  → { root?, command } → 该工作区启动后台命令(挂 ctx.jobs, kind 'shell')
+ *   POST /fge/api/shellState  → { root? } → 该工作区槽内任务快照(GUI 刷新恢复用)
+ *   POST /fge/api/shellOutput → { root?, outFrom?, errFrom? } → 尾部输出增量(绝对字符位切片)
+ *   POST /fge/api/shellStop   → { root? } → 终止该工作区当前任务(TERM→宽限→KILL 整树)
  *
  * git 一律经 subprocess 服务执行(argv 数组, 无 shell), 路径全部做防穿越校验:
  * 文件树/file 只能落在 root 之下, diff/status 的仓库根必须是绝对路径。
+ * shell 行是唯一经用户 shell 解释命令串的入口(解释器解析见 lib/shell.js),
+ * 同样只服务信任栅栏之后的本机请求; 启动即注册为无主后台任务(完成不通知模型)。
  *
  * 挂载: 见 cordis.patch.yml —— 安装后随 profile boot 自动挂载。
  */
 
 import fsp from 'node:fs/promises';
+import fs from 'node:fs';
 import path from 'node:path';
 import {
   isDotName,
@@ -42,7 +56,16 @@ import {
   parseLogOut,
   parseNumStatZ,
   parentsFromRevList,
+  validSegmentName,
+  splitEditRel,
 } from './git.js';
+import {
+  resolveShellArgv,
+  appendTail,
+  sliceSince,
+  validShellCommand,
+  SHELL_STREAM_CAP_CHARS,
+} from './shell.js';
 
 export const name = 'dsh-file-git-explorer';
 
@@ -51,6 +74,8 @@ export const inject = ['webServer'];
 
 const FILE_CAP = 1024 * 1024; // 单文件内容预览上限 1 MiB
 const BODY_CAP = 256 * 1024; // 请求体上限
+// save 路由单独放宽: 内容上限同 FILE_CAP(1MiB), JSON 转义最坏 ~2 倍膨胀 + 余量
+const SAVE_BODY_CAP = 3 * 1024 * 1024;
 const ROUTE_PREFIX = '/fge/api';
 const SEARCH_SCAN_CAP = 20000; // 搜索扫描条目上限(超出即截断, 忽略区可能巨大)
 const SEARCH_RETURN_CAP = 300; // 搜索返回条目上限(排序后截断)
@@ -170,7 +195,8 @@ export function apply(ctx) {
     if (!st.isFile()) return { ok: false, error: 'not-file' };
     const size = st.size;
     const truncated = size > FILE_CAP;
-    if (truncated) return { ok: true, text: '', binary: false, truncated: true, size };
+    if (truncated)
+      return { ok: true, text: '', binary: false, truncated: true, size, mtimeMs: st.mtimeMs };
     const sizeToRead = size;
     const buf = Buffer.alloc(sizeToRead);
     let bytesRead = 0;
@@ -194,6 +220,7 @@ export function apply(ctx) {
       binary,
       truncated,
       size,
+      mtimeMs: st.mtimeMs, // 保存接口做乐观并发校验用
     };
   }
 
@@ -471,6 +498,147 @@ export function apply(ctx) {
     return p;
   }
 
+  // ---- 写类接口(save/create/rename/remove)共用校验 ----
+
+  /**
+   * 编辑类请求的目标定位: root 合法 + rel 逐段通过名称校验(拒绝 '..'/' .git'/空段等,
+   * 防穿越由 resolveWithin 兜底), 返回 {base, abs}; 非法各返错误码。
+   */
+  function editTargetOf(body) {
+    const base = baseOf(body);
+    if (base === null) return { error: 'invalid-root' };
+    const segs = splitEditRel(typeof body.path === 'string' ? body.path : '');
+    if (segs === null) return { error: 'invalid-path' };
+    const abs = resolveWithin(base, segs.join('/'));
+    if (abs === null || abs === base) return { error: 'invalid-path' }; // 根本身不可写/删
+    return { base, abs };
+  }
+
+  /** lstat 便捷封装(不跟符号链接); 失败返回 null。 */
+  async function lstatOrNull(abs) {
+    try {
+      return await fsp.lstat(abs);
+    } catch {
+      return null;
+    }
+  }
+
+  /** 保存文件。mtimeMs 为读取时版本; 磁盘已变且未 force → conflict 并带磁盘现状。 */
+  async function handleSave(body) {
+    const t = editTargetOf(body);
+    if (t.error) return { ok: false, error: t.error };
+    if (typeof body.content !== 'string') return { ok: false, error: 'invalid-content' };
+    if (Buffer.byteLength(body.content, 'utf8') > FILE_CAP) {
+      return { ok: false, error: 'too-large', limit: FILE_CAP };
+    }
+    const st = await lstatOrNull(t.abs);
+    if (st && !st.isFile()) return { ok: false, error: 'not-file' };
+    // 乐观并发: 仅当调用方携带 mtimeMs 才校验; ±1ms 容差(FAT 类文件系统秒级精度)
+    if (
+      st &&
+      typeof body.mtimeMs === 'number' &&
+      body.force !== true &&
+      Math.abs(st.mtimeMs - body.mtimeMs) > 1
+    ) {
+      return { ok: false, error: 'conflict', mtimeMs: st.mtimeMs, size: st.size };
+    }
+    try {
+      await fsp.writeFile(t.abs, body.content, 'utf8');
+    } catch (err) {
+      return {
+        ok: false,
+        error: 'write-failed',
+        detail: String((err && err.code) || err || 'write failed').slice(0, 120),
+      };
+    }
+    const fresh = await fsp.stat(t.abs);
+    return { ok: true, size: fresh.size, mtimeMs: fresh.mtimeMs };
+  }
+
+  /** 新建文件/目录。父目录缺失自动补建(mkdir -p); 目标已存在 → exists。 */
+  async function handleCreate(body) {
+    const t = editTargetOf(body);
+    if (t.error) return { ok: false, error: t.error };
+    const kind = body.kind === 'dir' ? 'dir' : 'file';
+    if ((await lstatOrNull(t.abs)) !== null) return { ok: false, error: 'exists' };
+    try {
+      if (kind === 'dir') {
+        await fsp.mkdir(t.abs, { recursive: true });
+      } else {
+        await fsp.mkdir(path.dirname(t.abs), { recursive: true });
+        await fsp.writeFile(t.abs, '', { flag: 'wx', encoding: 'utf8' }); // 存在即抛 EEXIST
+      }
+    } catch (err) {
+      if (err && err.code === 'EEXIST') return { ok: false, error: 'exists' };
+      return {
+        ok: false,
+        error: 'create-failed',
+        detail: String((err && err.code) || err || 'create failed').slice(0, 120),
+      };
+    }
+    const st = await fsp.stat(t.abs).catch(() => null);
+    if (st === null) return { ok: false, error: 'create-failed' };
+    if (kind === 'dir' && !st.isDirectory()) return { ok: false, error: 'exists' };
+    return { ok: true, kind, size: kind === 'file' ? 0 : undefined, mtimeMs: st.mtimeMs };
+  }
+
+  /** 同目录重命名。newName 只允许单个合法段; 目标已存在 → exists。 */
+  async function handleRename(body) {
+    const t = editTargetOf(body);
+    if (t.error) return { ok: false, error: t.error };
+    if (!validSegmentName(typeof body.newName === 'string' ? body.newName : '')) {
+      return { ok: false, error: 'invalid-name' };
+    }
+    const src = await lstatOrNull(t.abs);
+    if (src === null) return { ok: false, error: 'not-found' };
+    const dst = path.join(path.dirname(t.abs), body.newName);
+    if ((await lstatOrNull(dst)) !== null) return { ok: false, error: 'exists' };
+    try {
+      await fsp.rename(t.abs, dst);
+    } catch (err) {
+      return {
+        ok: false,
+        error: 'rename-failed',
+        detail: String((err && err.code) || err || 'rename failed').slice(0, 120),
+      };
+    }
+    return { ok: true };
+  }
+
+  /**
+   * 删除。文件/符号链接直接 unlink; 目录必须显式 recursive=true(rm -rf 语义),
+   * 否则尝试 rmdir 仅接受空目录(non-empty 报错)。根目录不可删(editTargetOf 已挡)。
+   */
+  async function handleRemove(body) {
+    const t = editTargetOf(body);
+    if (t.error) return { ok: false, error: t.error };
+    const st = await lstatOrNull(t.abs);
+    if (st === null) return { ok: false, error: 'not-found' };
+    try {
+      if (st.isFile() || st.isSymbolicLink()) {
+        await fsp.unlink(t.abs);
+      } else if (st.isDirectory()) {
+        if (body.recursive === true) {
+          await fsp.rm(t.abs, { recursive: true, force: false });
+        } else {
+          await fsp.rmdir(t.abs); // ENOTEMPTY → not-empty
+        }
+      } else {
+        return { ok: false, error: 'unsupported-type' };
+      }
+    } catch (err) {
+      if (err && (err.code === 'ENOTEMPTY' || err.code === 'EEXIST')) {
+        return { ok: false, error: 'not-empty' };
+      }
+      return {
+        ok: false,
+        error: 'remove-failed',
+        detail: String((err && err.code) || err || 'remove failed').slice(0, 120),
+      };
+    }
+    return { ok: true };
+  }
+
   /**
    * 文件搜索(按名/相对路径, 大小写不敏感子串): 三区覆盖 + 截断上限。
    * git 仓库: `ls-files -c -o --exclude-standard`(可见+隐藏)与
@@ -570,6 +738,277 @@ export function apply(ctx) {
     return { ok: true, matches, truncated };
   }
 
+  // ---- shell 行(shell bar): 单槽后台命令执行 ----
+
+  /**
+   * 可执行探测: 绝对路径直接 access X_OK; 裸名扫 PATH(Windows 附 PATHEXT)。
+   * 仅用于解释器解析($SHELL / pwsh), 不参与任何路径穿越校验。
+   * 有意留在 host 半(依赖 fs/process.env, 注入反而绕); lib/shell.js 只收
+   * 纯字符串/窗口数学, resolveShellArgv 以 canExec 参数接收本探测。
+   */
+  function canExec(nameOrPath) {
+    try {
+      if (path.isAbsolute(nameOrPath)) {
+        fs.accessSync(nameOrPath, fs.constants.X_OK);
+        return true;
+      }
+      const dirs = (process.env.PATH ?? '').split(path.delimiter).filter(Boolean);
+      const exts =
+        process.platform === 'win32'
+          ? (process.env.PATHEXT ?? '.EXE').split(';').filter(Boolean)
+          : [''];
+      for (const dir of dirs) {
+        for (const ext of exts) {
+          try {
+            fs.accessSync(path.join(dir, nameOrPath + ext), fs.constants.X_OK);
+            return true;
+          } catch {
+            // 继续找下一个候选
+          }
+        }
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
+  let shellArgvCache = null;
+  /** 用户默认 shell 的 argv 前缀, 按进程缓存一次。 */
+  function shellArgv() {
+    if (shellArgvCache === null) {
+      shellArgvCache = resolveShellArgv(process.platform, process.env.SHELL, canExec);
+    }
+    return shellArgvCache;
+  }
+
+  let jobControllerAttached = false;
+  /** 防御性自挂 job controller: 某些组合没在根上加载 tool-jobs 时无主 start 会抛。 */
+  function ensureJobController(jobs) {
+    if (jobControllerAttached || typeof jobs.attachController !== 'function') return;
+    try {
+      jobs.attachController('file-git-explorer');
+    } catch {
+      // 已挂过 / 不可挂: 忽略, start 时再按真实错误上报
+    }
+    jobControllerAttached = true;
+  }
+
+  /**
+   * 单槽记账: 每个工作区(cwd)各自至多一条 running/stopping 任务(宿主侧记账,
+   * 跨 GUI 刷新/多开成立; 不同工作区互不可见、可并行)。任务终结后记录保留
+   * (shellState/shellOutput 仍可查), 直到该工作区下一次 start 覆盖;
+   * 终态槽总量超上限时按 FIFO 淘汰最旧的终态记录(运行中永不淘汰)。
+   */
+  const shellSlots = new Map(); // root(归一绝对路径) → slot
+  const SHELL_SLOT_CAP = 50;
+
+  /** 按请求 root 取槽; root 非法返回 error, 无记录返回 slot:null。 */
+  function slotFor(body) {
+    const base = baseOf(body);
+    if (base === null) return { error: 'invalid-root' };
+    return { base, slot: shellSlots.get(base) ?? null };
+  }
+
+  /** 终态槽超上限时按插入序淘汰最旧的终态记录(运行中的槽不动)。 */
+  function evictTerminalSlots() {
+    for (const [root, slot] of shellSlots) {
+      if (shellSlots.size < SHELL_SLOT_CAP) break;
+      if (slot.status !== 'running' && slot.status !== 'stopping') shellSlots.delete(root);
+    }
+  }
+
+  function shellPublic(slot) {
+    if (!slot) return null;
+    return {
+      id: slot.jobId,
+      label: slot.label,
+      status: slot.status,
+      exitCode: slot.exitCode,
+      signal: slot.signal,
+      error: slot.error,
+      startedAt: slot.startedAt,
+    };
+  }
+
+  /** 从 subprocess 收集器拉一段增量进尾部缓冲(readFrom 是 offset 制非消费式)。 */
+  function drainStream(reader, bytePos) {
+    if (!reader) return { text: '', next: bytePos };
+    try {
+      const r = reader.readFrom(bytePos);
+      return {
+        text: r && typeof r.text === 'string' ? r.text : '',
+        next: typeof r.nextOffset === 'number' ? r.nextOffset : bytePos,
+      };
+    } catch {
+      return { text: '', next: bytePos };
+    }
+  }
+
+  /** 单流尾部状态: pump = 收集器字节游标, buf/base = 尾部字符缓冲与其绝对首字符位。 */
+  function newStreamState() {
+    return { pump: 0, buf: '', base: 0 };
+  }
+
+  function pumpSide(slot, side, reader) {
+    const d = drainStream(reader, slot[side].pump);
+    if (d.text !== '') {
+      const r = appendTail(slot[side].buf, d.text, SHELL_STREAM_CAP_CHARS);
+      slot[side].buf = r.buffer;
+      slot[side].base += r.dropped;
+    }
+    slot[side].pump = d.next;
+  }
+
+  function pumpShell(slot) {
+    pumpSide(slot, 'out', slot.handle?.collected?.stdout);
+    pumpSide(slot, 'err', slot.handle?.collected?.stderr);
+  }
+
+  async function handleShellStart(body) {
+    const cmd = validShellCommand(body.command);
+    if (cmd === null) return { ok: false, error: 'invalid-command' };
+    const base = baseOf(body);
+    if (base === null) return { ok: false, error: 'invalid-root' };
+    const subprocess = ctx.get('subprocess');
+    if (subprocess === undefined) return { ok: false, error: 'subprocess-unavailable' };
+    const jobs = ctx.get('jobs');
+    if (jobs === undefined || typeof jobs.start !== 'function') {
+      return { ok: false, error: 'jobs-unavailable' };
+    }
+    const current = shellSlots.get(base) ?? null;
+    if (current && (current.status === 'running' || current.status === 'stopping')) {
+      return { ok: false, error: 'busy', job: shellPublic(current) };
+    }
+    ensureJobController(jobs);
+    let handle;
+    try {
+      handle = subprocess.spawn({
+        argv: [...shellArgv().argv, cmd],
+        cwd: base,
+        stdio: {
+          stdin: 'ignore',
+          stdout: { maxBytes: 1024 * 1024 },
+          stderr: { maxBytes: 256 * 1024 },
+        },
+        graceMs: 3000, // 停止时 TERM → 3s → KILL; 兼作管道排空宽限
+      });
+    } catch (err) {
+      return {
+        ok: false,
+        error: 'spawn-failed',
+        detail: String((err && err.message) || err || 'spawn failed').slice(0, 200),
+      };
+    }
+    evictTerminalSlots();
+    const slot = {
+      jobId: '',
+      label: cmd,
+      handle,
+      out: newStreamState(),
+      err: newStreamState(),
+      status: 'running',
+      exitCode: null,
+      signal: null,
+      error: null,
+      startedAt: Date.now(),
+    };
+    shellSlots.set(base, slot);
+    try {
+      const jobId = jobs.start({
+        kind: 'shell',
+        label: cmd,
+        run: () => ({
+          cancel: () => {
+            if (slot.status === 'running') slot.status = 'stopping';
+            try {
+              handle.terminate();
+            } catch {
+              // 已退出: 忽略
+            }
+          },
+          done: handle.done.then(
+            ({ exitCode, signal }) => {
+              slot.status = signal ? 'killed' : 'completed';
+              slot.exitCode = exitCode;
+              slot.signal = signal;
+              pumpShell(slot); // 终态前排空残余输出
+              return {
+                status: signal ? 'killed' : 'completed',
+                detail: signal ? 'signal: ' + signal : 'exit code: ' + exitCode,
+              };
+            },
+            (err) => {
+              // spawn 级失败(如解释器消失): done 契约不许 reject, 归一为 failed
+              slot.status = 'failed';
+              slot.error = String((err && err.message) || err || 'spawn failed').slice(0, 200);
+              return { status: 'failed', detail: slot.error };
+            },
+          ),
+          readOutput: () => {
+            pumpShell(slot);
+            const merged =
+              slot.out.buf + (slot.err.buf !== '' ? '\n[stderr]\n' + slot.err.buf : '');
+            return merged.slice(-SHELL_STREAM_CAP_CHARS);
+          },
+        }),
+      });
+      slot.jobId = String(jobId ?? '');
+    } catch (err) {
+      // start 抛错(如无 controller): 清理已起进程, 记录失败供状态行展示
+      try {
+        handle.terminate();
+      } catch {
+        // 忽略
+      }
+      slot.status = 'failed';
+      slot.error = String((err && err.message) || err || 'background jobs unavailable').slice(
+        0,
+        200,
+      );
+      return { ok: false, error: 'jobs-unavailable' };
+    }
+    return { ok: true, job: shellPublic(slot) };
+  }
+
+  function handleShellState(body) {
+    const lookup = slotFor(body);
+    if (lookup.error) return { ok: false, error: lookup.error };
+    return { ok: true, job: shellPublic(lookup.slot) };
+  }
+
+  function handleShellOutput(body) {
+    const lookup = slotFor(body);
+    if (lookup.error) return { ok: false, error: lookup.error };
+    const slot = lookup.slot;
+    if (!slot) return { ok: true, job: null };
+    pumpShell(slot);
+    // from/outFrom 的钳制(非有限数 → 0)由 sliceSince 内部统一处理
+    return {
+      ok: true,
+      job: shellPublic(slot),
+      done: slot.status !== 'running' && slot.status !== 'stopping',
+      out: sliceSince(slot.out.buf, slot.out.base, body.outFrom),
+      err: sliceSince(slot.err.buf, slot.err.base, body.errFrom),
+    };
+  }
+
+  function handleShellStop(body) {
+    const lookup = slotFor(body);
+    if (lookup.error) return { ok: false, error: lookup.error };
+    const slot = lookup.slot;
+    if (!slot || (slot.status !== 'running' && slot.status !== 'stopping')) {
+      return { ok: true, stopped: false, job: shellPublic(slot) };
+    }
+    slot.status = 'stopping';
+    try {
+      slot.handle.terminate(); // 整树 TERM → graceMs → KILL
+    } catch {
+      // 已退出: 状态由 done 回调收尾
+    }
+    return { ok: true, stopped: true, job: shellPublic(slot) };
+  }
+
   // ---- 路由与信任栅栏(与 ds-balance 同款) ----
 
   const HANDLERS = {
@@ -581,6 +1020,14 @@ export function apply(ctx) {
     search: handleSearch,
     log: handleLog,
     show: handleShow,
+    save: handleSave,
+    create: handleCreate,
+    rename: handleRename,
+    remove: handleRemove,
+    shellStart: handleShellStart,
+    shellState: handleShellState,
+    shellOutput: handleShellOutput,
+    shellStop: handleShellStop,
   };
 
   function isTrustedRequest(req) {
@@ -595,7 +1042,8 @@ export function apply(ctx) {
     res.end(payload);
   }
 
-  function readJsonBody(req) {
+  function readJsonBody(req, cap) {
+    const capBytes = typeof cap === 'number' && cap > 0 ? cap : BODY_CAP;
     return new Promise((resolve, reject) => {
       const chunks = [];
       let total = 0;
@@ -603,7 +1051,7 @@ export function apply(ctx) {
       req.on('data', (chunk) => {
         if (failed) return;
         total += chunk.length;
-        if (total > BODY_CAP) {
+        if (total > capBytes) {
           failed = true;
           reject(new Error('body-too-large'));
           req.destroy();
@@ -655,7 +1103,7 @@ export function apply(ctx) {
       }
       let body;
       try {
-        body = await readJsonBody(req);
+        body = await readJsonBody(req, method === 'save' ? SAVE_BODY_CAP : BODY_CAP);
       } catch {
         writeJson(res, 400, { ok: false, error: 'bad-json' });
         return;
