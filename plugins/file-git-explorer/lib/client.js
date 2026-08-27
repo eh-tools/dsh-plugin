@@ -242,7 +242,27 @@ window.__ModuleLoader__.load({
         '.fge-conflict{flex:none;margin-bottom:6px;padding:6px 8px;border:1px solid ' +
         'color-mix(in srgb,var(--dsw-alias-state-warn-primary) 45%,transparent);' +
         'background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 12%,transparent);border-radius:6px;' +
-        'font-size:11px;line-height:1.5;color:var(--dsw-alias-label-primary);}';
+        'font-size:11px;line-height:1.5;color:var(--dsw-alias-label-primary);}' +
+        // ---- 删除确认 / 失败提示(DSH 风格模态: 遮罩 + 居中卡片 + 底部按钮) ----
+        '.fge-mask{position:fixed;inset:0;z-index:200;display:flex;align-items:center;justify-content:center;' +
+        'pointer-events:auto;background:rgba(8,10,16,.5);}' +
+        '.fge-mbox{min-width:300px;max-width:min(420px,calc(100vw - 48px));box-sizing:border-box;' +
+        'background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;' +
+        'box-shadow:var(--dsw-shadow-lv3,rgba(0,0,0,.35)) 0 18px 60px;padding:18px 20px 16px;' +
+        'color:var(--dsw-alias-label-primary);font-size:13px;line-height:1.55;}' +
+        '.fge-mtitle{font-size:14px;font-weight:600;margin-bottom:8px;}' +
+        '.fge-mbody{color:var(--dsw-alias-label-secondary);margin-bottom:18px;word-break:break-word;}' +
+        '.fge-mfoot{display:flex;justify-content:flex-end;gap:8px;}' +
+        '.fge-mbtn{border-radius:8px;padding:5px 14px;font-size:12px;font-weight:600;cursor:pointer;' +
+        'border:1px solid transparent;line-height:1.5;}' +
+        '.fge-mbtn:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px;}' +
+        '.fge-mbtn-ghost{background:transparent;border-color:var(--dsw-alias-border-l2);' +
+        'color:var(--dsw-alias-label-secondary);}' +
+        '.fge-mbtn-ghost:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);}' +
+        '.fge-mbtn-danger{background:var(--dsw-alias-state-error-primary);color:#fff;}' +
+        '.fge-mbtn-danger:hover{filter:brightness(1.1);}' +
+        '.fge-mbtn-brand{background:var(--dsw-alias-brand-primary);color:#fff;}' +
+        '.fge-mbtn-brand:hover{filter:brightness(1.1);}';
       var styleTag = null;
       function ensureStyles() {
         if (styleTag !== null) return;
@@ -1832,6 +1852,56 @@ window.__ModuleLoader__.load({
         var notifyEvent = function (evt) {
           if (typeof props.onTreeEvent === 'function') props.onTreeEvent(evt);
         };
+
+        // ---- 删除确认 / 失败提示: DSH 风格模态(替代原生 window.confirm / alert) ----
+        // confirmReq: null | {mode:'confirm', row} | {mode:'notice', title, message}
+        var confirmReqState = React.useState(null);
+        var confirmReq = confirmReqState[0];
+        var setConfirmReq = confirmReqState[1];
+        var confirmResolveRef = React.useRef(null); // 确认按钮的回调(取消/关闭 = false)
+        var askConfirm = function (row) {
+          return new Promise(function (resolve) {
+            confirmResolveRef.current = resolve;
+            setConfirmReq({ mode: 'confirm', row: row });
+          });
+        };
+        var settleConfirm = function (ok) {
+          if (confirmResolveRef.current) {
+            confirmResolveRef.current(ok);
+            confirmResolveRef.current = null;
+          }
+          setConfirmReq(null);
+        };
+        var showNotice = function (title, message) {
+          confirmResolveRef.current = null;
+          setConfirmReq({ mode: 'notice', title: title, message: message });
+        };
+        // 删除失败码 → 可读文案
+        var removeErrText = function (code) {
+          if (code === 'not-found') return '目标不存在（可能已被删除）';
+          if (code === 'not-empty') return '目录非空，无法删除';
+          if (code === 'invalid-path' || code === 'invalid-root') return '路径不合法';
+          if (code === 'rpc-failed') return '请求失败，请重试';
+          return code || '未知错误';
+        };
+        // 模态打开期间 Esc = 取消: document 捕获期拦截, 阻断全局 Esc(关悬浮面板)连锁
+        React.useEffect(
+          function () {
+            if (!confirmReq) return undefined;
+            function onKey(e) {
+              if (e.key === 'Escape') {
+                e.stopPropagation();
+                settleConfirm(false);
+              }
+            }
+            document.addEventListener('keydown', onKey, true);
+            return function () {
+              document.removeEventListener('keydown', onKey, true);
+            };
+          },
+          [confirmReq],
+        );
+
         var ops = {
           create: function (parentRel, cleanName, kind) {
             var relPath = parentRel === '' ? cleanName : parentRel + '/' + cleanName;
@@ -1865,30 +1935,29 @@ window.__ModuleLoader__.load({
               });
           },
           remove: function (row) {
-            var msg =
-              row.type === 'dir'
-                ? '删除目录 “' + row.name + '” 及其全部内容？此操作不可恢复。'
-                : '删除文件 “' + row.name + '”？此操作不可恢复。';
-            if (!window.confirm(msg)) return Promise.resolve({ ok: false, error: 'cancelled' });
-            return api('remove', {
-              root: props.root,
-              path: row.rel,
-              recursive: row.type === 'dir',
-            })
-              .then(function (res) {
-                if (res && res.ok) {
-                  fireReload(dirOf(row.rel));
-                  notifyEvent({ type: 'deleted', rel: row.rel });
-                  notifyMutated();
-                } else if (res && res.error !== 'cancelled') {
-                  window.alert('删除失败：' + (res.error || 'unknown'));
-                }
-                return res || { ok: false, error: 'failed' };
+            // DSH 风格模态确认(替代原生 confirm), 目录删除需显式确认
+            return askConfirm(row).then(function (ok) {
+              if (!ok) return { ok: false, error: 'cancelled' };
+              return api('remove', {
+                root: props.root,
+                path: row.rel,
+                recursive: row.type === 'dir',
               })
-              .catch(function () {
-                window.alert('删除失败：请求错误');
-                return { ok: false, error: 'rpc-failed' };
-              });
+                .then(function (res) {
+                  if (res && res.ok) {
+                    fireReload(dirOf(row.rel));
+                    notifyEvent({ type: 'deleted', rel: row.rel });
+                    notifyMutated();
+                  } else if (res && res.error !== 'cancelled') {
+                    showNotice('删除失败', removeErrText(res.error));
+                  }
+                  return res || { ok: false, error: 'failed' };
+                })
+                .catch(function () {
+                  showNotice('删除失败', '请求错误');
+                  return { ok: false, error: 'rpc-failed' };
+                });
+            });
           },
         };
         /** 分区头"+" → 该分区根的新建待输入行 */
@@ -1969,18 +2038,21 @@ window.__ModuleLoader__.load({
         };
 
         return React.createElement(
-          'div',
-          {
-            className: 'fge-panel',
-            'data-fge-root': '1',
-            style: props.style,
-            onMouseEnter: function () {
-              track.enter('lp');
+          React.Fragment,
+          null,
+          React.createElement(
+            'div',
+            {
+              className: 'fge-panel',
+              'data-fge-root': '1',
+              style: props.style,
+              onMouseEnter: function () {
+                track.enter('lp');
+              },
+              onMouseLeave: function () {
+                track.leave('lp');
+              },
             },
-            onMouseLeave: function () {
-              track.leave('lp');
-            },
-          },
           React.createElement(
             'div',
             { className: 'fge-panel-head' },
@@ -2197,11 +2269,77 @@ window.__ModuleLoader__.load({
                   ),
                 ),
               ),
-          React.createElement(ShellBar, { root: props.root, cacheKey: props.cacheKey }),
-          React.createElement('div', {
-            className: 'fge-resize fge-resize-left',
-            onPointerDown: props.onResizeStart,
-          }),
+            React.createElement(ShellBar, { root: props.root, cacheKey: props.cacheKey }),
+            React.createElement('div', {
+              className: 'fge-resize fge-resize-left',
+              onPointerDown: props.onResizeStart,
+            }),
+          ),
+          confirmReq
+            ? React.createElement(
+                'div',
+                {
+                  className: 'fge-mask',
+                  'data-fge-root': '1',
+                  onMouseEnter: function () {
+                    track.enter('lp');
+                  },
+                  onMouseLeave: function () {
+                    track.leave('lp');
+                  },
+                  onClick: function (e) {
+                    if (e.target === e.currentTarget) settleConfirm(false); // 点遮罩 = 取消
+                  },
+                },
+                React.createElement(
+                  'div',
+                  { className: 'fge-mbox' },
+                  React.createElement(
+                    'div',
+                    { className: 'fge-mtitle' },
+                    confirmReq.mode === 'notice' ? confirmReq.title : '删除确认',
+                  ),
+                  React.createElement(
+                    'div',
+                    { className: 'fge-mbody' },
+                    confirmReq.mode === 'notice'
+                      ? confirmReq.message
+                      : confirmReq.row.type === 'dir'
+                        ? '删除目录 “' + confirmReq.row.name + '” 及其全部内容？此操作不可恢复。'
+                        : '删除文件 “' + confirmReq.row.name + '”？此操作不可恢复。',
+                  ),
+                  React.createElement(
+                    'div',
+                    { className: 'fge-mfoot' },
+                    confirmReq.mode === 'notice'
+                      ? null
+                      : React.createElement(
+                          'button',
+                          {
+                            className: 'fge-mbtn fge-mbtn-ghost',
+                            onClick: function () {
+                              settleConfirm(false);
+                            },
+                          },
+                          '取消',
+                        ),
+                    React.createElement(
+                      'button',
+                      {
+                        className:
+                          'fge-mbtn ' +
+                          (confirmReq.mode === 'notice' ? 'fge-mbtn-brand' : 'fge-mbtn-danger'),
+                        autoFocus: confirmReq.mode === 'notice',
+                        onClick: function () {
+                          settleConfirm(confirmReq.mode !== 'notice');
+                        },
+                      },
+                      confirmReq.mode === 'notice' ? '知道了' : '删除',
+                    ),
+                  ),
+                ),
+              )
+            : null,
         );
       }
 
