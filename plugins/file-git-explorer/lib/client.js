@@ -100,6 +100,12 @@ window.__ModuleLoader__.load({
         '.fge-branch-item.fge-branch-current{color:var(--dsw-alias-brand-primary);font-weight:600;}' +
         '.fge-branch-item.fge-branch-viewed{color:var(--dsw-alias-state-warn-primary);}' +
         '.fge-branch-mark{margin-left:auto;font-size:10px;}' +
+        // 右树顶部分支下拉为纯展示清单: 行不可点 —— 关掉指针与 hover 反色,
+        // 状态色(当前/查看中)保持常亮; 历史面板的同款菜单(.fge-hmenu)仍可点选。
+        '.fge-branch-static{cursor:default;}' +
+        '.fge-branch-item.fge-branch-static:hover{background:none;}' +
+        '.fge-branch-item.fge-branch-static:not(.fge-branch-current):not(.fge-branch-viewed):hover' +
+        '{color:var(--dsw-alias-label-secondary);}' +
         '.fge-changes{flex:1;overflow:auto;min-height:0;padding:2px 0;' +
         'scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--dsw-alias-label-tertiary) 28%,transparent) transparent;}' +
         '.fge-change{display:flex;align-items:center;gap:6px;padding:2px 8px;cursor:pointer;white-space:nowrap;' +
@@ -1356,6 +1362,8 @@ window.__ModuleLoader__.load({
           }
         }
 
+        // 分支下拉仅作信息展示(点开只看列表): 行不响应点击, 也不改写「查看分支」;
+        // 查看分支的切换入口只有历史面板头部的分支按钮。
         var menu = null;
         if (menuOpen) {
           var group = function (title, list) {
@@ -1367,20 +1375,19 @@ window.__ModuleLoader__.load({
               list.map(function (br) {
                 var isCurrent = br.name === current;
                 var isViewed = br.name === props.viewedBranch && !isCurrent;
-                var mark = isCurrent ? '当前' : isViewed ? '上次查看' : '';
+                var mark = isCurrent ? '当前' : isViewed ? '查看中' : '';
+                // 纯展示行: 不注册点击(查看分支的唯一切换入口在历史面板头部按钮)。
                 return React.createElement(
                   'div',
                   {
                     key: br.ref,
                     className:
-                      'fge-branch-item' +
+                      'fge-branch-item fge-branch-static' +
                       (isCurrent ? ' fge-branch-current' : '') +
                       (isViewed ? ' fge-branch-viewed' : ''),
-                    onClick: function () {
-                      if (!isCurrent) props.onViewBranch(br.name);
-                      setMenuOpen(false);
-                    },
-                    title: isCurrent ? '当前分支(只读, 不支持切换)' : '只读展示, 不做分支切换',
+                    title: isCurrent
+                      ? br.name + ' · 当前分支(只读)'
+                      : br.name + ' · 只读展示, 不做分支切换',
                   },
                   React.createElement('span', null, br.name),
                   React.createElement('span', { className: 'fge-branch-mark' }, mark),
@@ -2702,7 +2709,6 @@ window.__ModuleLoader__.load({
                 onHide: hideRight,
                 onResizeStart: resize('right'),
                 viewedBranch: viewedBranch,
-                onViewBranch: setViewedBranch,
                 floatOpen: !!(diff || historyOpen),
                 onOpenMenu: openBranchMenu,
                 linkagePath: linkage,
