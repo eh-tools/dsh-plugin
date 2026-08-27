@@ -176,8 +176,6 @@ window.__ModuleLoader__.load({
         '.fge-stat-del{color:var(--dsw-alias-state-error-primary);flex:none;}' +
         '.fge-cfile{display:flex;align-items:center;gap:8px;padding:3px 4px;border-radius:0;cursor:pointer;' +
         'white-space:nowrap;color:var(--dsw-alias-label-secondary);border-bottom:1px solid var(--dsw-alias-border-l1);}' +
-        // 单条提交详情里展开的文件 diff 块: 底部分割线 + 与下一文件的间距
-        '.fge-fdiff{border-bottom:1px solid var(--dsw-alias-border-l1);padding-bottom:8px;margin-bottom:4px;}' +
         // 历史面板头部的查看分支切换器 + 其下拉菜单(挂在 float 面板内, 不出面板)
         '.fge-hbranch{flex:none;display:inline-flex;align-items:center;gap:4px;max-width:46%;border:1px solid transparent;' +
         'background:transparent;color:var(--dsw-alias-brand-primary);border-radius:6px;padding:2px 6px;font-size:12px;' +
@@ -631,7 +629,8 @@ window.__ModuleLoader__.load({
       // 「鼠标在场」区域集; 只要指针还在任一已登记区域就不收起, 全部离开后才
       // 启动 HIDE_DELAY_MS 宽限定时器, 期间进入任一区域则取消。
       // 区域登记名约定: 左侧 lp=文件树面板 cf=内容悬浮栏;
-      //                右侧 rp=git树面板 df=diff悬浮栏 hs=提交历史悬浮栏。
+      //                右侧 rp=git树面板 df=diff悬浮栏 hs=提交历史悬浮栏
+      //                hd=提交内文件 diff 悬浮栏(历史详情点文件行后单开)。
       // (分支下拉/历史分组菜单是面板 DOM 子孙, 指针移入不触发面板 mouseleave,
       //  无需登记。)
       var HIDE_DELAY_MS = 360;
@@ -2195,6 +2194,8 @@ window.__ModuleLoader__.load({
         var menuOpen = menuState[0];
         var setMenuOpen = menuState[1];
         var listRef = React.useRef(null);
+        var branchRef = React.useRef(null);
+        var menuRef = React.useRef(null);
         // 与右侧悬浮栏(diff/历史)互斥: 两者都出现在面板左侧同一留白带,
         // 同时打开会互相遮挡 —— 悬浮栏在打开时收起本下拉(反向经 onOpenMenu 关闭悬浮栏)。
         React.useEffect(
@@ -2202,6 +2203,25 @@ window.__ModuleLoader__.load({
             if (props.floatOpen) setMenuOpen(false);
           },
           [props.floatOpen],
+        );
+        // 点下拉外任意位置即收起: 单击列表外(面板内其他区域 / 页面其他处)关闭分支列表,
+        // 不再要求必须再点一次分支名。分支按钮本身除外 —— 它自己的 onClick 负责切换;
+        // 捕获期 document 监听先于按钮合成点击执行, 无竞争。
+        React.useEffect(
+          function () {
+            if (!menuOpen) return;
+            function onDocDown(e) {
+              var t = e.target;
+              if (menuRef.current && menuRef.current.contains(t)) return;
+              if (branchRef.current && branchRef.current.contains(t)) return;
+              setMenuOpen(false);
+            }
+            document.addEventListener('mousedown', onDocDown, true);
+            return function () {
+              document.removeEventListener('mousedown', onDocDown, true);
+            };
+          },
+          [menuOpen],
         );
         // 延迟收起: 由 FgeRoot 下发的保持区追踪器驱动(rp 区), 见 makeSideTracker
         var track = props.track;
@@ -2279,7 +2299,7 @@ window.__ModuleLoader__.load({
           };
           menu = React.createElement(
             'div',
-            { className: 'fge-branch-menu' },
+            { className: 'fge-branch-menu', ref: menuRef },
             group('本地分支', localBranches),
             group('远程分支', remoteBranches),
           );
@@ -2302,6 +2322,7 @@ window.__ModuleLoader__.load({
             'div',
             {
               className: 'fge-branch',
+              ref: branchRef,
               onClick: function () {
                 var next = !menuOpen;
                 setMenuOpen(next);
@@ -2771,18 +2792,30 @@ window.__ModuleLoader__.load({
         var err = errState[0];
         var setErr = errState[1];
 
+        // commitHash 模式 = 复用本面板展示「某次提交内某文件的 diff」(历史详情点文件行):
+        // 走 show 路由取该提交内该路径的 diff; 缺省 = 工作区变更 diff。
+        var commitHash = props.commitHash || null;
+
         React.useEffect(
           function () {
             var alive = true;
             setData(null);
             setErr(null);
-            api('diff', {
-              root: props.root,
-              repoRoot: props.repoRoot,
-              path: props.change.path,
-              status: props.change.status,
-              from: props.change.from,
-            })
+            var req = commitHash
+              ? api('show', {
+                  root: props.root,
+                  repoRoot: props.repoRoot,
+                  hash: commitHash,
+                  path: props.change.path,
+                })
+              : api('diff', {
+                  root: props.root,
+                  repoRoot: props.repoRoot,
+                  path: props.change.path,
+                  status: props.change.status,
+                  from: props.change.from,
+                });
+            req
               .then(function (res) {
                 if (!alive) return;
                 if (res && res.ok) setData(res);
@@ -2795,7 +2828,7 @@ window.__ModuleLoader__.load({
               alive = false;
             };
           },
-          [props.change.path, props.statusVersion],
+          [props.change.path, props.statusVersion, commitHash],
         );
 
         var body = null;
@@ -2835,7 +2868,7 @@ window.__ModuleLoader__.load({
           FloatPanel,
           {
             style: props.style,
-            badge: props.change.status,
+            badge: props.badge === undefined ? props.change.status : props.badge,
             track: props.track,
             region: props.region || 'df',
             title: props.change.path,
@@ -2882,15 +2915,12 @@ window.__ModuleLoader__.load({
         var errState = React.useState(null);
         var err = errState[0];
         var setErr = errState[1];
-        var viewHashState = React.useState(null); // null=列表 | hash=详情
+        var viewHashState = React.useState(null); // null=列表 | hash=详情(详情仍在历史面板内)
         var viewHash = viewHashState[0];
         var setViewHash = viewHashState[1];
         var detailState = React.useState(null); // {kind:'commit'|'merge', message, files?}
         var detail = detailState[0];
         var setDetail = detailState[1];
-        var fileDiffsState = React.useState({}); // {path: {loading}|{text}|{error}}
-        var fileDiffs = fileDiffsState[0];
-        var setFileDiffs = fileDiffsState[1];
         var listRef = React.useRef(null);
         var shownHeadRef = React.useRef(null); // 本列表已知的 HEAD(供刷新比对)
 
@@ -2982,7 +3012,7 @@ window.__ModuleLoader__.load({
             setCommits(null);
             setViewHash(null);
             setDetail(null);
-            setFileDiffs({});
+            if (props.onCloseFileDiff) props.onCloseFileDiff(); // 换查看分支 → 关闭文件 diff 悬浮栏
             setErr(null);
             setExhausted(false);
             shownHeadRef.current = null;
@@ -3058,12 +3088,15 @@ window.__ModuleLoader__.load({
             });
         };
 
+        // 详情视图仍在历史面板内: 完整 message + 文件 ±行数列表;
+        // 点文件行由 FgeRoot 在历史面板左侧单开 DiffPanel 展示该提交内该文件的 diff
+        // (与右侧变更列表点开 diff 悬浮栏同一套交互)。
         var detailReqRef = React.useRef(null); // 竞态守卫: 只接受最后一次详情请求
         var openDetail = function (c) {
           detailReqRef.current = c.hash;
           setViewHash(c.hash);
           setDetail(null);
-          setFileDiffs({});
+          if (props.onCloseFileDiff) props.onCloseFileDiff(); // 换提交 → 关闭上一份文件 diff
           api('show', { root: props.root, repoRoot: props.repoRoot, hash: c.hash })
             .then(function (r) {
               if (detailReqRef.current !== c.hash) return;
@@ -3073,45 +3106,6 @@ window.__ModuleLoader__.load({
             .catch(function () {
               if (detailReqRef.current !== c.hash) return;
               setDetail({ kind: 'error', message: 'rpc-failed' });
-            });
-        };
-
-        var toggleFile = function (path) {
-          var opening = fileDiffs[path] === undefined;
-          setFileDiffs(function (prev) {
-            var next = {};
-            for (var k in prev) next[k] = prev[k];
-            if (next[path] !== undefined) delete next[path];
-            else next[path] = { loading: true };
-            return next;
-          });
-          if (!opening || viewHash === null) return;
-          api('show', {
-            root: props.root,
-            repoRoot: props.repoRoot,
-            hash: viewHash,
-            path: path,
-          })
-            .then(function (r) {
-              setFileDiffs(function (prev) {
-                if (prev[path] === undefined || !prev[path].loading) return prev; // 已被收起
-                var next = {};
-                for (var k in prev) next[k] = prev[k];
-                next[path] =
-                  r && r.ok && r.kind === 'diff'
-                    ? { text: r.text }
-                    : { error: (r && r.error) || 'failed' };
-                return next;
-              });
-            })
-            .catch(function () {
-              setFileDiffs(function (prev) {
-                if (prev[path] === undefined || !prev[path].loading) return prev;
-                var next = {};
-                for (var k in prev) next[k] = prev[k];
-                next[path] = { error: 'rpc-failed' };
-                return next;
-              });
             });
         };
 
@@ -3129,7 +3123,7 @@ window.__ModuleLoader__.load({
                     detailReqRef.current = null;
                     setViewHash(null);
                     setDetail(null);
-                    setFileDiffs({});
+                    if (props.onCloseFileDiff) props.onCloseFileDiff(); // 回列表 → 关闭文件 diff
                   },
                 },
                 '‹ 列表',
@@ -3140,7 +3134,7 @@ window.__ModuleLoader__.load({
         if (err !== null) {
           body = React.createElement('div', { className: 'fge-note' }, '读取失败: ' + err);
         } else if (viewHash !== null) {
-          // 详情视图: 完整 message + 文件 ±行数列表 → 点文件展开单文件 diff
+          // 详情视图: 完整 message + 文件 ±行数列表 → 点文件行在历史面板左侧开 diff 悬浮栏
           var inner = [];
           if (detail === null) {
             inner.push(React.createElement('div', { className: 'fge-note', key: 'ld' }, '加载中…'));
@@ -3175,7 +3169,6 @@ window.__ModuleLoader__.load({
             } else {
               for (var fi = 0; fi < detail.files.length; fi++) {
                 (function (f) {
-                  var fd = fileDiffs[f.path];
                   inner.push(
                     React.createElement(
                       'div',
@@ -3183,7 +3176,7 @@ window.__ModuleLoader__.load({
                         className: 'fge-cfile',
                         key: 'f:' + f.path,
                         onClick: function () {
-                          toggleFile(f.path);
+                          if (props.onOpenFileDiff) props.onOpenFileDiff(viewHash, f.path);
                         },
                         title: f.from ? f.path + ' (原 ' + f.from + ')' : f.path,
                       },
@@ -3206,41 +3199,6 @@ window.__ModuleLoader__.load({
                       React.createElement('span', { className: 'fge-cfile-path' }, f.path),
                     ),
                   );
-                  if (fd !== undefined) {
-                    if (fd.loading) {
-                      inner.push(
-                        React.createElement(
-                          'div',
-                          { className: 'fge-note', key: 'fl:' + f.path },
-                          '加载中…',
-                        ),
-                      );
-                    } else if (fd.error !== undefined) {
-                      inner.push(
-                        React.createElement(
-                          'div',
-                          { className: 'fge-note', key: 'fl:' + f.path },
-                          '读取失败: ' + fd.error,
-                        ),
-                      );
-                    } else if (fd.text === '') {
-                      inner.push(
-                        React.createElement(
-                          'div',
-                          { className: 'fge-note', key: 'fl:' + f.path },
-                          '(二进制或无差异)',
-                        ),
-                      );
-                    } else {
-                      inner.push(
-                        React.createElement('pre', {
-                          className: 'fge-pre fge-fdiff',
-                          key: 'fl:' + f.path,
-                          dangerouslySetInnerHTML: { __html: diffToHtml(fd.text) },
-                        }),
-                      );
-                    }
-                  }
                 })(detail.files[fi]);
               }
             }
@@ -3390,6 +3348,11 @@ window.__ModuleLoader__.load({
         var historyState = React.useState(false);
         var historyOpen = historyState[0];
         var setHistoryOpen = historyState[1];
+        // 提交内文件 diff 浮层: 历史详情点文件行后, 在历史面板左侧单开
+        // (复用 DiffPanel 的 commitHash 模式, 与变更列表点开 diff 同一套交互)。
+        var histFileDiffState = React.useState(null); // {hash, path} | null
+        var histFileDiff = histFileDiffState[0];
+        var setHistFileDiff = histFileDiffState[1];
         var linkageState = React.useState(null);
         var linkage = linkageState[0];
         var setLinkage = linkageState[1];
@@ -3498,6 +3461,7 @@ window.__ModuleLoader__.load({
             setDiff(null);
             setLinkage(null);
             setHistoryOpen(false);
+            setHistFileDiff(null);
           },
           [root],
         );
@@ -3657,6 +3621,7 @@ window.__ModuleLoader__.load({
               setContent(null);
               setDiff(null);
               setHistoryOpen(false);
+              setHistFileDiff(null);
             }
           }
           window.addEventListener('keydown', onKey);
@@ -3698,6 +3663,7 @@ window.__ModuleLoader__.load({
         var onDiffClick = React.useCallback(function (ch) {
           // 与历史浮层互斥: 打开 diff 即关闭历史(共享同一锚位)
           setHistoryOpen(false);
+          setHistFileDiff(null);
           setDiff(function (prev) {
             if (prev && prev.change.path === ch.path) return null;
             return { change: ch };
@@ -3732,18 +3698,30 @@ window.__ModuleLoader__.load({
           }
         }, []);
 
-        // 提交历史开关: 打开时关闭 diff 浮层(互斥共享锚位)
+        // 提交历史开关: 打开时关闭 diff 浮层(互斥共享锚位), 文件 diff 随历史一并复位
         var toggleHistory = React.useCallback(
           function () {
             if (historyOpen) {
               setHistoryOpen(false);
+              setHistFileDiff(null);
               return;
             }
             setDiff(null);
             setHistoryOpen(true);
+            setHistFileDiff(null);
           },
           [historyOpen],
         );
+
+        // 历史详情点文件行 → 在历史面板左侧开/关该提交内该文件的 diff 悬浮栏
+        // (复用 DiffPanel, 与右侧变更列表点开 diff 同一套交互; 再点同一行 = 关闭)。
+        var openHistFileDiff = React.useCallback(function (hash, path) {
+          if (!hash || !path) return;
+          setHistFileDiff(function (prev) {
+            if (prev && prev.hash === hash && prev.path === path) return null;
+            return { hash: hash, path: path };
+          });
+        }, []);
 
         // 图钉: 无论点哪个面板的图钉, 动作一致 —— 固定时两个面板都展开为卡片。
         // 避免出现「已固定但另一侧仍是细条」的不一致状态。
@@ -3776,16 +3754,18 @@ window.__ModuleLoader__.load({
               setRightOpen(false);
               setDiff(null);
               setHistoryOpen(false);
+              setHistFileDiff(null);
             }
           },
           [pin],
         );
 
-        // 分支下拉与右侧悬浮栏互斥(防遮挡): 展开下拉时关闭 diff/历史悬浮栏。
+        // 分支下拉与右侧悬浮栏互斥(防遮挡): 展开下拉时关闭 diff/历史/文件 diff 悬浮栏。
         // 反方向(悬浮栏打开时收起下拉)由 RightPanel 内部经 floatOpen 处理。
         var openBranchMenu = React.useCallback(function () {
           setDiff(null);
           setHistoryOpen(false);
+          setHistFileDiff(null);
         }, []);
 
         // 保持区追踪器的触发回调指向最新 hide*(每渲染刷新, 见 makeSideTracker)
@@ -3811,6 +3791,7 @@ window.__ModuleLoader__.load({
               setDiff(null);
               setLinkage(null);
               setHistoryOpen(false);
+              setHistFileDiff(null);
             } else if (!away && awaySnapTakenRef.current) {
               awaySnapTakenRef.current = false;
               var snap = awaySnapRef.current;
@@ -3980,10 +3961,37 @@ window.__ModuleLoader__.load({
           width: contentW,
           height: height,
         };
+        // 右侧两浮层(历史面板 + 提交内文件 diff 面板)并排:
+        // - 详情面板优先取满宽, 与右侧变更列表打开的 diff 同宽(diffW);
+        // - 历史面板让位到剩余带宽(保底 FLOAT_MIN_W), 且并排宽度只由 historyOpen
+        //   决定 —— 打开/关闭详情时历史面板宽度不变, 无跳变;
+        // - 并排左界: 左树展开时以左树右缘 +8 为界(不盖左树; 悬浮栏允许越过
+        //   对话区), 左树不可用时退回对话区左缘 +40; 带宽不足时详情降宽。
+        var FLOAT_MIN_W = 280;
+        var histW = diffW;
+        var histFileDiffW = diffW;
+        var pairLeft = geo.convLeft + 40;
+        if (historyOpen) {
+          pairLeft = leftShow ? leftAnchor + 8 : geo.convLeft + 40;
+          var pairBand = (rightAnchor - 10) - pairLeft - 10;
+          if (pairBand < diffW * 2 + 10) {
+            var wantDetail = Math.min(diffW, Math.max(FLOAT_MIN_W, pairBand - FLOAT_MIN_W));
+            histW = Math.max(FLOAT_MIN_W, pairBand - wantDetail);
+            histFileDiffW = wantDetail;
+          }
+        }
         var diffStyle = {
-          left: Math.max(geo.convLeft + 40, rightAnchor - 10 - diffW),
+          left: Math.max(geo.convLeft + 40, rightAnchor - 10 - histW),
           top: top,
-          width: diffW,
+          width: histW,
+          height: height,
+        };
+        // 提交内文件 diff 悬浮面板: 单开在历史面板左侧(留 10px 间距), 与历史面板同存;
+        // 与变更列表的 diff 同宽(diffW), 左界放宽到左树右缘, 不再遮挡文件列表。
+        var histFileDiffStyle = {
+          left: Math.max(pairLeft, diffStyle.left - histFileDiffW - 10),
+          top: top,
+          width: histFileDiffW,
           height: height,
         };
 
@@ -4033,7 +4041,7 @@ window.__ModuleLoader__.load({
                 onHide: hideRight,
                 onResizeStart: resize('right'),
                 viewedBranch: viewedBranch,
-                floatOpen: !!(diff || historyOpen),
+                floatOpen: !!(diff || historyOpen || histFileDiff),
                 onOpenMenu: openBranchMenu,
                 linkagePath: linkage,
                 onDiffClick: onDiffClick,
@@ -4093,9 +4101,30 @@ window.__ModuleLoader__.load({
                 currentBranch: status ? status.current : null,
                 viewedBranch: historyRefName,
                 onViewBranch: setViewedBranch,
+                onOpenFileDiff: openHistFileDiff,
+                onCloseFileDiff: function () {
+                  setHistFileDiff(null);
+                },
                 statusHead: status ? status.head : null,
                 onClose: function () {
                   setHistoryOpen(false);
+                  setHistFileDiff(null);
+                },
+                onHide: hideRight,
+              })
+            : null,
+          historyOpen && info.repoRoot && histFileDiff
+            ? React.createElement(DiffPanel, {
+                key: histFileDiff.hash + ':' + histFileDiff.path,
+                style: histFileDiffStyle,
+                track: rightTrack,
+                region: 'hd',
+                root: root,
+                repoRoot: info.repoRoot,
+                change: { path: histFileDiff.path },
+                commitHash: histFileDiff.hash,
+                onClose: function () {
+                  setHistFileDiff(null);
                 },
                 onHide: hideRight,
               })
