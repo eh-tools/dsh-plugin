@@ -190,7 +190,7 @@ window.__ModuleLoader__.load({
         '.fge-msg{margin:0 0 8px;padding:6px 8px;background:var(--dsw-alias-bg-layer-2);border-radius:6px;' +
         'white-space:pre-wrap;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-primary);font-family:inherit;}' +
         // ---- shell 行(shell bar) ----
-        '.fge-shell-row{display:flex;align-items:center;gap:4px;padding:4px 8px;border-top:1px solid var(--dsw-alias-border-l1);flex:none;}' +
+        '.fge-shell-row{display:flex;align-items:center;gap:4px;padding:4px 6px;border-top:1px solid var(--dsw-alias-border-l1);flex:none;}' +
         '.fge-shell-input{flex:1;min-width:0;background:transparent;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;' +
         'padding:3px 8px;font-size:12px;color:var(--dsw-alias-label-primary);' +
         'font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}' +
@@ -198,11 +198,12 @@ window.__ModuleLoader__.load({
         '.fge-shell-input::placeholder{color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));}' +
         // 运行中锁输入: 只读 + 视觉弱化, 光标离开输入框, 任务结束后恢复可编辑
         '.fge-shell-input.fge-shell-locked{opacity:.6;cursor:not-allowed;}' +
-        '.fge-shell-status{flex:none;font-size:11px;line-height:18px;white-space:nowrap;' +
-        'color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));}' +
-        '.fge-shell-status.fge-shell-run{color:var(--dsw-alias-brand-primary);}' +
-        '.fge-shell-status.fge-shell-ok{color:var(--dsw-alias-state-success-primary);}' +
-        '.fge-shell-status.fge-shell-err{color:#e5484d;}' +
+        // 状态符号按钮: ○=启动中 ●=运行中 ■=已停止(默认), 始终显示在输入框与 ✓ 之间,
+        // 只占 22px, 颜色中性(细节信息都在输出窗里), 点击开合输出窗。
+        '.fge-shell-sym{flex:none;display:inline-flex;align-items:center;justify-content:center;' +
+        'width:22px;height:22px;border:0;border-radius:6px;background:transparent;padding:0;cursor:pointer;' +
+        'color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));font-size:12px;line-height:1;}' +
+        '.fge-shell-sym:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);}' +
         '.fge-shell-tail{flex:none;max-height:150px;overflow:auto;margin:0;padding:4px 8px;border-top:1px solid var(--dsw-alias-border-l1);' +
         'font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:1.5;' +
         'white-space:pre-wrap;word-break:break-all;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-1);}';
@@ -1453,9 +1454,9 @@ window.__ModuleLoader__.load({
         var jobState = React.useState(null); // {id,label,status,exitCode,signal,error}
         var job = jobState[0];
         var setJob = jobState[1];
-        var errMsgState = React.useState(null);
-        var errMsg = errMsgState[0];
-        var setErrMsg = errMsgState[1];
+        var startingState = React.useState(false); // shellStart 请求在途(○ 启动中)
+        var starting = startingState[0];
+        var setStarting = startingState[1];
         var openState = React.useState(false);
         var open = openState[0];
         var setOpen = openState[1];
@@ -1471,7 +1472,8 @@ window.__ModuleLoader__.load({
         var histIdxRef = React.useRef(null); // null = 实时输入
         var draftRef = React.useRef(''); // 离开实时输入时的草稿
         var fromRef = React.useRef({ out: 0, err: 0 }); // 已读到的绝对字符位
-        var busy = !!job && (job.status === 'running' || job.status === 'stopping');
+        var jobBusy = !!job && (job.status === 'running' || job.status === 'stopping');
+        var busy = starting || jobBusy;
 
         // 历史随仓库根懒加载(cwd 缓存搭车: shellHistory 字段)
         React.useEffect(
@@ -1494,7 +1496,7 @@ window.__ModuleLoader__.load({
           function () {
             var dead = false;
             setJob(null);
-            setErrMsg(null);
+            setStarting(false);
             setOutText('');
             setErrText('');
             fromRef.current = { out: 0, err: 0 };
@@ -1592,11 +1594,14 @@ window.__ModuleLoader__.load({
           if (cmd === '' || busy) return;
           // 执行即离开输入框: 配合下方只读锁, 运行中光标不再停留在输入框内
           if (inputRef.current) inputRef.current.blur();
+          setStarting(true); // ○ 启动中(请求在途)
           api('shellStart', { root: props.root, command: cmd })
             .then(function (r) {
+              setStarting(false);
               if (!r || !r.ok) {
+                // 启动失败信息进输出窗(状态符号保持 ■, 有效信息在窗口里)
                 var reason = r && r.error;
-                setErrMsg(
+                var txt =
                   reason === 'busy'
                     ? '已有任务在运行'
                     : reason === 'jobs-unavailable'
@@ -1607,11 +1612,12 @@ window.__ModuleLoader__.load({
                           ? '命令无效'
                           : reason === 'spawn-failed'
                             ? '进程启动失败' + (r && r.detail ? '(' + r.detail + ')' : '')
-                            : '启动失败',
-                );
+                            : '启动失败';
+                setOutText('⚠ 启动失败：' + txt);
+                setErrText('');
+                setOpen(true);
                 return;
               }
-              setErrMsg(null);
               histRef.current = pushHist(histRef.current, cmd);
               histIdxRef.current = null;
               draftRef.current = '';
@@ -1623,12 +1629,15 @@ window.__ModuleLoader__.load({
               setOpen(true);
             })
             .catch(function () {
-              setErrMsg('启动失败(网络错误)');
+              setStarting(false);
+              setOutText('⚠ 启动失败：网络错误');
+              setErrText('');
+              setOpen(true);
             });
         };
 
         var stop = function () {
-          if (!busy) return;
+          if (!jobBusy) return; // 只停真实在跑的任务(启动中无任务可停)
           api('shellStop', { root: props.root })
             .then(function (r) {
               if (r && r.ok && r.job) setJob(r.job);
@@ -1661,23 +1670,16 @@ window.__ModuleLoader__.load({
           setValue(h[idx]);
         };
 
-        var statusInfo = null;
-        if (errMsg !== null) statusInfo = { cls: ' fge-shell-err', text: errMsg };
-        else if (job) {
-          if (job.status === 'running') statusInfo = { cls: ' fge-shell-run', text: '● 运行中…' };
-          else if (job.status === 'stopping')
-            statusInfo = { cls: ' fge-shell-run', text: '○ 正在停止…' };
-          else if (job.status === 'completed')
-            statusInfo =
-              job.exitCode === 0
-                ? { cls: ' fge-shell-ok', text: '✓ 退出 0' }
-                : { cls: ' fge-shell-err', text: '✗ 退出 ' + job.exitCode };
-          else if (job.status === 'killed')
-            statusInfo = {
-              cls: ' fge-shell-err',
-              text: '■ 已停止' + (job.signal ? '(' + job.signal + ')' : ''),
-            };
-          else statusInfo = { cls: ' fge-shell-err', text: '⚠ ' + (job.error || '执行失败') };
+        // 状态符号: ○=启动中(请求在途) ●=运行中 ■=已停止(默认, 含完成/被杀/失败)。
+        // 有效信息都在输出窗里, 符号只表生命周期粗粒度; 始终显示。
+        var statusSym = '■';
+        var statusTitle = '已停止';
+        if (starting) {
+          statusSym = '○';
+          statusTitle = '启动中…';
+        } else if (jobBusy) {
+          statusSym = '●';
+          statusTitle = '运行中…';
         }
 
         var tailText =
@@ -1696,18 +1698,6 @@ window.__ModuleLoader__.load({
           React.createElement(
             'div',
             { className: 'fge-shell-row' },
-            React.createElement(
-              'button',
-              {
-                className: 'fge-btn' + (open ? ' fge-btn-active' : ''),
-                title: job || tailText !== '' ? '展开/收起输出' : '暂无任务输出',
-                disabled: !job && tailText === '',
-                onClick: function () {
-                  setOpen(!open);
-                },
-              },
-              React.createElement(CaretIcon, { open: open }),
-            ),
             React.createElement('input', {
               ref: inputRef,
               className: 'fge-shell-input' + (busy ? ' fge-shell-locked' : ''),
@@ -1719,10 +1709,9 @@ window.__ModuleLoader__.load({
                 if (busy) return; // 运行中只读, 防御性兜底
                 setValue(e.target.value);
                 histIdxRef.current = null;
-                // 修改命令 = 作废上一任务的上下文: 状态/错误提示清掉, 输出窗收起
-                // (状态行始终有命令可对照, 避免「空输入框 + 退出状态」的割裂观感)
+                // 修改命令 = 作废上一任务: 状态符号回到 ■(默认), 输出窗收起
+                // (输出内容保留可查, 点击符号可再展开)
                 setJob(null);
-                setErrMsg(null);
                 setOpen(false);
               },
               onKeyDown: function (e) {
@@ -1758,16 +1747,18 @@ window.__ModuleLoader__.load({
                 }
               },
             }),
-            statusInfo
-              ? React.createElement(
-                  'span',
-                  {
-                    className: 'fge-shell-status' + statusInfo.cls,
-                    title: job ? job.label : statusInfo.text,
-                  },
-                  statusInfo.text,
-                )
-              : null,
+            // 状态符号(始终显示): ○ 启动中 / ● 运行中 / ■ 已停止; 点击开合输出窗
+            React.createElement(
+              'button',
+              {
+                className: 'fge-shell-sym',
+                title: statusTitle + ' · 点击展开/收起输出',
+                onClick: function () {
+                  setOpen(!open);
+                },
+              },
+              statusSym,
+            ),
             React.createElement(
               'button',
               {
