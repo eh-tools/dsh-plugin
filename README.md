@@ -18,6 +18,7 @@ DSH 的插件生态还在早期,本仓库把几个日常高频缺口做成了独
 | `file-git-explorer` | 看不到项目文件和 git 状态                | 左右树浏览:左侧文件树(可见/隐藏/忽略三区, 按名搜索)+ 右侧 git 树(分支/变更/diff/**提交历史**) |
 | `db-console`        | GUI 里没有数据库客户端                   | 会话头部「数据库」页签:PG 完整链接登录(按项目保存)、schema 树、SQL 补全高亮、结果网格         |
 | `deepseek-harness`  | 想要粒子鲸鱼背景                         | 蓝色粒子鲸鱼(DeepSeek 品牌蓝)默认开启,沿用官方明/暗/系统主题;`?dshtest=1` 隐藏式诊断面板      |
+| `batch-archive`     | 会话只能一个个归档                       | 侧边栏底部「批量归档」按钮 + 面板:勾选/全选多个会话一键归档(两次点击确认)                     |
 
 > `tool-vision` + `paste-image` 合起来的效果:你在输入框粘贴一张截图,agent 就能"看到"并描述它——完全绕开 DeepSeek 模型的图片输入限制。
 
@@ -44,6 +45,7 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/ds-balance
 dsh plugin --profile web add link:<repo-abs-path>/plugins/paste-image
 dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer
 dsh plugin --profile web add link:<repo-abs-path>/plugins/deepseek-harness
+dsh plugin --profile web add link:<repo-abs-path>/plugins/batch-archive
 ```
 
 装完**重启 DSH 并硬刷新浏览器**(Cmd/Ctrl+Shift+R)生效。
@@ -185,6 +187,18 @@ agent 会自动调用;支持 PNG / JPEG / WebP / BMP / GIF。
 - **结果网格**:多语句分段渲染;行集默认截断 500 行并提示取回总数;点单元格复制;
   写语句显示影响行数。执行不做任何拦截。
 - 依赖 `pg` 驱动,首次安装后在本插件目录执行过 `pnpm install`(仓库克隆后装一次即可)。
+
+### batch-archive —— 批量归档
+
+侧边栏底部(设置按钮旁)新增「批量归档」按钮,打开面板勾选多个会话一键归档:
+
+- **入口**:展开侧边栏显示「图标 + 批量归档」,收起为窄栏时只显示图标。
+- **面板**:按工作区分组列出所有未归档会话(无归属的归「未分组」),每行显示标题、
+  相对时间与运行中状态点;支持全选 / 单选。
+- **归档**:「归档所选 (N)」→ 按钮变为「确认归档 (N)？」再次点击即逐个归档
+  (走客户端 `workspaces.archiveSession`,与行内归档同一接口);已归档会话自动从列表
+  隐藏,会话日志保留。防误触:二次确认 + 归档中锁定界面。
+- 纯客户端实现(无 Host 逻辑),会话数据来自槽位标准 props,不落盘任何状态。
 
 ## 常见问题速查
 

@@ -1,0 +1,7 @@
+{
+  "kind": "static",
+  "name": "dsh-batch-archive",
+  "purpose": "侧边栏底部「批量归档」按钮 + 居中面板: 按工作区分组列出所有未归档会话, 勾选/全选后一键归档(两次点击确认), 归档动作走客户端 workspaces.archiveSession。静态双半 npm 包, 随 web profile 启动自动加载。",
+  "files": ["package.json", "cordis.patch.yml", "README.md", "lib/index.js", "lib/client.js"],
+  "install": "dsh plugin --profile web add link:<repo-abs-path>/plugins/batch-archive"
+}
