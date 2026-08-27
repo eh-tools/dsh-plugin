@@ -210,19 +210,26 @@ window.__ModuleLoader__.load({
         'background:var(--dsw-alias-state-error-primary);}' +
         '.fge-shell-dot.fge-shell-dot-run{background:var(--dsw-alias-state-success-primary);}' +
         // 输出窗: 常驻显示, 默认一行高(自动滚底显示最新一行); 点击行首箭头展开完整。
-        // 上边框 = 粒子鲸鱼淡化蓝(rgb 103,153,254), 展开态带呼吸灯; 下边框已在
-        // .fge-shell-row 弱化。
+        // 上下边框均为粒子鲸鱼淡化蓝(rgb 103,153,254)呼吸灯: 展开态同步脉动,
+        // 上强下弱(上 .28↔.9, 下 .08↔.32); 只脉动边框颜色, 不用 box-shadow
+        // (光晕会向左右扩散, 像左右边框也在呼吸)。
         '.fge-shell-tail{flex:none;max-height:1.6em;overflow:hidden;margin:0;padding:4px 8px;' +
         'border-top:1px solid rgba(103,153,254,.28);' +
         'font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:1.5;' +
         'white-space:pre-wrap;word-break:break-all;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-1);}' +
         '.fge-shell-tail.fge-shell-tail-open{max-height:150px;overflow:auto;' +
-        'animation:fge-tail-breathe 3s ease-in-out infinite;}' +
-        // 呼吸只作用上边框颜色, 不用 box-shadow(光晕会向左右扩散, 像左右边框也在呼吸)
-        '@keyframes fge-tail-breathe{' +
-        '0%,100%{border-top-color:rgba(103,153,254,.25);}' +
-        '50%{border-top-color:rgba(103,153,254,.8);}}' +
-        '@media (prefers-reduced-motion: reduce){.fge-shell-tail.fge-shell-tail-open{animation:none;}}';
+        'animation:fge-tail-breathe-top 3s ease-in-out infinite;}' +
+        '.fge-shell-tail.fge-shell-tail-open + .fge-shell-row{' +
+        'animation:fge-tail-breathe-bottom 3s ease-in-out infinite;}' +
+        '@keyframes fge-tail-breathe-top{' +
+        '0%,100%{border-top-color:rgba(103,153,254,.28);}' +
+        '50%{border-top-color:rgba(103,153,254,.9);}}' +
+        '@keyframes fge-tail-breathe-bottom{' +
+        '0%,100%{border-top-color:rgba(103,153,254,.08);}' +
+        '50%{border-top-color:rgba(103,153,254,.32);}}' +
+        '@media (prefers-reduced-motion: reduce){' +
+        '.fge-shell-tail.fge-shell-tail-open,' +
+        '.fge-shell-tail.fge-shell-tail-open + .fge-shell-row{animation:none;}}';
 
       // ---- 文件编辑(textarea)与树内写操作样式 ----
       STYLE_CSS +=
