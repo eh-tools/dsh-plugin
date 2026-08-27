@@ -176,8 +176,6 @@ window.__ModuleLoader__.load({
         '.fge-stat-del{color:var(--dsw-alias-state-error-primary);flex:none;}' +
         '.fge-cfile{display:flex;align-items:center;gap:8px;padding:3px 4px;border-radius:0;cursor:pointer;' +
         'white-space:nowrap;color:var(--dsw-alias-label-secondary);border-bottom:1px solid var(--dsw-alias-border-l1);}' +
-        // 单条提交详情里展开的文件 diff 块: 底部分割线 + 与下一文件的间距
-        '.fge-fdiff{border-bottom:1px solid var(--dsw-alias-border-l1);padding-bottom:8px;margin-bottom:4px;}' +
         // 历史面板头部的查看分支切换器 + 其下拉菜单(挂在 float 面板内, 不出面板)
         '.fge-hbranch{flex:none;display:inline-flex;align-items:center;gap:4px;max-width:46%;border:1px solid transparent;' +
         'background:transparent;color:var(--dsw-alias-brand-primary);border-radius:6px;padding:2px 6px;font-size:12px;' +
@@ -192,20 +190,47 @@ window.__ModuleLoader__.load({
         '.fge-msg{margin:0 0 8px;padding:6px 8px;background:var(--dsw-alias-bg-layer-2);border-radius:6px;' +
         'white-space:pre-wrap;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-primary);font-family:inherit;}' +
         // ---- shell 行(shell bar) ----
-        '.fge-shell-row{display:flex;align-items:center;gap:4px;padding:4px 8px;border-top:1px solid var(--dsw-alias-border-l1);flex:none;}' +
+        // 行顶边框 = 输出窗的下边缘: 弱化(25% 透明度), 与输出窗上边框的强化形成对比
+        '.fge-shell-row{display:flex;align-items:center;gap:3px;padding:4px 6px;' +
+        'border-top:1px solid color-mix(in srgb,var(--dsw-alias-border-l1) 25%,transparent);flex:none;}' +
+        '.fge-shell-row .fge-btn{padding:2px 4px;}' + // 行内按钮紧凑化, 给输入框让宽
         '.fge-shell-input{flex:1;min-width:0;background:transparent;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;' +
         'padding:3px 8px;font-size:12px;color:var(--dsw-alias-label-primary);' +
         'font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}' +
         '.fge-shell-input:focus{outline:none;border-color:var(--dsw-alias-brand-primary);}' +
         '.fge-shell-input::placeholder{color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));}' +
-        '.fge-shell-status{flex:none;font-size:11px;line-height:18px;white-space:nowrap;' +
-        'color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));}' +
-        '.fge-shell-status.fge-shell-run{color:var(--dsw-alias-brand-primary);}' +
-        '.fge-shell-status.fge-shell-ok{color:var(--dsw-alias-state-success-primary);}' +
-        '.fge-shell-status.fge-shell-err{color:#e5484d;}' +
-        '.fge-shell-tail{flex:none;max-height:150px;overflow:auto;margin:0;padding:4px 8px;border-top:1px solid var(--dsw-alias-border-l1);' +
+        // 运行中锁输入: 只读 + 视觉弱化, 光标离开输入框, 任务结束后恢复可编辑
+        '.fge-shell-input.fge-shell-locked{opacity:.6;cursor:not-allowed;}' +
+        // 输入框末端的运行状态点: 红色=已停止(默认) 绿色=运行中/启动中; 绝对定位于
+        // 输入框右缘, pointer-events 穿透, 不遮挡文本输入(输入框右侧留出点位)。
+        '.fge-shell-inputwrap{position:relative;flex:1;min-width:0;display:flex;align-items:center;}' +
+        '.fge-shell-inputwrap .fge-shell-input{flex:1;min-width:0;width:100%;box-sizing:border-box;padding-right:20px;}' +
+        '.fge-shell-dot{position:absolute;right:8px;top:50%;transform:translateY(-50%);' +
+        'width:8px;height:8px;border-radius:50%;pointer-events:none;' +
+        'background:var(--dsw-alias-state-error-primary);}' +
+        '.fge-shell-dot.fge-shell-dot-run{background:var(--dsw-alias-state-success-primary);}' +
+        // 输出窗: 常驻显示, 默认一行高(自动滚底显示最新一行); 点击行首箭头展开完整。
+        // 上下边框均为粒子鲸鱼淡化蓝(rgb 103,153,254)呼吸灯: 展开态同步脉动,
+        // 上强下弱(上 .28↔.9, 下 .08↔.32); 只脉动边框颜色, 不用 box-shadow
+        // (光晕会向左右扩散, 像左右边框也在呼吸)。
+        '.fge-shell-tail{flex:none;max-height:1.6em;overflow:hidden;margin:0;padding:4px 8px;' +
+        'border-top:1px solid rgba(103,153,254,.28);' +
         'font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:1.5;' +
-        'white-space:pre-wrap;word-break:break-all;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-1);}';
+        // 不自动换行: 长行横向滚动, 终端式阅读更直观
+        'white-space:pre;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-1);}' +
+        '.fge-shell-tail.fge-shell-tail-open{max-height:150px;overflow:auto;' +
+        'animation:fge-tail-breathe-top 3s ease-in-out infinite;}' +
+        '.fge-shell-tail.fge-shell-tail-open + .fge-shell-row{' +
+        'animation:fge-tail-breathe-bottom 3s ease-in-out infinite;}' +
+        '@keyframes fge-tail-breathe-top{' +
+        '0%,100%{border-top-color:rgba(103,153,254,.28);}' +
+        '50%{border-top-color:rgba(103,153,254,.9);}}' +
+        '@keyframes fge-tail-breathe-bottom{' +
+        '0%,100%{border-top-color:rgba(103,153,254,.08);}' +
+        '50%{border-top-color:rgba(103,153,254,.32);}}' +
+        '@media (prefers-reduced-motion: reduce){' +
+        '.fge-shell-tail.fge-shell-tail-open,' +
+        '.fge-shell-tail.fge-shell-tail-open + .fge-shell-row{animation:none;}}';
 
       // ---- 文件编辑(textarea)与树内写操作样式 ----
       STYLE_CSS +=
@@ -242,7 +267,27 @@ window.__ModuleLoader__.load({
         '.fge-conflict{flex:none;margin-bottom:6px;padding:6px 8px;border:1px solid ' +
         'color-mix(in srgb,var(--dsw-alias-state-warn-primary) 45%,transparent);' +
         'background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 12%,transparent);border-radius:6px;' +
-        'font-size:11px;line-height:1.5;color:var(--dsw-alias-label-primary);}';
+        'font-size:11px;line-height:1.5;color:var(--dsw-alias-label-primary);}' +
+        // ---- 删除确认 / 失败提示(DSH 风格模态: 遮罩 + 居中卡片 + 底部按钮) ----
+        '.fge-mask{position:fixed;inset:0;z-index:200;display:flex;align-items:center;justify-content:center;' +
+        'pointer-events:auto;background:rgba(8,10,16,.5);}' +
+        '.fge-mbox{min-width:300px;max-width:min(420px,calc(100vw - 48px));box-sizing:border-box;' +
+        'background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;' +
+        'box-shadow:var(--dsw-shadow-lv3,rgba(0,0,0,.35)) 0 18px 60px;padding:18px 20px 16px;' +
+        'color:var(--dsw-alias-label-primary);font-size:13px;line-height:1.55;}' +
+        '.fge-mtitle{font-size:14px;font-weight:600;margin-bottom:8px;}' +
+        '.fge-mbody{color:var(--dsw-alias-label-secondary);margin-bottom:18px;word-break:break-word;}' +
+        '.fge-mfoot{display:flex;justify-content:flex-end;gap:8px;}' +
+        '.fge-mbtn{border-radius:8px;padding:5px 14px;font-size:12px;font-weight:600;cursor:pointer;' +
+        'border:1px solid transparent;line-height:1.5;}' +
+        '.fge-mbtn:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px;}' +
+        '.fge-mbtn-ghost{background:transparent;border-color:var(--dsw-alias-border-l2);' +
+        'color:var(--dsw-alias-label-secondary);}' +
+        '.fge-mbtn-ghost:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);}' +
+        '.fge-mbtn-danger{background:var(--dsw-alias-state-error-primary);color:#fff;}' +
+        '.fge-mbtn-danger:hover{filter:brightness(1.1);}' +
+        '.fge-mbtn-brand{background:var(--dsw-alias-brand-primary);color:#fff;}' +
+        '.fge-mbtn-brand:hover{filter:brightness(1.1);}';
       var styleTag = null;
       function ensureStyles() {
         if (styleTag !== null) return;
@@ -631,7 +676,8 @@ window.__ModuleLoader__.load({
       // 「鼠标在场」区域集; 只要指针还在任一已登记区域就不收起, 全部离开后才
       // 启动 HIDE_DELAY_MS 宽限定时器, 期间进入任一区域则取消。
       // 区域登记名约定: 左侧 lp=文件树面板 cf=内容悬浮栏;
-      //                右侧 rp=git树面板 df=diff悬浮栏 hs=提交历史悬浮栏。
+      //                右侧 rp=git树面板 df=diff悬浮栏 hs=提交历史悬浮栏
+      //                hd=提交内文件 diff 悬浮栏(历史详情点文件行后单开)。
       // (分支下拉/历史分组菜单是面板 DOM 子孙, 指针移入不触发面板 mouseleave,
       //  无需登记。)
       var HIDE_DELAY_MS = 360;
@@ -1260,7 +1306,8 @@ window.__ModuleLoader__.load({
       }
 
       // ---- 对号图标(✓, shell 行执行) ----
-      function CheckIcon() {
+      // ---- shell 行动作图标: ▶ 执行 / ■ 停止 ----
+      function PlayIcon() {
         return React.createElement(
           'svg',
           {
@@ -1275,7 +1322,25 @@ window.__ModuleLoader__.load({
             'aria-hidden': 'true',
             style: { display: 'block' },
           },
-          React.createElement('path', { d: 'M20 6L9 17l-5-5' }),
+          React.createElement('polygon', { points: '5 3 19 12 5 21 5 3' }),
+        );
+      }
+      function StopIcon() {
+        return React.createElement(
+          'svg',
+          {
+            width: 14,
+            height: 14,
+            viewBox: '0 0 24 24',
+            fill: 'none',
+            stroke: 'currentColor',
+            strokeWidth: 2,
+            strokeLinecap: 'round',
+            strokeLinejoin: 'round',
+            'aria-hidden': 'true',
+            style: { display: 'block' },
+          },
+          React.createElement('rect', { x: '4', y: '4', width: '16', height: '16', rx: '2' }),
         );
       }
 
@@ -1432,9 +1497,9 @@ window.__ModuleLoader__.load({
         var jobState = React.useState(null); // {id,label,status,exitCode,signal,error}
         var job = jobState[0];
         var setJob = jobState[1];
-        var errMsgState = React.useState(null);
-        var errMsg = errMsgState[0];
-        var setErrMsg = errMsgState[1];
+        var startingState = React.useState(false); // shellStart 请求在途(○ 启动中)
+        var starting = startingState[0];
+        var setStarting = startingState[1];
         var openState = React.useState(false);
         var open = openState[0];
         var setOpen = openState[1];
@@ -1450,7 +1515,8 @@ window.__ModuleLoader__.load({
         var histIdxRef = React.useRef(null); // null = 实时输入
         var draftRef = React.useRef(''); // 离开实时输入时的草稿
         var fromRef = React.useRef({ out: 0, err: 0 }); // 已读到的绝对字符位
-        var busy = !!job && (job.status === 'running' || job.status === 'stopping');
+        var jobBusy = !!job && (job.status === 'running' || job.status === 'stopping');
+        var busy = starting || jobBusy;
 
         // 历史随仓库根懒加载(cwd 缓存搭车: shellHistory 字段)
         React.useEffect(
@@ -1473,7 +1539,7 @@ window.__ModuleLoader__.load({
           function () {
             var dead = false;
             setJob(null);
-            setErrMsg(null);
+            setStarting(false);
             setOutText('');
             setErrText('');
             fromRef.current = { out: 0, err: 0 };
@@ -1481,9 +1547,14 @@ window.__ModuleLoader__.load({
               .then(function (r) {
                 if (dead || !r || !r.ok || !r.job) return;
                 setJob(r.job);
-                setOpen(true);
+                // 输出窗常驻一行显示, 认领任务不自动展开
                 // 认领已终结的任务时轮询不会跑, 单次拉尾部输出填充
                 if (r.job.status !== 'running' && r.job.status !== 'stopping') {
+                  // 终态任务: 把命令文本放回输入框(与「执行后命令保留不清空」一致),
+                  // 让状态行有命令上下文, 不出现「空输入框 + 退出状态」的割裂观感
+                  if (typeof r.job.label === 'string' && r.job.label !== '') {
+                    setValue(r.job.label);
+                  }
                   api('shellOutput', { root: props.root, outFrom: 0, errFrom: 0 })
                     .then(function (o) {
                       if (dead || !o || !o.ok) return;
@@ -1564,11 +1635,16 @@ window.__ModuleLoader__.load({
         var exec = function () {
           var cmd = value.trim();
           if (cmd === '' || busy) return;
+          // 执行即离开输入框: 配合下方只读锁, 运行中光标不再停留在输入框内
+          if (inputRef.current) inputRef.current.blur();
+          setStarting(true); // ○ 启动中(请求在途)
           api('shellStart', { root: props.root, command: cmd })
             .then(function (r) {
+              setStarting(false);
               if (!r || !r.ok) {
+                // 启动失败信息进输出窗(状态符号保持 ■, 有效信息在窗口里)
                 var reason = r && r.error;
-                setErrMsg(
+                var txt =
                   reason === 'busy'
                     ? '已有任务在运行'
                     : reason === 'jobs-unavailable'
@@ -1579,11 +1655,11 @@ window.__ModuleLoader__.load({
                           ? '命令无效'
                           : reason === 'spawn-failed'
                             ? '进程启动失败' + (r && r.detail ? '(' + r.detail + ')' : '')
-                            : '启动失败',
-                );
+                            : '启动失败';
+                setOutText('⚠ 启动失败：' + txt);
+                setErrText('');
                 return;
               }
-              setErrMsg(null);
               histRef.current = pushHist(histRef.current, cmd);
               histIdxRef.current = null;
               draftRef.current = '';
@@ -1592,15 +1668,16 @@ window.__ModuleLoader__.load({
               setOutText('');
               setErrText('');
               setJob(r.job);
-              setOpen(true);
             })
             .catch(function () {
-              setErrMsg('启动失败(网络错误)');
+              setStarting(false);
+              setOutText('⚠ 启动失败：网络错误');
+              setErrText('');
             });
         };
 
         var stop = function () {
-          if (!busy) return;
+          if (!jobBusy) return; // 只停真实在跑的任务(启动中无任务可停)
           api('shellStop', { root: props.root })
             .then(function (r) {
               if (r && r.ok && r.job) setJob(r.job);
@@ -1633,24 +1710,10 @@ window.__ModuleLoader__.load({
           setValue(h[idx]);
         };
 
-        var statusInfo = null;
-        if (errMsg !== null) statusInfo = { cls: ' fge-shell-err', text: errMsg };
-        else if (job) {
-          if (job.status === 'running') statusInfo = { cls: ' fge-shell-run', text: '● 运行中…' };
-          else if (job.status === 'stopping')
-            statusInfo = { cls: ' fge-shell-run', text: '○ 正在停止…' };
-          else if (job.status === 'completed')
-            statusInfo =
-              job.exitCode === 0
-                ? { cls: ' fge-shell-ok', text: '✓ 退出 0' }
-                : { cls: ' fge-shell-err', text: '✗ 退出 ' + job.exitCode };
-          else if (job.status === 'killed')
-            statusInfo = {
-              cls: ' fge-shell-err',
-              text: '■ 已停止' + (job.signal ? '(' + job.signal + ')' : ''),
-            };
-          else statusInfo = { cls: ' fge-shell-err', text: '⚠ ' + (job.error || '执行失败') };
-        }
+        // 运行状态点: 绿色=运行中/启动中, 红色=已停止。渲染在输入框右缘;
+        // 仅在有意义时显示 —— 空闲(无 job)或输入框为空时不显示任何点。
+        var runActive = starting || jobBusy;
+        var showDot = runActive || (!!job && value.trim() !== '');
 
         var tailText =
           outText + (errText !== '' ? (outText !== '' ? '\n' : '') + '[stderr]\n' + errText : '');
@@ -1658,70 +1721,89 @@ window.__ModuleLoader__.load({
         return React.createElement(
           React.Fragment,
           null,
-          open
-            ? React.createElement(
-                'pre',
-                { className: 'fge-shell-tail', ref: preRef },
-                tailText !== '' ? tailText : '(尚无输出)',
-              )
-            : null,
+          // 输出窗常驻显示, 默认一行高(自动滚底显示最新一行), 箭头展开完整
+          React.createElement(
+            'pre',
+            {
+              className: 'fge-shell-tail' + (open ? ' fge-shell-tail-open' : ''),
+              ref: preRef,
+            },
+            tailText !== '' ? tailText : '(尚无输出)',
+          ),
           React.createElement(
             'div',
             { className: 'fge-shell-row' },
+            // 行首小箭头: 一行 ↔ 完整显示输出窗(执行按钮不再控制显示)
             React.createElement(
               'button',
               {
                 className: 'fge-btn' + (open ? ' fge-btn-active' : ''),
-                title: job ? '展开/收起输出' : '暂无任务输出',
-                disabled: !job,
+                title: open ? '收起输出为一行' : '展开完整输出',
                 onClick: function () {
                   setOpen(!open);
                 },
               },
               React.createElement(CaretIcon, { open: open }),
             ),
-            React.createElement('input', {
-              ref: inputRef,
-              className: 'fge-shell-input',
-              value: value,
-              placeholder: 'shell 命令(⏎ 执行)',
-              spellCheck: false,
-              onChange: function (e) {
-                setValue(e.target.value);
-                histIdxRef.current = null;
-              },
-              onKeyDown: function (e) {
-                if (e.key === 'Enter') {
-                  // IME 组合期不触发; preventDefault+stopPropagation 隔离应用层按键链
-                  if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
-                  e.preventDefault();
-                  e.stopPropagation();
-                  exec();
-                } else if (e.key === 'ArrowUp') {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  navHistory('up');
-                } else if (e.key === 'ArrowDown') {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  navHistory('down');
-                } else if (e.key === 'Escape') {
-                  // 只失焦: 不波及插件的常驻 window Esc 监听(会关悬浮窗)
-                  e.stopPropagation();
-                  if (inputRef.current) inputRef.current.blur();
-                }
-              },
-            }),
-            statusInfo
-              ? React.createElement(
-                  'span',
-                  {
-                    className: 'fge-shell-status' + statusInfo.cls,
-                    title: job ? job.label : statusInfo.text,
-                  },
-                  statusInfo.text,
-                )
-              : null,
+            React.createElement(
+              'div',
+              { className: 'fge-shell-inputwrap' },
+              React.createElement('input', {
+                ref: inputRef,
+                className: 'fge-shell-input' + (busy ? ' fge-shell-locked' : ''),
+                value: value,
+                placeholder: 'shell 命令(⏎ 执行)',
+                spellCheck: false,
+                readOnly: busy,
+                onChange: function (e) {
+                  if (busy) return; // 运行中只读, 防御性兜底
+                  setValue(e.target.value);
+                  histIdxRef.current = null;
+                  // 修改命令 = 作废上一任务: 状态点回到红色(默认), 输出窗回到一行
+                  // (输出内容保留可查, 行首箭头可再展开)
+                  setJob(null);
+                  setOpen(false);
+                },
+                onKeyDown: function (e) {
+                  if (busy) {
+                    // 运行中锁定输入: 不响应 Enter/↑/↓ 等按键, 仅允许 Esc 失焦
+                    if (e.key === 'Escape') {
+                      e.stopPropagation();
+                      if (inputRef.current) inputRef.current.blur();
+                    } else {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }
+                    return;
+                  }
+                  if (e.key === 'Enter') {
+                    // IME 组合期不触发; preventDefault+stopPropagation 隔离应用层按键链
+                    if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    exec();
+                  } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    navHistory('up');
+                  } else if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    navHistory('down');
+                  } else if (e.key === 'Escape') {
+                    // 只失焦: 不波及插件的常驻 window Esc 监听(会关悬浮窗)
+                    e.stopPropagation();
+                    if (inputRef.current) inputRef.current.blur();
+                  }
+                },
+              }),
+              // 运行状态点: 输入框右缘内部, pointer-events 穿透不挡输入; 空闲/空输入不渲染
+              showDot
+                ? React.createElement('span', {
+                    className: 'fge-shell-dot' + (runActive ? ' fge-shell-dot-run' : ''),
+                  })
+                : null,
+            ),
             React.createElement(
               'button',
               {
@@ -1730,17 +1812,17 @@ window.__ModuleLoader__.load({
                 disabled: busy || value.trim() === '',
                 onClick: exec,
               },
-              React.createElement(CheckIcon, null),
+              React.createElement(PlayIcon, null),
             ),
             React.createElement(
               'button',
               {
                 className: 'fge-btn',
                 title: '停止当前任务',
-                disabled: !busy,
+                disabled: !jobBusy,
                 onClick: stop,
               },
-              React.createElement(CloseIcon, null),
+              React.createElement(StopIcon, null),
             ),
           ),
         );
@@ -1816,6 +1898,56 @@ window.__ModuleLoader__.load({
         var notifyEvent = function (evt) {
           if (typeof props.onTreeEvent === 'function') props.onTreeEvent(evt);
         };
+
+        // ---- 删除确认 / 失败提示: DSH 风格模态(替代原生 window.confirm / alert) ----
+        // confirmReq: null | {mode:'confirm', row} | {mode:'notice', title, message}
+        var confirmReqState = React.useState(null);
+        var confirmReq = confirmReqState[0];
+        var setConfirmReq = confirmReqState[1];
+        var confirmResolveRef = React.useRef(null); // 确认按钮的回调(取消/关闭 = false)
+        var askConfirm = function (row) {
+          return new Promise(function (resolve) {
+            confirmResolveRef.current = resolve;
+            setConfirmReq({ mode: 'confirm', row: row });
+          });
+        };
+        var settleConfirm = function (ok) {
+          if (confirmResolveRef.current) {
+            confirmResolveRef.current(ok);
+            confirmResolveRef.current = null;
+          }
+          setConfirmReq(null);
+        };
+        var showNotice = function (title, message) {
+          confirmResolveRef.current = null;
+          setConfirmReq({ mode: 'notice', title: title, message: message });
+        };
+        // 删除失败码 → 可读文案
+        var removeErrText = function (code) {
+          if (code === 'not-found') return '目标不存在（可能已被删除）';
+          if (code === 'not-empty') return '目录非空，无法删除';
+          if (code === 'invalid-path' || code === 'invalid-root') return '路径不合法';
+          if (code === 'rpc-failed') return '请求失败，请重试';
+          return code || '未知错误';
+        };
+        // 模态打开期间 Esc = 取消: document 捕获期拦截, 阻断全局 Esc(关悬浮面板)连锁
+        React.useEffect(
+          function () {
+            if (!confirmReq) return undefined;
+            function onKey(e) {
+              if (e.key === 'Escape') {
+                e.stopPropagation();
+                settleConfirm(false);
+              }
+            }
+            document.addEventListener('keydown', onKey, true);
+            return function () {
+              document.removeEventListener('keydown', onKey, true);
+            };
+          },
+          [confirmReq],
+        );
+
         var ops = {
           create: function (parentRel, cleanName, kind) {
             var relPath = parentRel === '' ? cleanName : parentRel + '/' + cleanName;
@@ -1849,30 +1981,29 @@ window.__ModuleLoader__.load({
               });
           },
           remove: function (row) {
-            var msg =
-              row.type === 'dir'
-                ? '删除目录 “' + row.name + '” 及其全部内容？此操作不可恢复。'
-                : '删除文件 “' + row.name + '”？此操作不可恢复。';
-            if (!window.confirm(msg)) return Promise.resolve({ ok: false, error: 'cancelled' });
-            return api('remove', {
-              root: props.root,
-              path: row.rel,
-              recursive: row.type === 'dir',
-            })
-              .then(function (res) {
-                if (res && res.ok) {
-                  fireReload(dirOf(row.rel));
-                  notifyEvent({ type: 'deleted', rel: row.rel });
-                  notifyMutated();
-                } else if (res && res.error !== 'cancelled') {
-                  window.alert('删除失败：' + (res.error || 'unknown'));
-                }
-                return res || { ok: false, error: 'failed' };
+            // DSH 风格模态确认(替代原生 confirm), 目录删除需显式确认
+            return askConfirm(row).then(function (ok) {
+              if (!ok) return { ok: false, error: 'cancelled' };
+              return api('remove', {
+                root: props.root,
+                path: row.rel,
+                recursive: row.type === 'dir',
               })
-              .catch(function () {
-                window.alert('删除失败：请求错误');
-                return { ok: false, error: 'rpc-failed' };
-              });
+                .then(function (res) {
+                  if (res && res.ok) {
+                    fireReload(dirOf(row.rel));
+                    notifyEvent({ type: 'deleted', rel: row.rel });
+                    notifyMutated();
+                  } else if (res && res.error !== 'cancelled') {
+                    showNotice('删除失败', removeErrText(res.error));
+                  }
+                  return res || { ok: false, error: 'failed' };
+                })
+                .catch(function () {
+                  showNotice('删除失败', '请求错误');
+                  return { ok: false, error: 'rpc-failed' };
+                });
+            });
           },
         };
         /** 分区头"+" → 该分区根的新建待输入行 */
@@ -1953,18 +2084,21 @@ window.__ModuleLoader__.load({
         };
 
         return React.createElement(
-          'div',
-          {
-            className: 'fge-panel',
-            'data-fge-root': '1',
-            style: props.style,
-            onMouseEnter: function () {
-              track.enter('lp');
+          React.Fragment,
+          null,
+          React.createElement(
+            'div',
+            {
+              className: 'fge-panel',
+              'data-fge-root': '1',
+              style: props.style,
+              onMouseEnter: function () {
+                track.enter('lp');
+              },
+              onMouseLeave: function () {
+                track.leave('lp');
+              },
             },
-            onMouseLeave: function () {
-              track.leave('lp');
-            },
-          },
           React.createElement(
             'div',
             { className: 'fge-panel-head' },
@@ -2181,11 +2315,77 @@ window.__ModuleLoader__.load({
                   ),
                 ),
               ),
-          React.createElement(ShellBar, { root: props.root, cacheKey: props.cacheKey }),
-          React.createElement('div', {
-            className: 'fge-resize fge-resize-left',
-            onPointerDown: props.onResizeStart,
-          }),
+            React.createElement(ShellBar, { root: props.root, cacheKey: props.cacheKey }),
+            React.createElement('div', {
+              className: 'fge-resize fge-resize-left',
+              onPointerDown: props.onResizeStart,
+            }),
+          ),
+          confirmReq
+            ? React.createElement(
+                'div',
+                {
+                  className: 'fge-mask',
+                  'data-fge-root': '1',
+                  onMouseEnter: function () {
+                    track.enter('lp');
+                  },
+                  onMouseLeave: function () {
+                    track.leave('lp');
+                  },
+                  onClick: function (e) {
+                    if (e.target === e.currentTarget) settleConfirm(false); // 点遮罩 = 取消
+                  },
+                },
+                React.createElement(
+                  'div',
+                  { className: 'fge-mbox' },
+                  React.createElement(
+                    'div',
+                    { className: 'fge-mtitle' },
+                    confirmReq.mode === 'notice' ? confirmReq.title : '删除确认',
+                  ),
+                  React.createElement(
+                    'div',
+                    { className: 'fge-mbody' },
+                    confirmReq.mode === 'notice'
+                      ? confirmReq.message
+                      : confirmReq.row.type === 'dir'
+                        ? '删除目录 “' + confirmReq.row.name + '” 及其全部内容？此操作不可恢复。'
+                        : '删除文件 “' + confirmReq.row.name + '”？此操作不可恢复。',
+                  ),
+                  React.createElement(
+                    'div',
+                    { className: 'fge-mfoot' },
+                    confirmReq.mode === 'notice'
+                      ? null
+                      : React.createElement(
+                          'button',
+                          {
+                            className: 'fge-mbtn fge-mbtn-ghost',
+                            onClick: function () {
+                              settleConfirm(false);
+                            },
+                          },
+                          '取消',
+                        ),
+                    React.createElement(
+                      'button',
+                      {
+                        className:
+                          'fge-mbtn ' +
+                          (confirmReq.mode === 'notice' ? 'fge-mbtn-brand' : 'fge-mbtn-danger'),
+                        autoFocus: confirmReq.mode === 'notice',
+                        onClick: function () {
+                          settleConfirm(confirmReq.mode !== 'notice');
+                        },
+                      },
+                      confirmReq.mode === 'notice' ? '知道了' : '删除',
+                    ),
+                  ),
+                ),
+              )
+            : null,
         );
       }
 
@@ -2195,6 +2395,8 @@ window.__ModuleLoader__.load({
         var menuOpen = menuState[0];
         var setMenuOpen = menuState[1];
         var listRef = React.useRef(null);
+        var branchRef = React.useRef(null);
+        var menuRef = React.useRef(null);
         // 与右侧悬浮栏(diff/历史)互斥: 两者都出现在面板左侧同一留白带,
         // 同时打开会互相遮挡 —— 悬浮栏在打开时收起本下拉(反向经 onOpenMenu 关闭悬浮栏)。
         React.useEffect(
@@ -2202,6 +2404,25 @@ window.__ModuleLoader__.load({
             if (props.floatOpen) setMenuOpen(false);
           },
           [props.floatOpen],
+        );
+        // 点下拉外任意位置即收起: 单击列表外(面板内其他区域 / 页面其他处)关闭分支列表,
+        // 不再要求必须再点一次分支名。分支按钮本身除外 —— 它自己的 onClick 负责切换;
+        // 捕获期 document 监听先于按钮合成点击执行, 无竞争。
+        React.useEffect(
+          function () {
+            if (!menuOpen) return;
+            function onDocDown(e) {
+              var t = e.target;
+              if (menuRef.current && menuRef.current.contains(t)) return;
+              if (branchRef.current && branchRef.current.contains(t)) return;
+              setMenuOpen(false);
+            }
+            document.addEventListener('mousedown', onDocDown, true);
+            return function () {
+              document.removeEventListener('mousedown', onDocDown, true);
+            };
+          },
+          [menuOpen],
         );
         // 延迟收起: 由 FgeRoot 下发的保持区追踪器驱动(rp 区), 见 makeSideTracker
         var track = props.track;
@@ -2279,7 +2500,7 @@ window.__ModuleLoader__.load({
           };
           menu = React.createElement(
             'div',
-            { className: 'fge-branch-menu' },
+            { className: 'fge-branch-menu', ref: menuRef },
             group('本地分支', localBranches),
             group('远程分支', remoteBranches),
           );
@@ -2302,6 +2523,7 @@ window.__ModuleLoader__.load({
             'div',
             {
               className: 'fge-branch',
+              ref: branchRef,
               onClick: function () {
                 var next = !menuOpen;
                 setMenuOpen(next);
@@ -2771,18 +2993,30 @@ window.__ModuleLoader__.load({
         var err = errState[0];
         var setErr = errState[1];
 
+        // commitHash 模式 = 复用本面板展示「某次提交内某文件的 diff」(历史详情点文件行):
+        // 走 show 路由取该提交内该路径的 diff; 缺省 = 工作区变更 diff。
+        var commitHash = props.commitHash || null;
+
         React.useEffect(
           function () {
             var alive = true;
             setData(null);
             setErr(null);
-            api('diff', {
-              root: props.root,
-              repoRoot: props.repoRoot,
-              path: props.change.path,
-              status: props.change.status,
-              from: props.change.from,
-            })
+            var req = commitHash
+              ? api('show', {
+                  root: props.root,
+                  repoRoot: props.repoRoot,
+                  hash: commitHash,
+                  path: props.change.path,
+                })
+              : api('diff', {
+                  root: props.root,
+                  repoRoot: props.repoRoot,
+                  path: props.change.path,
+                  status: props.change.status,
+                  from: props.change.from,
+                });
+            req
               .then(function (res) {
                 if (!alive) return;
                 if (res && res.ok) setData(res);
@@ -2795,7 +3029,7 @@ window.__ModuleLoader__.load({
               alive = false;
             };
           },
-          [props.change.path, props.statusVersion],
+          [props.change.path, props.statusVersion, commitHash],
         );
 
         var body = null;
@@ -2835,7 +3069,7 @@ window.__ModuleLoader__.load({
           FloatPanel,
           {
             style: props.style,
-            badge: props.change.status,
+            badge: props.badge === undefined ? props.change.status : props.badge,
             track: props.track,
             region: props.region || 'df',
             title: props.change.path,
@@ -2882,15 +3116,12 @@ window.__ModuleLoader__.load({
         var errState = React.useState(null);
         var err = errState[0];
         var setErr = errState[1];
-        var viewHashState = React.useState(null); // null=列表 | hash=详情
+        var viewHashState = React.useState(null); // null=列表 | hash=详情(详情仍在历史面板内)
         var viewHash = viewHashState[0];
         var setViewHash = viewHashState[1];
         var detailState = React.useState(null); // {kind:'commit'|'merge', message, files?}
         var detail = detailState[0];
         var setDetail = detailState[1];
-        var fileDiffsState = React.useState({}); // {path: {loading}|{text}|{error}}
-        var fileDiffs = fileDiffsState[0];
-        var setFileDiffs = fileDiffsState[1];
         var listRef = React.useRef(null);
         var shownHeadRef = React.useRef(null); // 本列表已知的 HEAD(供刷新比对)
 
@@ -2982,7 +3213,7 @@ window.__ModuleLoader__.load({
             setCommits(null);
             setViewHash(null);
             setDetail(null);
-            setFileDiffs({});
+            if (props.onCloseFileDiff) props.onCloseFileDiff(); // 换查看分支 → 关闭文件 diff 悬浮栏
             setErr(null);
             setExhausted(false);
             shownHeadRef.current = null;
@@ -3058,12 +3289,15 @@ window.__ModuleLoader__.load({
             });
         };
 
+        // 详情视图仍在历史面板内: 完整 message + 文件 ±行数列表;
+        // 点文件行由 FgeRoot 在历史面板左侧单开 DiffPanel 展示该提交内该文件的 diff
+        // (与右侧变更列表点开 diff 悬浮栏同一套交互)。
         var detailReqRef = React.useRef(null); // 竞态守卫: 只接受最后一次详情请求
         var openDetail = function (c) {
           detailReqRef.current = c.hash;
           setViewHash(c.hash);
           setDetail(null);
-          setFileDiffs({});
+          if (props.onCloseFileDiff) props.onCloseFileDiff(); // 换提交 → 关闭上一份文件 diff
           api('show', { root: props.root, repoRoot: props.repoRoot, hash: c.hash })
             .then(function (r) {
               if (detailReqRef.current !== c.hash) return;
@@ -3073,45 +3307,6 @@ window.__ModuleLoader__.load({
             .catch(function () {
               if (detailReqRef.current !== c.hash) return;
               setDetail({ kind: 'error', message: 'rpc-failed' });
-            });
-        };
-
-        var toggleFile = function (path) {
-          var opening = fileDiffs[path] === undefined;
-          setFileDiffs(function (prev) {
-            var next = {};
-            for (var k in prev) next[k] = prev[k];
-            if (next[path] !== undefined) delete next[path];
-            else next[path] = { loading: true };
-            return next;
-          });
-          if (!opening || viewHash === null) return;
-          api('show', {
-            root: props.root,
-            repoRoot: props.repoRoot,
-            hash: viewHash,
-            path: path,
-          })
-            .then(function (r) {
-              setFileDiffs(function (prev) {
-                if (prev[path] === undefined || !prev[path].loading) return prev; // 已被收起
-                var next = {};
-                for (var k in prev) next[k] = prev[k];
-                next[path] =
-                  r && r.ok && r.kind === 'diff'
-                    ? { text: r.text }
-                    : { error: (r && r.error) || 'failed' };
-                return next;
-              });
-            })
-            .catch(function () {
-              setFileDiffs(function (prev) {
-                if (prev[path] === undefined || !prev[path].loading) return prev;
-                var next = {};
-                for (var k in prev) next[k] = prev[k];
-                next[path] = { error: 'rpc-failed' };
-                return next;
-              });
             });
         };
 
@@ -3129,7 +3324,7 @@ window.__ModuleLoader__.load({
                     detailReqRef.current = null;
                     setViewHash(null);
                     setDetail(null);
-                    setFileDiffs({});
+                    if (props.onCloseFileDiff) props.onCloseFileDiff(); // 回列表 → 关闭文件 diff
                   },
                 },
                 '‹ 列表',
@@ -3140,7 +3335,7 @@ window.__ModuleLoader__.load({
         if (err !== null) {
           body = React.createElement('div', { className: 'fge-note' }, '读取失败: ' + err);
         } else if (viewHash !== null) {
-          // 详情视图: 完整 message + 文件 ±行数列表 → 点文件展开单文件 diff
+          // 详情视图: 完整 message + 文件 ±行数列表 → 点文件行在历史面板左侧开 diff 悬浮栏
           var inner = [];
           if (detail === null) {
             inner.push(React.createElement('div', { className: 'fge-note', key: 'ld' }, '加载中…'));
@@ -3175,7 +3370,6 @@ window.__ModuleLoader__.load({
             } else {
               for (var fi = 0; fi < detail.files.length; fi++) {
                 (function (f) {
-                  var fd = fileDiffs[f.path];
                   inner.push(
                     React.createElement(
                       'div',
@@ -3183,7 +3377,7 @@ window.__ModuleLoader__.load({
                         className: 'fge-cfile',
                         key: 'f:' + f.path,
                         onClick: function () {
-                          toggleFile(f.path);
+                          if (props.onOpenFileDiff) props.onOpenFileDiff(viewHash, f.path);
                         },
                         title: f.from ? f.path + ' (原 ' + f.from + ')' : f.path,
                       },
@@ -3206,41 +3400,6 @@ window.__ModuleLoader__.load({
                       React.createElement('span', { className: 'fge-cfile-path' }, f.path),
                     ),
                   );
-                  if (fd !== undefined) {
-                    if (fd.loading) {
-                      inner.push(
-                        React.createElement(
-                          'div',
-                          { className: 'fge-note', key: 'fl:' + f.path },
-                          '加载中…',
-                        ),
-                      );
-                    } else if (fd.error !== undefined) {
-                      inner.push(
-                        React.createElement(
-                          'div',
-                          { className: 'fge-note', key: 'fl:' + f.path },
-                          '读取失败: ' + fd.error,
-                        ),
-                      );
-                    } else if (fd.text === '') {
-                      inner.push(
-                        React.createElement(
-                          'div',
-                          { className: 'fge-note', key: 'fl:' + f.path },
-                          '(二进制或无差异)',
-                        ),
-                      );
-                    } else {
-                      inner.push(
-                        React.createElement('pre', {
-                          className: 'fge-pre fge-fdiff',
-                          key: 'fl:' + f.path,
-                          dangerouslySetInnerHTML: { __html: diffToHtml(fd.text) },
-                        }),
-                      );
-                    }
-                  }
                 })(detail.files[fi]);
               }
             }
@@ -3390,6 +3549,11 @@ window.__ModuleLoader__.load({
         var historyState = React.useState(false);
         var historyOpen = historyState[0];
         var setHistoryOpen = historyState[1];
+        // 提交内文件 diff 浮层: 历史详情点文件行后, 在历史面板左侧单开
+        // (复用 DiffPanel 的 commitHash 模式, 与变更列表点开 diff 同一套交互)。
+        var histFileDiffState = React.useState(null); // {hash, path} | null
+        var histFileDiff = histFileDiffState[0];
+        var setHistFileDiff = histFileDiffState[1];
         var linkageState = React.useState(null);
         var linkage = linkageState[0];
         var setLinkage = linkageState[1];
@@ -3498,6 +3662,7 @@ window.__ModuleLoader__.load({
             setDiff(null);
             setLinkage(null);
             setHistoryOpen(false);
+            setHistFileDiff(null);
           },
           [root],
         );
@@ -3657,6 +3822,7 @@ window.__ModuleLoader__.load({
               setContent(null);
               setDiff(null);
               setHistoryOpen(false);
+              setHistFileDiff(null);
             }
           }
           window.addEventListener('keydown', onKey);
@@ -3698,6 +3864,7 @@ window.__ModuleLoader__.load({
         var onDiffClick = React.useCallback(function (ch) {
           // 与历史浮层互斥: 打开 diff 即关闭历史(共享同一锚位)
           setHistoryOpen(false);
+          setHistFileDiff(null);
           setDiff(function (prev) {
             if (prev && prev.change.path === ch.path) return null;
             return { change: ch };
@@ -3732,18 +3899,30 @@ window.__ModuleLoader__.load({
           }
         }, []);
 
-        // 提交历史开关: 打开时关闭 diff 浮层(互斥共享锚位)
+        // 提交历史开关: 打开时关闭 diff 浮层(互斥共享锚位), 文件 diff 随历史一并复位
         var toggleHistory = React.useCallback(
           function () {
             if (historyOpen) {
               setHistoryOpen(false);
+              setHistFileDiff(null);
               return;
             }
             setDiff(null);
             setHistoryOpen(true);
+            setHistFileDiff(null);
           },
           [historyOpen],
         );
+
+        // 历史详情点文件行 → 在历史面板左侧开/关该提交内该文件的 diff 悬浮栏
+        // (复用 DiffPanel, 与右侧变更列表点开 diff 同一套交互; 再点同一行 = 关闭)。
+        var openHistFileDiff = React.useCallback(function (hash, path) {
+          if (!hash || !path) return;
+          setHistFileDiff(function (prev) {
+            if (prev && prev.hash === hash && prev.path === path) return null;
+            return { hash: hash, path: path };
+          });
+        }, []);
 
         // 图钉: 无论点哪个面板的图钉, 动作一致 —— 固定时两个面板都展开为卡片。
         // 避免出现「已固定但另一侧仍是细条」的不一致状态。
@@ -3776,16 +3955,18 @@ window.__ModuleLoader__.load({
               setRightOpen(false);
               setDiff(null);
               setHistoryOpen(false);
+              setHistFileDiff(null);
             }
           },
           [pin],
         );
 
-        // 分支下拉与右侧悬浮栏互斥(防遮挡): 展开下拉时关闭 diff/历史悬浮栏。
+        // 分支下拉与右侧悬浮栏互斥(防遮挡): 展开下拉时关闭 diff/历史/文件 diff 悬浮栏。
         // 反方向(悬浮栏打开时收起下拉)由 RightPanel 内部经 floatOpen 处理。
         var openBranchMenu = React.useCallback(function () {
           setDiff(null);
           setHistoryOpen(false);
+          setHistFileDiff(null);
         }, []);
 
         // 保持区追踪器的触发回调指向最新 hide*(每渲染刷新, 见 makeSideTracker)
@@ -3811,6 +3992,7 @@ window.__ModuleLoader__.load({
               setDiff(null);
               setLinkage(null);
               setHistoryOpen(false);
+              setHistFileDiff(null);
             } else if (!away && awaySnapTakenRef.current) {
               awaySnapTakenRef.current = false;
               var snap = awaySnapRef.current;
@@ -3980,10 +4162,37 @@ window.__ModuleLoader__.load({
           width: contentW,
           height: height,
         };
+        // 右侧两浮层(历史面板 + 提交内文件 diff 面板)并排:
+        // - 详情面板优先取满宽, 与右侧变更列表打开的 diff 同宽(diffW);
+        // - 历史面板让位到剩余带宽(保底 FLOAT_MIN_W), 且并排宽度只由 historyOpen
+        //   决定 —— 打开/关闭详情时历史面板宽度不变, 无跳变;
+        // - 并排左界: 左树展开时以左树右缘 +8 为界(不盖左树; 悬浮栏允许越过
+        //   对话区), 左树不可用时退回对话区左缘 +40; 带宽不足时详情降宽。
+        var FLOAT_MIN_W = 280;
+        var histW = diffW;
+        var histFileDiffW = diffW;
+        var pairLeft = geo.convLeft + 40;
+        if (historyOpen) {
+          pairLeft = leftShow ? leftAnchor + 8 : geo.convLeft + 40;
+          var pairBand = (rightAnchor - 10) - pairLeft - 10;
+          if (pairBand < diffW * 2 + 10) {
+            var wantDetail = Math.min(diffW, Math.max(FLOAT_MIN_W, pairBand - FLOAT_MIN_W));
+            histW = Math.max(FLOAT_MIN_W, pairBand - wantDetail);
+            histFileDiffW = wantDetail;
+          }
+        }
         var diffStyle = {
-          left: Math.max(geo.convLeft + 40, rightAnchor - 10 - diffW),
+          left: Math.max(geo.convLeft + 40, rightAnchor - 10 - histW),
           top: top,
-          width: diffW,
+          width: histW,
+          height: height,
+        };
+        // 提交内文件 diff 悬浮面板: 单开在历史面板左侧(留 10px 间距), 与历史面板同存;
+        // 与变更列表的 diff 同宽(diffW), 左界放宽到左树右缘, 不再遮挡文件列表。
+        var histFileDiffStyle = {
+          left: Math.max(pairLeft, diffStyle.left - histFileDiffW - 10),
+          top: top,
+          width: histFileDiffW,
           height: height,
         };
 
@@ -4033,7 +4242,7 @@ window.__ModuleLoader__.load({
                 onHide: hideRight,
                 onResizeStart: resize('right'),
                 viewedBranch: viewedBranch,
-                floatOpen: !!(diff || historyOpen),
+                floatOpen: !!(diff || historyOpen || histFileDiff),
                 onOpenMenu: openBranchMenu,
                 linkagePath: linkage,
                 onDiffClick: onDiffClick,
@@ -4093,9 +4302,30 @@ window.__ModuleLoader__.load({
                 currentBranch: status ? status.current : null,
                 viewedBranch: historyRefName,
                 onViewBranch: setViewedBranch,
+                onOpenFileDiff: openHistFileDiff,
+                onCloseFileDiff: function () {
+                  setHistFileDiff(null);
+                },
                 statusHead: status ? status.head : null,
                 onClose: function () {
                   setHistoryOpen(false);
+                  setHistFileDiff(null);
+                },
+                onHide: hideRight,
+              })
+            : null,
+          historyOpen && info.repoRoot && histFileDiff
+            ? React.createElement(DiffPanel, {
+                key: histFileDiff.hash + ':' + histFileDiff.path,
+                style: histFileDiffStyle,
+                track: rightTrack,
+                region: 'hd',
+                root: root,
+                repoRoot: info.repoRoot,
+                change: { path: histFileDiff.path },
+                commitHash: histFileDiff.hash,
+                onClose: function () {
+                  setHistFileDiff(null);
                 },
                 onHide: hideRight,
               })
