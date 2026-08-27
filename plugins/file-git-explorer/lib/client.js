@@ -206,6 +206,43 @@ window.__ModuleLoader__.load({
         '.fge-shell-tail{flex:none;max-height:150px;overflow:auto;margin:0;padding:4px 8px;border-top:1px solid var(--dsw-alias-border-l1);' +
         'font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:1.5;' +
         'white-space:pre-wrap;word-break:break-all;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-1);}';
+
+      // ---- 文件编辑(textarea)与树内写操作样式 ----
+      STYLE_CSS +=
+        '.fge-section-head{display:flex;align-items:center;gap:4px;}' +
+        '.fge-section-head-sp{flex:1;min-width:6px;}' +
+        '.fge-headplus{flex:none;display:inline-flex;border:0;background:transparent;color:inherit;cursor:pointer;' +
+        'padding:1px 5px;border-radius:4px;font-size:13px;line-height:1;opacity:.65;font-family:inherit;}' +
+        '.fge-headplus:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-brand-primary);opacity:1;}' +
+        '.fge-rowacts{display:none;margin-left:auto;flex:none;align-items:center;gap:1px;}' +
+        '.fge-node:hover .fge-rowacts,.fge-node:focus-within .fge-rowacts{display:inline-flex;}' +
+        '.fge-rowact{border:0;background:transparent;color:inherit;cursor:pointer;padding:1px 3px;' +
+        'font-size:12px;line-height:1;border-radius:3px;opacity:.55;font-family:inherit;}' +
+        '.fge-node:hover .fge-rowact{opacity:1;}' +
+        '.fge-rowact:hover{color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-layer-2);}' +
+        '.fge-rowact.fge-danger:hover{color:var(--dsw-alias-state-error-primary);}' +
+        '.fge-oprow{display:flex;flex-wrap:wrap;align-items:center;gap:4px;}' +
+        '.fge-opinput{flex:1;min-width:80px;background:var(--dsw-alias-bg-layer-2);' +
+        'border:1px solid color-mix(in srgb,var(--dsw-alias-brand-primary) 45%,transparent);border-radius:6px;' +
+        'color:var(--dsw-alias-label-primary);padding:2px 8px;font-size:12px;outline:none;font-family:inherit;}' +
+        '.fge-opinput::placeholder{color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));}' +
+        '.fge-ophint{flex:none;font-size:10px;color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));white-space:nowrap;}' +
+        '.fge-operr{flex-basis:100%;font-size:11px;line-height:1.35;color:var(--dsw-alias-state-error-primary);padding-left:2px;}' +
+        '.fge-editorcol{flex:1;min-height:0;display:flex;flex-direction:column;}' +
+        '.fge-editbar{flex:none;display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:11px;' +
+        'color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));}' +
+        '.fge-editbar-dirty{color:var(--dsw-alias-state-warn-primary);font-weight:600;}' +
+        '.fge-editbar-saved{color:var(--dsw-alias-state-success-primary);}' +
+        '.fge-textarea{flex:1;min-height:0;width:100%;box-sizing:border-box;background:var(--dsw-alias-bg-base);' +
+        'color:var(--dsw-alias-label-primary);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:8px;' +
+        'font-family:Consolas,Menlo,monospace;font-size:12px;line-height:1.5;white-space:pre;overflow:auto;' +
+        'resize:none;outline:none;tab-size:2;}' +
+        '.fge-textarea:focus{border-color:color-mix(in srgb,var(--dsw-alias-brand-primary) 55%,transparent);}' +
+        '.fge-saveerr{flex:none;margin-bottom:6px;font-size:11px;color:var(--dsw-alias-state-error-primary);}' +
+        '.fge-conflict{flex:none;margin-bottom:6px;padding:6px 8px;border:1px solid ' +
+        'color-mix(in srgb,var(--dsw-alias-state-warn-primary) 45%,transparent);' +
+        'background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 12%,transparent);border-radius:6px;' +
+        'font-size:11px;line-height:1.5;color:var(--dsw-alias-label-primary);}';
       var styleTag = null;
       function ensureStyles() {
         if (styleTag !== null) return;
@@ -635,6 +672,11 @@ window.__ModuleLoader__.load({
       // ---- 懒加载树(每个分区一棵) ----
       // props: mode, root, refreshTick, onFileClick(rel, name, type),
       //        revealReq({rel, zone, tick} | null) —— 搜索结果点目录时的树内定位
+      //        ops —— 树内写操作(create(parentRel,name,kind)/rename(row,newName)/
+      //               remove(row), 均返回 Promise<{ok,error?,openRel?,openName?}>),
+      //               由 LeftPanel 实现; 操作成功后经 ops 内部 fireReload 按需局部刷新。
+      //        reloadReq({seq, rel}) —— 局部重载请求(挂到具体目录, 不作废展开状态)
+      //        rootCreateReq({seq}) —— 本分区头"+"触发的根级新建
       function LazyTree(props) {
         var mode = props.mode;
         var root = props.root;
@@ -652,6 +694,16 @@ window.__ModuleLoader__.load({
         var setLoading = loadingState[1];
         var mounted = React.useRef(true);
         var bodyRef = React.useRef(null);
+
+        // ---- 树内写操作(新建/重命名)的行内待输入态 ----
+        var pendState = React.useState(null); // {kind:'create'|'rename', rel, row?, err?}
+        var pend = pendState[0];
+        var setPend = pendState[1];
+        var nameState = React.useState('');
+        var name = nameState[0];
+        var setName = nameState[1];
+        var handledReloadRef = React.useRef(-1);
+        var handledRootCreateRef = React.useRef(-1);
 
         var loadChildren = function (rel, reveal) {
           setLoading(rel);
@@ -678,6 +730,8 @@ window.__ModuleLoader__.load({
             setCache({});
             setExpanded({});
             setSelected(null);
+            setPend(null);
+            setName('');
             loadChildren('', false);
             return function () {
               mounted.current = false;
@@ -685,6 +739,33 @@ window.__ModuleLoader__.load({
           },
           // 根变化(工作区切换)时同样作废整棵树
           [props.refreshTick, root],
+        );
+
+        // 局部重载请求: 只拉目标目录缓存并覆盖, 不清空展开/选中状态。
+        // seq 去重保证同一事件只被每个分区的 LazyTree 各消费一次。
+        React.useEffect(
+          function () {
+            var rq = props.reloadReq;
+            if (!rq) return;
+            if (handledReloadRef.current === rq.seq) return;
+            handledReloadRef.current = rq.seq;
+            loadChildren(rq.rel, false);
+          },
+          [props.reloadReq],
+        );
+
+        // 分区头"+": 在该分区根开启"新建"待输入行
+        React.useEffect(
+          function () {
+            var rc = props.rootCreateReq;
+            if (!rc) return;
+            if (handledRootCreateRef.current === rc.seq) return;
+            handledRootCreateRef.current = rc.seq;
+            setPend({ kind: 'create', rel: '', row: null });
+            setName('');
+            if (cache[''] === undefined) loadChildren('', false);
+          },
+          [props.rootCreateReq],
         );
 
         // 树内 reveal(搜索结果点目录): 沿路径逐级加载 + 展开, 最后选中并闪现目标。
@@ -792,6 +873,94 @@ window.__ModuleLoader__.load({
           if (!cache[e.rel]) loadChildren(e.rel, revealFor(e));
         };
 
+        // ---- 行内写操作 ----
+        var startCreateIn = function (row) {
+          setPend({ kind: 'create', rel: row.rel, row: row });
+          setName('');
+          if (!expanded[row.rel]) {
+            var next = {};
+            for (var k in expanded) next[k] = true;
+            next[row.rel] = true;
+            setExpanded(next);
+            if (!cache[row.rel]) loadChildren(row.rel, revealFor(row));
+          }
+        };
+        var startRename = function (row) {
+          setPend({ kind: 'rename', rel: row.rel, row: row });
+          setName(row.name);
+        };
+        var askRemove = function (row) {
+          props.ops.remove(row); // 确认与错误提示由 ops 实现(LeftPanel 层)
+        };
+
+        /** ops 失败码 → 行内短文案; cancelled(用户取消确认框)静默。 */
+        var opErrorText = function (res) {
+          if (res && res.ok) return null;
+          var code = res && res.error ? String(res.error) : '失败';
+          if (code === 'cancelled') return null;
+          if (code === 'exists') return '同名条目已存在';
+          if (code === 'invalid-path' || code === 'invalid-name')
+            return '名称含非法字符或路径不合法';
+          if (code === 'not-found') return '目标已不存在（可点头部刷新）';
+          if (code === 'not-empty') return '目录非空';
+          if (code === 'rpc-failed' || code === 'failed') return '请求失败';
+          return code;
+        };
+
+        var submitOp = function () {
+          if (!pend) return;
+          var raw = String(name).trim();
+          if (raw === '') {
+            setPend(null);
+            setName('');
+            return;
+          }
+          if (pend.kind === 'rename') {
+            if (pend.row && raw === pend.row.name) {
+              setPend(null);
+              setName('');
+              return;
+            }
+            props.ops
+              .rename(pend.row, raw)
+              .then(function (res) {
+                if (res && res.ok) {
+                  setPend(null);
+                  setName('');
+                } else {
+                  var msg = opErrorText(res);
+                  setPend(msg === null ? null : Object.assign({}, pend, { err: msg }));
+                }
+              })
+              .catch(function () {
+                setPend(Object.assign({}, pend, { err: '请求失败' }));
+              });
+            return;
+          }
+          // create: 以 / 结尾建目录(多个斜杠取末段), 其余建文件; 名称可含 / 嵌套
+          var isDir = raw.charAt(raw.length - 1) === '/';
+          var clean = isDir ? raw.replace(/\/+$/, '') : raw;
+          if (clean === '') {
+            setPend(Object.assign({}, pend, { err: '请输入名称' }));
+            return;
+          }
+          props.ops
+            .create(pend.rel, clean, isDir ? 'dir' : 'file')
+            .then(function (res) {
+              if (res && res.ok) {
+                setPend(null);
+                setName('');
+                if (res.openRel) props.onFileClick(res.openRel, res.openName, 'file');
+              } else {
+                var msg2 = opErrorText(res);
+                setPend(msg2 === null ? null : Object.assign({}, pend, { err: msg2 }));
+              }
+            })
+            .catch(function () {
+              setPend(Object.assign({}, pend, { err: '请求失败' }));
+            });
+        };
+
         // 深度优先展开 → 行列表
         var rows = [];
         (function walk(rel, depth) {
@@ -811,35 +980,168 @@ window.__ModuleLoader__.load({
           }
         })('', 0);
 
+        var nodeElFor = function (row) {
+          var icon = row.type === 'dir' ? (expanded[row.rel] ? '▾' : '▸') : '·';
+          return React.createElement(
+            'div',
+            {
+              key: row.rel,
+              className:
+                'fge-node' +
+                (row.type === 'dir' ? ' fge-dir' : '') +
+                (selected === row.rel ? ' fge-selected' : ''),
+              'data-fge-node': row.rel,
+              onClick: function () {
+                toggle(row);
+              },
+              style: { paddingLeft: 6 + row.depth * 14 },
+              title: row.rel,
+            },
+            React.createElement('span', { className: 'fge-node-icon' }, icon),
+            React.createElement('span', { className: 'fge-node-name' }, row.name),
+            props.ops
+              ? React.createElement(
+                  'span',
+                  {
+                    className: 'fge-rowacts',
+                    onClick: function (e) {
+                      e.stopPropagation(); // 点操作按钮不当成"切换该行"
+                    },
+                  },
+                  row.type === 'dir'
+                    ? React.createElement(
+                        'button',
+                        {
+                          className: 'fge-rowact',
+                          title: '新建子项（名称以 / 结尾建目录）',
+                          onClick: function () {
+                            startCreateIn(row);
+                          },
+                        },
+                        '+',
+                      )
+                    : null,
+                  React.createElement(
+                    'button',
+                    {
+                      className: 'fge-rowact',
+                      title: '重命名',
+                      onClick: function () {
+                        startRename(row);
+                      },
+                    },
+                    '✎',
+                  ),
+                  React.createElement(
+                    'button',
+                    {
+                      className: 'fge-rowact fge-danger',
+                      title: row.type === 'dir' ? '删除目录(含全部内容)' : '删除文件',
+                      onClick: function () {
+                        askRemove(row);
+                      },
+                    },
+                    '✕',
+                  ),
+                )
+              : null,
+          );
+        };
+
+        /** 待输入行(create/rename 共用): Enter 提交, Esc 取消; 错误显示在行内。 */
+        var opRowElFor = function (depth, keySuffix) {
+          return React.createElement(
+            'div',
+            {
+              key: 'op-' + keySuffix,
+              className: 'fge-oprow',
+              style: { paddingLeft: 6 + depth * 14 },
+            },
+            React.createElement('input', {
+              className: 'fge-opinput',
+              value: name,
+              autoFocus: true,
+              placeholder:
+                pend.kind === 'create' ? '名称（以 / 结尾建目录，可用 a/b 嵌套）' : '新名称',
+              onFocus: function (ev) {
+                if (pend.kind === 'rename' && ev.target.select) ev.target.select();
+              },
+              onChange: function (ev) {
+                setName(ev.target.value);
+              },
+              onKeyDown: function (ev) {
+                if (ev.key === 'Enter') {
+                  ev.preventDefault();
+                  submitOp();
+                } else if (ev.key === 'Escape') {
+                  ev.stopPropagation();
+                  ev.preventDefault();
+                  setPend(null);
+                  setName('');
+                } else if (ev.key === ' ' || ev.key === 'Tab') {
+                  ev.stopPropagation(); // 空格/Tab 不冒泡触发面板快捷键语义
+                }
+              },
+            }),
+            React.createElement(
+              'button',
+              {
+                className: 'fge-rowact',
+                style: { opacity: 1 },
+                title: '确认',
+                onClick: function (ev) {
+                  ev.stopPropagation();
+                  submitOp();
+                },
+              },
+              '✓',
+            ),
+            React.createElement(
+              'button',
+              {
+                className: 'fge-rowact fge-danger',
+                style: { opacity: 1 },
+                title: '取消',
+                onClick: function (ev) {
+                  ev.stopPropagation();
+                  setPend(null);
+                  setName('');
+                },
+              },
+              '✕',
+            ),
+            React.createElement(
+              'span',
+              { className: 'fge-ophint' },
+              pend.kind === 'create' ? 'Enter 确认 · Esc 取消' : 'Enter 重命名 · Esc 取消',
+            ),
+            pend.err ? React.createElement('span', { className: 'fge-operr' }, pend.err) : null,
+          );
+        };
+
         var rootLoaded = cache[''] !== undefined;
+        var rootPending = !!pend && pend.kind === 'create' && pend.rel === '';
+        // 逐行装配: 行间按需插入待输入行(根级在最前, 目录/条目在其行后)
+        var rowEls = [];
+        if (rootPending) rowEls.push(opRowElFor(0, 'root'));
+        for (var ri = 0; ri < rows.length; ri++) {
+          var r = rows[ri];
+          rowEls.push(nodeElFor(r));
+          if (pend && pend.rel === r.rel) {
+            if (pend.kind === 'create') rowEls.push(opRowElFor(r.depth + 1, 'create:' + r.rel));
+            else if (pend.row && pend.row.rel === r.rel)
+              rowEls.push(opRowElFor(r.depth, 'rename:' + r.rel));
+          }
+        }
+
         var children = React.createElement(
           'div',
           { className: 'fge-tree', ref: bodyRef },
-          rows.map(function (row) {
-            var icon = row.type === 'dir' ? (expanded[row.rel] ? '▾' : '▸') : '·';
-            return React.createElement(
-              'div',
-              {
-                key: row.rel,
-                className:
-                  'fge-node' +
-                  (row.type === 'dir' ? ' fge-dir' : '') +
-                  (selected === row.rel ? ' fge-selected' : ''),
-                'data-fge-node': row.rel,
-                onClick: function () {
-                  toggle(row);
-                },
-                style: { paddingLeft: 6 + row.depth * 14 },
-                title: row.rel,
-              },
-              React.createElement('span', { className: 'fge-node-icon' }, icon),
-              React.createElement('span', { className: 'fge-node-name' }, row.name),
-            );
-          }),
-          loading !== null
+          rowEls,
+          loading !== null && !rootPending
             ? React.createElement('div', { className: 'fge-loading', key: 'loading' }, '加载中…')
             : null,
-          rootLoaded && rows.length === 0
+          rootLoaded && rows.length === 0 && !rootPending
             ? React.createElement('div', { className: 'fge-empty', key: 'empty' }, '(空)')
             : null,
         );
@@ -1488,6 +1790,97 @@ window.__ModuleLoader__.load({
           setRes(null);
         }, []);
 
+        // ---- 树内写操作(新建/重命名/删除的 client 编排) ----
+        // 成功 → 局部重载(reloadReq 只重拉目标目录缓存, 不动展开/选中态) +
+        // 广播事件(onTreeEvent: 改/删联动已打开的悬浮面板) + 状态刷新(onMutate)。
+        var opSeqRef = React.useRef(0);
+        var reloadReqState = React.useState(null); // {seq, rel}
+        var reloadReq = reloadReqState[0];
+        var setReloadReq = reloadReqState[1];
+        var rootCreateSeqRef = React.useRef(0);
+        var rootCreateState = React.useState(null); // {seq, zone}
+        var rootCreateReq = rootCreateState[0];
+        var setRootCreateReq = rootCreateState[1];
+
+        var dirOf = function (rel) {
+          var i = rel.lastIndexOf('/');
+          return i < 0 ? '' : rel.slice(0, i);
+        };
+        var fireReload = function (parentRel) {
+          opSeqRef.current += 1;
+          setReloadReq({ seq: opSeqRef.current, rel: parentRel });
+        };
+        var notifyMutated = function () {
+          if (typeof props.onMutate === 'function') props.onMutate();
+        };
+        var notifyEvent = function (evt) {
+          if (typeof props.onTreeEvent === 'function') props.onTreeEvent(evt);
+        };
+        var ops = {
+          create: function (parentRel, cleanName, kind) {
+            var relPath = parentRel === '' ? cleanName : parentRel + '/' + cleanName;
+            return api('create', { root: props.root, path: relPath, kind: kind })
+              .then(function (res) {
+                if (res && res.ok) {
+                  fireReload(parentRel);
+                  notifyMutated();
+                  if (kind === 'file') return { ok: true, openRel: relPath, openName: cleanName };
+                  return { ok: true };
+                }
+                return res || { ok: false, error: 'failed' };
+              })
+              .catch(function () {
+                return { ok: false, error: 'rpc-failed' };
+              });
+          },
+          rename: function (row, newName) {
+            return api('rename', { root: props.root, path: row.rel, newName: newName })
+              .then(function (res) {
+                if (res && res.ok) {
+                  fireReload(dirOf(row.rel));
+                  var to = dirOf(row.rel) === '' ? newName : dirOf(row.rel) + '/' + newName;
+                  notifyEvent({ type: 'renamed', from: row.rel, to: to });
+                  notifyMutated();
+                }
+                return res || { ok: false, error: 'failed' };
+              })
+              .catch(function () {
+                return { ok: false, error: 'rpc-failed' };
+              });
+          },
+          remove: function (row) {
+            var msg =
+              row.type === 'dir'
+                ? '删除目录 “' + row.name + '” 及其全部内容？此操作不可恢复。'
+                : '删除文件 “' + row.name + '”？此操作不可恢复。';
+            if (!window.confirm(msg)) return Promise.resolve({ ok: false, error: 'cancelled' });
+            return api('remove', {
+              root: props.root,
+              path: row.rel,
+              recursive: row.type === 'dir',
+            })
+              .then(function (res) {
+                if (res && res.ok) {
+                  fireReload(dirOf(row.rel));
+                  notifyEvent({ type: 'deleted', rel: row.rel });
+                  notifyMutated();
+                } else if (res && res.error !== 'cancelled') {
+                  window.alert('删除失败：' + (res.error || 'unknown'));
+                }
+                return res || { ok: false, error: 'failed' };
+              })
+              .catch(function () {
+                window.alert('删除失败：请求错误');
+                return { ok: false, error: 'rpc-failed' };
+              });
+          },
+        };
+        /** 分区头"+" → 该分区根的新建待输入行 */
+        var rootCreate = function (zone) {
+          rootCreateSeqRef.current += 1;
+          setRootCreateReq({ seq: rootCreateSeqRef.current, zone: zone });
+        };
+
         // 根切换: 关闭搜索与定位态(树本身也会随 root 作废)
         React.useEffect(
           function () {
@@ -1673,7 +2066,23 @@ window.__ModuleLoader__.load({
                 React.createElement(
                   'div',
                   { className: 'fge-section', style: { flex: '3' } },
-                  React.createElement('div', { className: 'fge-section-head' }, '可显示文件'),
+                  React.createElement(
+                    'div',
+                    { className: 'fge-section-head' },
+                    React.createElement('span', null, '可显示文件'),
+                    React.createElement('span', { className: 'fge-section-head-sp' }),
+                    React.createElement(
+                      'button',
+                      {
+                        className: 'fge-headplus',
+                        title: '在此分区根新建（名称以 / 结尾建目录，可用 a/b 嵌套）',
+                        onClick: function () {
+                          rootCreate('visible');
+                        },
+                      },
+                      '+',
+                    ),
+                  ),
                   React.createElement(
                     'div',
                     { className: 'fge-section-body' },
@@ -1682,6 +2091,10 @@ window.__ModuleLoader__.load({
                       root: props.root,
                       refreshTick: props.refreshTick,
                       onFileClick: props.onFileClick,
+                      ops: ops,
+                      reloadReq: reloadReq,
+                      rootCreateReq:
+                        rootCreateReq && rootCreateReq.zone === 'visible' ? rootCreateReq : null,
                       revealReq:
                         revealReq && revealModeFor(revealReq.zone, revealReq.rel) === 'visible'
                           ? revealReq
@@ -1692,7 +2105,23 @@ window.__ModuleLoader__.load({
                 React.createElement(
                   'div',
                   { className: 'fge-section', style: { flex: '1' } },
-                  React.createElement('div', { className: 'fge-section-head' }, '隐藏文件'),
+                  React.createElement(
+                    'div',
+                    { className: 'fge-section-head' },
+                    React.createElement('span', null, '隐藏文件'),
+                    React.createElement('span', { className: 'fge-section-head-sp' }),
+                    React.createElement(
+                      'button',
+                      {
+                        className: 'fge-headplus',
+                        title: '在此分区根新建（如 .env.local）',
+                        onClick: function () {
+                          rootCreate('hidden');
+                        },
+                      },
+                      '+',
+                    ),
+                  ),
                   React.createElement(
                     'div',
                     { className: 'fge-section-body' },
@@ -1701,6 +2130,10 @@ window.__ModuleLoader__.load({
                       root: props.root,
                       refreshTick: props.refreshTick,
                       onFileClick: props.onFileClick,
+                      ops: ops,
+                      reloadReq: reloadReq,
+                      rootCreateReq:
+                        rootCreateReq && rootCreateReq.zone === 'hidden' ? rootCreateReq : null,
                       revealReq:
                         revealReq && revealModeFor(revealReq.zone, revealReq.rel) === 'hidden'
                           ? revealReq
@@ -1711,7 +2144,23 @@ window.__ModuleLoader__.load({
                 React.createElement(
                   'div',
                   { className: 'fge-section', style: { flex: '1' } },
-                  React.createElement('div', { className: 'fge-section-head' }, '忽略文件'),
+                  React.createElement(
+                    'div',
+                    { className: 'fge-section-head' },
+                    React.createElement('span', null, '忽略文件'),
+                    React.createElement('span', { className: 'fge-section-head-sp' }),
+                    React.createElement(
+                      'button',
+                      {
+                        className: 'fge-headplus',
+                        title: '在此分区根新建（通常直接建在可见区即可）',
+                        onClick: function () {
+                          rootCreate('ignored');
+                        },
+                      },
+                      '+',
+                    ),
+                  ),
                   React.createElement(
                     'div',
                     { className: 'fge-section-body' },
@@ -1720,6 +2169,10 @@ window.__ModuleLoader__.load({
                       root: props.root,
                       refreshTick: props.refreshTick,
                       onFileClick: props.onFileClick,
+                      ops: ops,
+                      reloadReq: reloadReq,
+                      rootCreateReq:
+                        rootCreateReq && rootCreateReq.zone === 'ignored' ? rootCreateReq : null,
                       revealReq:
                         revealReq && revealModeFor(revealReq.zone, revealReq.rel) === 'ignored'
                           ? revealReq
@@ -1997,6 +2450,9 @@ window.__ModuleLoader__.load({
       }
 
       // ---- 内容悬浮面板(左树文件 → 向右浮出, 可越对话区) ----
+      // 纯 textarea 编辑态: ⌘S/Ctrl+S 保存, Esc 退出编辑; mtimeMs 乐观并发 ——
+      // host 报 conflict 时提示"重新加载磁盘版 / 强制覆盖"。二进制与超限文件保持只读。
+      var MAX_EDIT_CHARS = 1024 * 1024;
       function ContentPanel(props) {
         var dataState = React.useState(null);
         var data = dataState[0];
@@ -2004,17 +2460,55 @@ window.__ModuleLoader__.load({
         var errState = React.useState(null);
         var err = errState[0];
         var setErr = errState[1];
+        var editingState = React.useState(false);
+        var editing = editingState[0];
+        var setEditing = editingState[1];
+        var draftState = React.useState('');
+        var draft = draftState[0];
+        var setDraft = draftState[1];
+        var savingState = React.useState(false);
+        var saving = savingState[0];
+        var setSaving = savingState[1];
+        var saveErrState = React.useState(null); // {conflict?:true, msg}
+        var saveErr = saveErrState[0];
+        var setSaveErr = saveErrState[1];
+        var savedFlashState = React.useState(false);
+        var savedFlash = savedFlashState[0];
+        var setSavedFlash = savedFlashState[1];
+        var reloadSeqRef = React.useRef(0); // 冲突后手动重载递增
+        var reloadSeqReload = React.useState(0);
+        var reloadSeq = reloadSeqReload[0];
+        var setReloadSeq = reloadSeqReload[1];
+        var flashTimerRef = React.useRef(null);
+
+        var canEdit = !!data && !data.binary && !data.truncated && typeof data.text === 'string';
+        var dirty = editing && canEdit && draft !== data.text;
+
+        // 卸载/换文件时清保存闪现定时器
+        React.useEffect(
+          function () {
+            return function () {
+              if (flashTimerRef.current !== null) clearTimeout(flashTimerRef.current);
+            };
+          },
+          [props.root, props.rel],
+        );
 
         React.useEffect(
           function () {
             var alive = true;
             setData(null);
             setErr(null);
+            setSaveErr(null);
+            setSavedFlash(false);
             api('file', { root: props.root, path: props.rel })
               .then(function (res) {
                 if (!alive) return;
-                if (res && res.ok) setData(res);
-                else setErr((res && res.error) || 'failed');
+                if (res && res.ok) {
+                  setData(res);
+                  setDraft(typeof res.text === 'string' ? res.text : '');
+                  setEditing(false);
+                } else setErr((res && res.error) || 'failed');
               })
               .catch(function () {
                 if (alive) setErr('rpc-failed');
@@ -2023,14 +2517,216 @@ window.__ModuleLoader__.load({
               alive = false;
             };
           },
-          [props.root, props.rel],
+          [props.root, props.rel, reloadSeq],
         );
 
+        var flashSaved = function () {
+          setSavedFlash(true);
+          if (flashTimerRef.current !== null) clearTimeout(flashTimerRef.current);
+          flashTimerRef.current = setTimeout(function () {
+            flashTimerRef.current = null;
+            setSavedFlash(false);
+          }, 1400);
+        };
+
+        var performSave = function (force) {
+          if (!canEdit || saving || data === null) return;
+          if (!dirty && force !== true) return; // 无改动不空写
+          if (draft.length > MAX_EDIT_CHARS) {
+            setSaveErr({ msg: '内容超过 1 MiB 上限，无法保存。' });
+            return;
+          }
+          setSaving(true);
+          setSaveErr(null);
+          api('save', {
+            root: props.root,
+            path: props.rel,
+            content: draft,
+            mtimeMs: data.mtimeMs,
+            force: force === true,
+          })
+            .then(function (res) {
+              setSaving(false);
+              if (res && res.ok) {
+                setData(
+                  Object.assign({}, data, { text: draft, size: res.size, mtimeMs: res.mtimeMs }),
+                );
+                flashSaved();
+                if (typeof props.onSaved === 'function') props.onSaved();
+              } else if (res && res.error === 'conflict') {
+                setSaveErr({
+                  conflict: true,
+                  msg: '文件在磁盘上已被外部修改（如 agent 同时改动）。',
+                });
+              } else {
+                setSaveErr({ msg: '保存失败：' + ((res && res.error) || 'failed') });
+              }
+            })
+            .catch(function () {
+              setSaving(false);
+              setSaveErr({ msg: '请求失败，保存未完成。' });
+            });
+        };
+
+        var exitEditing = function () {
+          if (dirty && !window.confirm('放弃未保存的更改？')) return;
+          setEditing(false);
+          setDraft(data !== null && typeof data.text === 'string' ? data.text : '');
+          setSaveErr(null);
+        };
+        var toggleEdit = function () {
+          if (!canEdit || data === null || err !== null) return;
+          if (editing) exitEditing();
+          else {
+            setDraft(data.text || '');
+            setSaveErr(null);
+            setEditing(true);
+          }
+        };
+        var doClose = function () {
+          if (dirty && !window.confirm('有未保存的更改，仍要关闭？')) return;
+          props.onClose();
+        };
+
+        var editorRef = React.useRef(null);
+        var onEditorKeyDown = function (e) {
+          if ((e.metaKey || e.ctrlKey) && String(e.key).toLowerCase() === 's') {
+            e.preventDefault();
+            e.stopPropagation();
+            performSave(e.shiftKey === true ? true : false); // Shift+⌘S = 忽略外部修改强制写
+            return;
+          }
+          if (e.key === 'Tab') {
+            e.preventDefault();
+            var el = e.target;
+            var s = typeof el.selectionStart === 'number' ? el.selectionStart : draft.length;
+            var t = typeof el.selectionEnd === 'number' ? el.selectionEnd : s;
+            var next = draft.slice(0, s) + '  ' + draft.slice(t);
+            setDraft(next);
+            setTimeout(function () {
+              if (
+                editorRef.current !== null &&
+                typeof editorRef.current.setSelectionRange === 'function'
+              ) {
+                editorRef.current.setSelectionRange(s + 2, s + 2);
+              }
+            }, 0);
+            return;
+          }
+          if (e.key === 'Escape') {
+            e.stopPropagation(); // 只退出编辑态, 不冒泡触发全局关面板
+            exitEditing();
+          }
+        };
+
+        var headExtra = canEdit
+          ? React.createElement(
+              React.Fragment,
+              null,
+              React.createElement(
+                'button',
+                {
+                  className: 'fge-btn' + (editing ? ' fge-btn-active' : ''),
+                  title: editing ? '退出编辑' : '编辑此文件',
+                  onClick: toggleEdit,
+                },
+                editing ? '退出' : '编辑',
+              ),
+              React.createElement(
+                'button',
+                {
+                  className: 'fge-btn',
+                  title: '保存(⌘S；Shift+⌘S 忽略外部修改强制写入)',
+                  onClick: function () {
+                    performSave(false);
+                  },
+                  disabled: !dirty || saving,
+                },
+                saving ? '保存中…' : '保存',
+              ),
+            )
+          : null;
+
         var body = null;
+        var editBodyStyle =
+          editing && canEdit ? { overflow: 'hidden', display: 'flex' } : undefined;
         if (err !== null) {
           body = React.createElement('div', { className: 'fge-note' }, '读取失败: ' + err);
         } else if (data === null) {
           body = React.createElement('div', { className: 'fge-note' }, '加载中…');
+        } else if (editing && canEdit) {
+          var barText = savedFlash ? '✓ 已保存' : dirty ? '未保存更改' : '已同步';
+          var conflictBox =
+            saveErr !== null && saveErr.conflict
+              ? React.createElement(
+                  'div',
+                  { className: 'fge-conflict' },
+                  saveErr.msg,
+                  React.createElement('br', null),
+                  '覆盖将丢弃磁盘上的新版本；重新加载会放弃当前编辑内容。',
+                  ' ',
+                  React.createElement(
+                    'button',
+                    {
+                      className: 'fge-btn',
+                      onClick: function () {
+                        performSave(true);
+                      },
+                    },
+                    '仍要覆盖写入',
+                  ),
+                  ' ',
+                  React.createElement(
+                    'button',
+                    {
+                      className: 'fge-btn',
+                      onClick: function () {
+                        if (dirty && !window.confirm('放弃当前编辑内容并加载磁盘最新版本？')) {
+                          return;
+                        }
+                        setSaveErr(null);
+                        reloadSeqRef.current += 1;
+                        setReloadSeq(reloadSeqRef.current);
+                      },
+                    },
+                    '重新加载磁盘版',
+                  ),
+                )
+              : null;
+          body = React.createElement(
+            'div',
+            { className: 'fge-editorcol' },
+            React.createElement(
+              'div',
+              { className: 'fge-editbar' },
+              React.createElement(
+                'span',
+                {
+                  className: savedFlash
+                    ? 'fge-editbar-saved'
+                    : dirty
+                      ? 'fge-editbar-dirty'
+                      : undefined,
+                },
+                barText,
+              ),
+              React.createElement('span', { style: { marginLeft: 'auto' } }, '⌘S 保存 · Esc 退出'),
+            ),
+            conflictBox,
+            saveErr !== null && !saveErr.conflict
+              ? React.createElement('div', { className: 'fge-saveerr' }, saveErr.msg)
+              : null,
+            React.createElement('textarea', {
+              className: 'fge-textarea',
+              ref: editorRef,
+              value: draft,
+              spellCheck: false,
+              onChange: function (e) {
+                setDraft(e.target.value);
+              },
+              onKeyDown: onEditorKeyDown,
+            }),
+          );
         } else if (data.binary) {
           body = React.createElement(
             'div',
@@ -2056,9 +2752,11 @@ window.__ModuleLoader__.load({
             style: props.style,
             track: props.track,
             region: props.region || 'cf',
-            title: props.rel,
-            onClose: props.onClose,
+            title: props.rel + (dirty ? ' •' : ''),
+            headExtra: headExtra,
+            onClose: doClose,
             onHide: props.onHide,
+            bodyProps: editBodyStyle !== undefined ? { style: editBodyStyle } : undefined,
           },
           body,
         );
@@ -3006,6 +3704,34 @@ window.__ModuleLoader__.load({
           });
         }, []);
 
+        // 树内写操作事件: 重命名/删除同步已打开的内容悬浮面板(前缀映射),
+        // 避免面板还停在旧路径上(其内容已失效或已被删除)。
+        var onTreeEvent = React.useCallback(function (evt) {
+          if (!evt) return;
+          if (evt.type === 'renamed') {
+            var from = evt.from;
+            var to = evt.to;
+            setContent(function (prev) {
+              if (!prev) return prev;
+              if (prev.rel === from) {
+                var base = to.slice(to.lastIndexOf('/') + 1);
+                return { rel: to, name: base };
+              }
+              if (prev.rel.startsWith(from + '/')) {
+                return { rel: to + prev.rel.slice(from.length), name: prev.name };
+              }
+              return prev;
+            });
+          } else if (evt.type === 'deleted') {
+            var del = evt.rel;
+            setContent(function (prev) {
+              if (!prev) return prev;
+              if (prev.rel === del || prev.rel.startsWith(del + '/')) return null;
+              return prev;
+            });
+          }
+        }, []);
+
         // 提交历史开关: 打开时关闭 diff 浮层(互斥共享锚位)
         var toggleHistory = React.useCallback(
           function () {
@@ -3280,6 +4006,8 @@ window.__ModuleLoader__.load({
                 onResizeStart: resize('left'),
                 refreshTick: refreshTick,
                 onFileClick: onFileClick,
+                onMutate: refreshStatus,
+                onTreeEvent: onTreeEvent,
               })
             : leftCanShow
               ? React.createElement(Strip, {
@@ -3335,6 +4063,7 @@ window.__ModuleLoader__.load({
                   setContent(null);
                 },
                 onHide: hideLeft,
+                onSaved: refreshStatus,
               })
             : null,
           diff

@@ -33,6 +33,36 @@ export function resolveWithin(base, rel) {
   return abs;
 }
 
+/**
+ * 单个路径段是否可作 新建/重命名 目标名:
+ * 非 '.'/'..'/'.git'(大小写不敏感,.Git 也挡 —— Windows 上同名)、
+ * 不含 '/' '\' NUL 与 Windows 保留字符(:*?"<>|)、长度 ≤255、
+ * 不能与去掉首尾空格后的自己不同(拒绝用首尾空格伪装的名字)。
+ */
+export function validSegmentName(name) {
+  if (typeof name !== 'string') return false;
+  if (name.length === 0 || name.length > 255) return false;
+  if (name !== name.trim()) return false; // 首尾空格一律视为非法输入
+  if (/[\0/\\:*?"<>|]/.test(name)) return false;
+  const lower = name.toLowerCase();
+  if (lower === '.' || lower === '..' || lower === '.git') return false;
+  return true;
+}
+
+/**
+ * 编辑类接口的 rel 路径整体校验(新建/保存可用多段):
+ * 以 '/' 分隔后每一段都必须通过 validSegmentName;
+ * 空串、空段('a//b')、越名即非法。返回段数组或 null。
+ */
+export function splitEditRel(rel) {
+  if (typeof rel !== 'string' || rel === '') return null;
+  const segs = rel.split('/');
+  for (const seg of segs) {
+    if (!validSegmentName(seg)) return null;
+  }
+  return segs;
+}
+
 /** 与 localeCompare('zh-CN') 一致的名称比较, 供目录/变更排序复用。 */
 export function compareZh(a, b) {
   return String(a).localeCompare(String(b), 'zh-CN');
