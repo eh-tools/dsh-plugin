@@ -218,9 +218,10 @@ window.__ModuleLoader__.load({
         'white-space:pre-wrap;word-break:break-all;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-1);}' +
         '.fge-shell-tail.fge-shell-tail-open{max-height:150px;overflow:auto;' +
         'animation:fge-tail-breathe 3s ease-in-out infinite;}' +
+        // 呼吸只作用上边框颜色, 不用 box-shadow(光晕会向左右扩散, 像左右边框也在呼吸)
         '@keyframes fge-tail-breathe{' +
-        '0%,100%{border-top-color:rgba(103,153,254,.22);box-shadow:0 0 0 rgba(103,153,254,0);}' +
-        '50%{border-top-color:rgba(103,153,254,.7);box-shadow:0 1px 12px -2px rgba(103,153,254,.5);}}' +
+        '0%,100%{border-top-color:rgba(103,153,254,.25);}' +
+        '50%{border-top-color:rgba(103,153,254,.8);}}' +
         '@media (prefers-reduced-motion: reduce){.fge-shell-tail.fge-shell-tail-open{animation:none;}}';
 
       // ---- 文件编辑(textarea)与树内写操作样式 ----
