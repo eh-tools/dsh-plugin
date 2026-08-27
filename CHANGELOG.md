@@ -14,6 +14,7 @@
 
 ### Changed
 
+- `file-git-explorer`:shell 输出窗内容**不自动换行**(`white-space:pre`,长行横向滚动,终端式阅读),去掉 `word-break:break-all`
 - `file-git-explorer`:shell 输出窗边框改版——**上下边框均为粒子鲸鱼淡化蓝**(`rgb(103,153,254)`,与 deepseek-harness 插件鲸鱼背景同色系),展开态**同步呼吸、上强下弱**(上 .28↔.9 / 下 .08↔.32,只脉动边框颜色无光晕扩散),遵循 `prefers-reduced-motion` 关闭动画
 
 ### Added

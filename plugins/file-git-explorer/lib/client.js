@@ -216,7 +216,8 @@ window.__ModuleLoader__.load({
         '.fge-shell-tail{flex:none;max-height:1.6em;overflow:hidden;margin:0;padding:4px 8px;' +
         'border-top:1px solid rgba(103,153,254,.28);' +
         'font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:1.5;' +
-        'white-space:pre-wrap;word-break:break-all;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-1);}' +
+        // 不自动换行: 长行横向滚动, 终端式阅读更直观
+        'white-space:pre;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-1);}' +
         '.fge-shell-tail.fge-shell-tail-open{max-height:150px;overflow:auto;' +
         'animation:fge-tail-breathe-top 3s ease-in-out infinite;}' +
         '.fge-shell-tail.fge-shell-tail-open + .fge-shell-row{' +
