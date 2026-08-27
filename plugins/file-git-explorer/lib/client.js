@@ -1505,6 +1505,11 @@ window.__ModuleLoader__.load({
                 setOpen(true);
                 // 认领已终结的任务时轮询不会跑, 单次拉尾部输出填充
                 if (r.job.status !== 'running' && r.job.status !== 'stopping') {
+                  // 终态任务: 把命令文本放回输入框(与「执行后命令保留不清空」一致),
+                  // 让状态行有命令上下文, 不出现「空输入框 + 退出状态」的割裂观感
+                  if (typeof r.job.label === 'string' && r.job.label !== '') {
+                    setValue(r.job.label);
+                  }
                   api('shellOutput', { root: props.root, outFrom: 0, errFrom: 0 })
                     .then(function (o) {
                       if (dead || !o || !o.ok) return;
@@ -1695,8 +1700,8 @@ window.__ModuleLoader__.load({
               'button',
               {
                 className: 'fge-btn' + (open ? ' fge-btn-active' : ''),
-                title: job ? '展开/收起输出' : '暂无任务输出',
-                disabled: !job,
+                title: job || tailText !== '' ? '展开/收起输出' : '暂无任务输出',
+                disabled: !job && tailText === '',
                 onClick: function () {
                   setOpen(!open);
                 },
@@ -1714,6 +1719,11 @@ window.__ModuleLoader__.load({
                 if (busy) return; // 运行中只读, 防御性兜底
                 setValue(e.target.value);
                 histIdxRef.current = null;
+                // 修改命令 = 作废上一任务的上下文: 状态/错误提示清掉, 输出窗收起
+                // (状态行始终有命令可对照, 避免「空输入框 + 退出状态」的割裂观感)
+                setJob(null);
+                setErrMsg(null);
+                setOpen(false);
               },
               onKeyDown: function (e) {
                 if (busy) {

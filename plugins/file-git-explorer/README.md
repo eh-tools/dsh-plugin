@@ -76,6 +76,7 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer
   命令在**会话工作区**(与文件树同根)以**用户默认 shell** 解释——POSIX 取 `$SHELL`(不可用回退 `/bin/sh`), Windows 取 `pwsh` 回退 `powershell`; 解析结果按进程缓存。命令串 trim 后非空、≤4000 字符, 越界拒绝(`invalid-command`)。
 - **不消失**: 执行后命令文本保留在输入框(不清空); ↑/↓ 在历史间导航(相邻去重, 上限 100 条),
   历史随仓库根持久化(`fge-cache-v1` 的 `shellHistory` 字段)。Esc = 输入框失焦(stopPropagation, 不波及常驻 Esc 监听)。
+  **状态行与输入框命令绑定**: 修改/清空命令即清掉上一任务的状态与错误提示; 刷新/切工作区认领到终态任务时命令文本回填输入框。
 - **挂后台任务**: 启动即注册为 DSH 后台任务(kind `shell`, label = 命令原文), 出现在各会话头部的任务弹层并计入徽标;
   无主任务 —— 完成**不通知模型**。GUI 任务列表只读, 故 ✕ 是人停止任务的唯一入口
   (整棵进程树 TERM → 3s → KILL)。
