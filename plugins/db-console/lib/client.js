@@ -84,7 +84,6 @@ window.__ModuleLoader__.load({
         '.dbc-tbtn:disabled{opacity:.45;cursor:default;background:none;}' +
         '.dbc-tbtn:focus-visible{outline:1px solid var(--dsw-alias-state-business-primary);outline-offset:1px;}' +
         '.dbc-danger{color:var(--dsw-alias-state-error,#ec1313);}' +
-        '.dbc-danger:hover{background:color-mix(in srgb,var(--dsw-alias-state-error,#ec1313) 10%,transparent);}' +
         // 登录态
         '.dbc-loginwrap{flex:1;display:flex;align-items:center;justify-content:center;padding:24px;}' +
         '.dbc-login{width:min(440px,92%);display:flex;flex-direction:column;gap:12px;}' +
@@ -1282,8 +1281,8 @@ window.__ModuleLoader__.load({
                     '修改链接',
                   ),
                   React.createElement(
-                    'button',
-                    { className: 'dbc-tbtn dbc-danger', onClick: doDelete },
+                    Btn,
+                    { variant: 'outline', size: 'sm', className: 'dbc-danger', onClick: doDelete },
                     confirmDel ? '确认删除?' : '删除',
                   ),
                 ),
