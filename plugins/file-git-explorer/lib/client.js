@@ -196,6 +196,8 @@ window.__ModuleLoader__.load({
         'font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}' +
         '.fge-shell-input:focus{outline:none;border-color:var(--dsw-alias-brand-primary);}' +
         '.fge-shell-input::placeholder{color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));}' +
+        // 运行中锁输入: 只读 + 视觉弱化, 光标离开输入框, 任务结束后恢复可编辑
+        '.fge-shell-input.fge-shell-locked{opacity:.6;cursor:not-allowed;}' +
         '.fge-shell-status{flex:none;font-size:11px;line-height:18px;white-space:nowrap;' +
         'color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));}' +
         '.fge-shell-status.fge-shell-run{color:var(--dsw-alias-brand-primary);}' +
@@ -1563,6 +1565,8 @@ window.__ModuleLoader__.load({
         var exec = function () {
           var cmd = value.trim();
           if (cmd === '' || busy) return;
+          // 执行即离开输入框: 配合下方只读锁, 运行中光标不再停留在输入框内
+          if (inputRef.current) inputRef.current.blur();
           api('shellStart', { root: props.root, command: cmd })
             .then(function (r) {
               if (!r || !r.ok) {
@@ -1681,15 +1685,28 @@ window.__ModuleLoader__.load({
             ),
             React.createElement('input', {
               ref: inputRef,
-              className: 'fge-shell-input',
+              className: 'fge-shell-input' + (busy ? ' fge-shell-locked' : ''),
               value: value,
               placeholder: 'shell 命令(⏎ 执行)',
               spellCheck: false,
+              readOnly: busy,
               onChange: function (e) {
+                if (busy) return; // 运行中只读, 防御性兜底
                 setValue(e.target.value);
                 histIdxRef.current = null;
               },
               onKeyDown: function (e) {
+                if (busy) {
+                  // 运行中锁定输入: 不响应 Enter/↑/↓ 等按键, 仅允许 Esc 失焦
+                  if (e.key === 'Escape') {
+                    e.stopPropagation();
+                    if (inputRef.current) inputRef.current.blur();
+                  } else {
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }
+                  return;
+                }
                 if (e.key === 'Enter') {
                   // IME 组合期不触发; preventDefault+stopPropagation 隔离应用层按键链
                   if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
