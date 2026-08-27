@@ -198,12 +198,19 @@ window.__ModuleLoader__.load({
         '.fge-shell-input::placeholder{color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));}' +
         // 运行中锁输入: 只读 + 视觉弱化, 光标离开输入框, 任务结束后恢复可编辑
         '.fge-shell-input.fge-shell-locked{opacity:.6;cursor:not-allowed;}' +
-        // 状态符号按钮: ○=启动中 ●=运行中 ■=已停止(默认), 始终显示在输入框与 ✓ 之间,
-        // 只占 22px, 颜色中性(细节信息都在输出窗里), 点击开合输出窗。
-        '.fge-shell-sym{flex:none;display:inline-flex;align-items:center;justify-content:center;' +
-        'width:22px;height:22px;border:0;border-radius:6px;background:transparent;padding:0;cursor:pointer;' +
-        'color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));font-size:12px;line-height:1;}' +
-        '.fge-shell-sym:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);}' +
+        // 输入框末端的运行状态点: 红色=已停止(默认) 绿色=运行中/启动中; 绝对定位于
+        // 输入框右缘, pointer-events 穿透, 不遮挡文本输入(输入框右侧留出点位)。
+        '.fge-shell-inputwrap{position:relative;flex:1;min-width:0;display:flex;align-items:center;}' +
+        '.fge-shell-inputwrap .fge-shell-input{flex:1;min-width:0;width:100%;box-sizing:border-box;padding-right:22px;}' +
+        '.fge-shell-dot{position:absolute;right:9px;top:50%;transform:translateY(-50%);' +
+        'width:8px;height:8px;border-radius:50%;pointer-events:none;' +
+        'background:var(--dsw-alias-state-error-primary);}' +
+        '.fge-shell-dot.fge-shell-dot-run{background:var(--dsw-alias-state-success-primary);}' +
+        // 输出窗头部: 收起的开关(状态点已进输入框, 输出窗自带收起入口)
+        '.fge-shell-tailhead{flex:none;display:flex;align-items:center;gap:4px;padding:2px 6px 2px 8px;' +
+        'border-top:1px solid var(--dsw-alias-border-l1);font-size:10px;' +
+        'color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));}' +
+        '.fge-shell-taillabel{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}' +
         '.fge-shell-tail{flex:none;max-height:150px;overflow:auto;margin:0;padding:4px 8px;border-top:1px solid var(--dsw-alias-border-l1);' +
         'font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:1.5;' +
         'white-space:pre-wrap;word-break:break-all;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-1);}';
@@ -1282,7 +1289,8 @@ window.__ModuleLoader__.load({
       }
 
       // ---- 对号图标(✓, shell 行执行) ----
-      function CheckIcon() {
+      // ---- shell 行动作图标: ▶ 执行 / ■ 停止 ----
+      function PlayIcon() {
         return React.createElement(
           'svg',
           {
@@ -1297,7 +1305,25 @@ window.__ModuleLoader__.load({
             'aria-hidden': 'true',
             style: { display: 'block' },
           },
-          React.createElement('path', { d: 'M20 6L9 17l-5-5' }),
+          React.createElement('polygon', { points: '5 3 19 12 5 21 5 3' }),
+        );
+      }
+      function StopIcon() {
+        return React.createElement(
+          'svg',
+          {
+            width: 14,
+            height: 14,
+            viewBox: '0 0 24 24',
+            fill: 'none',
+            stroke: 'currentColor',
+            strokeWidth: 2,
+            strokeLinecap: 'round',
+            strokeLinejoin: 'round',
+            'aria-hidden': 'true',
+            style: { display: 'block' },
+          },
+          React.createElement('rect', { x: '4', y: '4', width: '16', height: '16', rx: '2' }),
         );
       }
 
@@ -1670,17 +1696,8 @@ window.__ModuleLoader__.load({
           setValue(h[idx]);
         };
 
-        // 状态符号: ○=启动中(请求在途) ●=运行中 ■=已停止(默认, 含完成/被杀/失败)。
-        // 有效信息都在输出窗里, 符号只表生命周期粗粒度; 始终显示。
-        var statusSym = '■';
-        var statusTitle = '已停止';
-        if (starting) {
-          statusSym = '○';
-          statusTitle = '启动中…';
-        } else if (jobBusy) {
-          statusSym = '●';
-          statusTitle = '运行中…';
-        }
+        // 运行状态点: 绿色=运行中/启动中, 红色=已停止(默认)。渲染在输入框右缘。
+        var runActive = starting || jobBusy;
 
         var tailText =
           outText + (errText !== '' ? (outText !== '' ? '\n' : '') + '[stderr]\n' + errText : '');
@@ -1690,74 +1707,91 @@ window.__ModuleLoader__.load({
           null,
           open
             ? React.createElement(
-                'pre',
-                { className: 'fge-shell-tail', ref: preRef },
-                tailText !== '' ? tailText : '(尚无输出)',
+                React.Fragment,
+                null,
+                // 输出窗头部: 标签 + 收起按钮(状态点已进输入框, 输出窗自带开关)
+                React.createElement(
+                  'div',
+                  { className: 'fge-shell-tailhead' },
+                  React.createElement('span', { className: 'fge-shell-taillabel' }, '输出'),
+                  React.createElement(
+                    'button',
+                    {
+                      className: 'fge-btn',
+                      title: '收起输出',
+                      onClick: function () {
+                        setOpen(false);
+                      },
+                    },
+                    React.createElement(CaretIcon, { open: false }),
+                  ),
+                ),
+                React.createElement(
+                  'pre',
+                  { className: 'fge-shell-tail', ref: preRef },
+                  tailText !== '' ? tailText : '(尚无输出)',
+                ),
               )
             : null,
           React.createElement(
             'div',
             { className: 'fge-shell-row' },
-            React.createElement('input', {
-              ref: inputRef,
-              className: 'fge-shell-input' + (busy ? ' fge-shell-locked' : ''),
-              value: value,
-              placeholder: 'shell 命令(⏎ 执行)',
-              spellCheck: false,
-              readOnly: busy,
-              onChange: function (e) {
-                if (busy) return; // 运行中只读, 防御性兜底
-                setValue(e.target.value);
-                histIdxRef.current = null;
-                // 修改命令 = 作废上一任务: 状态符号回到 ■(默认), 输出窗收起
-                // (输出内容保留可查, 点击符号可再展开)
-                setJob(null);
-                setOpen(false);
-              },
-              onKeyDown: function (e) {
-                if (busy) {
-                  // 运行中锁定输入: 不响应 Enter/↑/↓ 等按键, 仅允许 Esc 失焦
-                  if (e.key === 'Escape') {
-                    e.stopPropagation();
-                    if (inputRef.current) inputRef.current.blur();
-                  } else {
+            React.createElement(
+              'div',
+              { className: 'fge-shell-inputwrap' },
+              React.createElement('input', {
+                ref: inputRef,
+                className: 'fge-shell-input' + (busy ? ' fge-shell-locked' : ''),
+                value: value,
+                placeholder: 'shell 命令(⏎ 执行)',
+                spellCheck: false,
+                readOnly: busy,
+                onChange: function (e) {
+                  if (busy) return; // 运行中只读, 防御性兜底
+                  setValue(e.target.value);
+                  histIdxRef.current = null;
+                  // 修改命令 = 作废上一任务: 状态点回到红色(默认), 输出窗收起
+                  // (输出内容保留可查, 点头部箭头可再展开)
+                  setJob(null);
+                  setOpen(false);
+                },
+                onKeyDown: function (e) {
+                  if (busy) {
+                    // 运行中锁定输入: 不响应 Enter/↑/↓ 等按键, 仅允许 Esc 失焦
+                    if (e.key === 'Escape') {
+                      e.stopPropagation();
+                      if (inputRef.current) inputRef.current.blur();
+                    } else {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }
+                    return;
+                  }
+                  if (e.key === 'Enter') {
+                    // IME 组合期不触发; preventDefault+stopPropagation 隔离应用层按键链
+                    if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
                     e.preventDefault();
                     e.stopPropagation();
+                    exec();
+                  } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    navHistory('up');
+                  } else if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    navHistory('down');
+                  } else if (e.key === 'Escape') {
+                    // 只失焦: 不波及插件的常驻 window Esc 监听(会关悬浮窗)
+                    e.stopPropagation();
+                    if (inputRef.current) inputRef.current.blur();
                   }
-                  return;
-                }
-                if (e.key === 'Enter') {
-                  // IME 组合期不触发; preventDefault+stopPropagation 隔离应用层按键链
-                  if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
-                  e.preventDefault();
-                  e.stopPropagation();
-                  exec();
-                } else if (e.key === 'ArrowUp') {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  navHistory('up');
-                } else if (e.key === 'ArrowDown') {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  navHistory('down');
-                } else if (e.key === 'Escape') {
-                  // 只失焦: 不波及插件的常驻 window Esc 监听(会关悬浮窗)
-                  e.stopPropagation();
-                  if (inputRef.current) inputRef.current.blur();
-                }
-              },
-            }),
-            // 状态符号(始终显示): ○ 启动中 / ● 运行中 / ■ 已停止; 点击开合输出窗
-            React.createElement(
-              'button',
-              {
-                className: 'fge-shell-sym',
-                title: statusTitle + ' · 点击展开/收起输出',
-                onClick: function () {
-                  setOpen(!open);
                 },
-              },
-              statusSym,
+              }),
+              // 运行状态点: 输入框右缘内部, pointer-events 穿透不挡输入
+              React.createElement('span', {
+                className: 'fge-shell-dot' + (runActive ? ' fge-shell-dot-run' : ''),
+              }),
             ),
             React.createElement(
               'button',
@@ -1767,17 +1801,17 @@ window.__ModuleLoader__.load({
                 disabled: busy || value.trim() === '',
                 onClick: exec,
               },
-              React.createElement(CheckIcon, null),
+              React.createElement(PlayIcon, null),
             ),
             React.createElement(
               'button',
               {
                 className: 'fge-btn',
                 title: '停止当前任务',
-                disabled: !busy,
+                disabled: !jobBusy,
                 onClick: stop,
               },
-              React.createElement(CloseIcon, null),
+              React.createElement(StopIcon, null),
             ),
           ),
         );
