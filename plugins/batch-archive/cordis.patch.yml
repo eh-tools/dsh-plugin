@@ -1,0 +1,18 @@
+# dsh-batch-archive bundle patch(本包自带的挂载层)
+#
+# 批量归档(纯客户端 UI 插件):
+#   - 侧边栏底部(设置按钮旁, sidebar.footer.action)加「批量归档」按钮;
+#   - 点击打开居中面板(shell.overlay): 按工作区分组列出所有未归档会话,
+#     勾选/全选后一键归档(两次点击确认), 归档走客户端 workspaces.archiveSession。
+#
+# 安装 ——
+#
+#   dsh plugin --profile web add link:<本目录绝对路径>
+#
+# CLI 会协调 dsh.profile.bundles, 发现本包声明了 dsh.bundle.patch 后把它追加进
+# bundle 栈; profile boot 时本文件作为一个 patch 层合并(与手动在
+# ~/.dsh/profiles/web/cordis.patch.yml 写挂载行等价), host 半随 DSH 启动自动挂载。
+# 不要同时再手动挂载本插件, 否则会双挂载(两个 Node 半)。
+- insert:
+    - id: batch-archive
+      name: 'dsh-batch-archive'
