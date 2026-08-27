@@ -190,7 +190,9 @@ window.__ModuleLoader__.load({
         '.fge-msg{margin:0 0 8px;padding:6px 8px;background:var(--dsw-alias-bg-layer-2);border-radius:6px;' +
         'white-space:pre-wrap;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-primary);font-family:inherit;}' +
         // ---- shell 行(shell bar) ----
-        '.fge-shell-row{display:flex;align-items:center;gap:3px;padding:4px 6px;border-top:1px solid var(--dsw-alias-border-l1);flex:none;}' +
+        // 行顶边框 = 输出窗的下边缘: 弱化(25% 透明度), 与输出窗上边框的强化形成对比
+        '.fge-shell-row{display:flex;align-items:center;gap:3px;padding:4px 6px;' +
+        'border-top:1px solid color-mix(in srgb,var(--dsw-alias-border-l1) 25%,transparent);flex:none;}' +
         '.fge-shell-row .fge-btn{padding:2px 4px;}' + // 行内按钮紧凑化, 给输入框让宽
         '.fge-shell-input{flex:1;min-width:0;background:transparent;border:1px solid var(--dsw-alias-border-l1);border-radius:6px;' +
         'padding:3px 8px;font-size:12px;color:var(--dsw-alias-label-primary);' +
@@ -207,12 +209,19 @@ window.__ModuleLoader__.load({
         'width:8px;height:8px;border-radius:50%;pointer-events:none;' +
         'background:var(--dsw-alias-state-error-primary);}' +
         '.fge-shell-dot.fge-shell-dot-run{background:var(--dsw-alias-state-success-primary);}' +
-        // 输出窗: 常驻显示, 默认一行高(自动滚底显示最新一行); 点击行首箭头展开完整
+        // 输出窗: 常驻显示, 默认一行高(自动滚底显示最新一行); 点击行首箭头展开完整。
+        // 上边框 = 粒子鲸鱼淡化蓝(rgb 103,153,254), 展开态带呼吸灯; 下边框已在
+        // .fge-shell-row 弱化。
         '.fge-shell-tail{flex:none;max-height:1.6em;overflow:hidden;margin:0;padding:4px 8px;' +
-        'border-top:1px solid var(--dsw-alias-border-l1);' +
+        'border-top:1px solid rgba(103,153,254,.28);' +
         'font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:1.5;' +
         'white-space:pre-wrap;word-break:break-all;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-1);}' +
-        '.fge-shell-tail.fge-shell-tail-open{max-height:150px;overflow:auto;}';
+        '.fge-shell-tail.fge-shell-tail-open{max-height:150px;overflow:auto;' +
+        'animation:fge-tail-breathe 3s ease-in-out infinite;}' +
+        '@keyframes fge-tail-breathe{' +
+        '0%,100%{border-top-color:rgba(103,153,254,.22);box-shadow:0 0 0 rgba(103,153,254,0);}' +
+        '50%{border-top-color:rgba(103,153,254,.7);box-shadow:0 1px 12px -2px rgba(103,153,254,.5);}}' +
+        '@media (prefers-reduced-motion: reduce){.fge-shell-tail.fge-shell-tail-open{animation:none;}}';
 
       // ---- 文件编辑(textarea)与树内写操作样式 ----
       STYLE_CSS +=
