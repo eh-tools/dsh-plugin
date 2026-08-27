@@ -36,3 +36,8 @@ test-results/
 playwright-report/
 *.zip
 *.zip
+
+# ---- 发布文案草稿(不入库) ----
+docs/x-thread-draft.md
+docs/xiaoheihe-final.md
+docs/xiaoheihe-publish.md

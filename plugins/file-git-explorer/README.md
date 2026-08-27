@@ -50,6 +50,8 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer
 
 #### 文件编辑与树内写操作
 
+![文件悬浮预览 + 行内编辑](../../png/文件详情.png)
+
 - **编辑**: 内容悬浮面板头部的「编辑」把高亮预览切换为**纯 textarea**(只读视图保持原样, 不引入编辑器依赖)。**⌘S / Ctrl+S** 保存, **Esc** 退出编辑; 未保存时标题带 `•` 点并给出确认(关闭 / 退出编辑均会拦截询问); Tab 插入两个空格。
 - **保存的并发保护**: 读取时返回 `mtimeMs`, 保存时回传做**乐观校验** —— 磁盘已被外部改动(如 agent 同时在写)时**拒绝保存并提示冲突**, 可「重新加载磁盘版」或「仍要覆盖写入」(Shift+⌘S 亦可强制)。内容上限 1 MiB 与预览对称, 超出时保存按钮禁用并提示。
 - **保存后自动刷新右侧 git 状态**(变更列表 / 徽标随之更新); 树内结构变化(新建 / 重命名 / 删除)则**局部重载受影响目录**, 不打断展开状态。
@@ -69,6 +71,8 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer
 - 非 git 工作区回退 fs 递归扫描(不跟符号链接, 无忽略区); 会话切根自动清空搜索态。
 
 #### shell 行(shell bar)
+
+![shell 行运行中](../../png/shell运行.png)
 
 左树底部常驻的命令执行行: 输入框 + **✓ 执行** / **✕ 停止**两钮(单色线稿 SVG), 语义见 CONTEXT.md「shell 行 / 单槽 / 尾部输出窗」。
 
@@ -94,6 +98,12 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer
 - 非 git 目录: 右侧树显示「(工作区干净)」占位, 分支区为空, 历史按钮置灰。
 
 #### 提交历史(commit history)
+
+![提交历史面板](../../png/git历史.png)
+
+![提交历史 + diff 详情](../../png/提交历史diff+diff详情.png)
+
+![文件级 diff 列表](../../png/git历史diff列表.png)
 
 - 头部**时钟按钮**向左浮出历史面板, 与 diff 浮层**互斥共享锚位**(开一关一)。
 - 跟随「**查看分支**」= 历史面板头部按钮最后点选的分支(默认当前分支; 分支被删时回退当前分支)。右树顶部的分支下拉不含切换入口。
