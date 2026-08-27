@@ -24,11 +24,7 @@ DSH 的插件生态还在早期,本仓库把几个日常高频缺口做成了独
 
 ## 效果展示
 
-### 主界面(Home 页面)
-
-![主界面截图](png/home_page.png)
-
-![主界面动效](png/home_page.gif)
+![界面全览:粒子鲸鱼背景、余额状态栏、左右文件/Git 树、数据库页签、批量归档按钮](<png/页面全览(文件树+git树+余额+粒子鲸鱼+数据库tag+批量归档按钮位置).png>)
 
 ## 快速上手
 
@@ -167,11 +163,7 @@ agent 会自动调用;支持 PNG / JPEG / WebP / BMP / GIF。
   全部离开才延迟收起。
 - 面板宽度 / 开合 / 「查看中」分支按仓库根缓存,切回自动恢复。
 
-详见 `plugins/file-git-explorer/README.md`。
-
-**左右树演示:**
-
-![左右树演示](png/tree.gif)
+详见 `plugins/file-git-explorer/README.md`(内含文件预览/编辑、提交历史、shell 行等演示图)。
 
 ### db-console —— 数据库控制台
 
