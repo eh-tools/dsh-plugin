@@ -1,6 +1,6 @@
 {
   "name": "dsh-deepseek-harness",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "DeepSeek Harness 主题 — 复刻 deepseek.com/harness 设计语言：官方 WebGL2 粒子鲸鱼 + 星座网格 + 玻璃拟态 + 主题 token 皮肤，设置面板一个主开关，跨重启持久化",
   "type": "module",
   "main": "lib/index.js",

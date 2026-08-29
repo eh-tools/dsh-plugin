@@ -1,6 +1,6 @@
 {
   "name": "@deepseek-ai/dsh-tool-vision",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Local vision tool for DeepSeek Harness: sends image files to a local llama-server OpenAI-compatible endpoint and returns the model's description",
   "type": "module",
   "main": "lib/index.js",

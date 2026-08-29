@@ -1,6 +1,6 @@
 {
   "name": "dsh-file-git-explorer",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "左右树浏览: 左侧文件树(可见/隐藏/忽略三区, 根 = cwd) + 右侧 git 树(当前分支/变更列表/悬浮 diff), 静态双半插件",
   "type": "module",
   "main": "lib/index.js",
