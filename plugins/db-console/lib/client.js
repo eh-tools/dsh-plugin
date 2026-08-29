@@ -60,7 +60,7 @@ window.__ModuleLoader__.load({
       var STYLE_CSS =
         // 根容器
         // 左右内缩跟随 --dsh-fge-strip-clear-* (file-git-explorer 广播的细条
-        // 净空), 避免页面边缘落在细条悬停展开区内; fge 不在时变量缺省为 0。
+        // 净空), 避免页面边缘落在细条可点击展开区内; fge 不在时变量缺省为 0。
         '.dbc-root{height:100%;min-height:320px;display:flex;flex-direction:column;' +
         'padding-left:var(--dsh-fge-strip-clear-l,0px);' +
         'padding-right:var(--dsh-fge-strip-clear-r,0px);box-sizing:border-box;' +

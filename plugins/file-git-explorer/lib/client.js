@@ -11,7 +11,8 @@
 //   │    + 右侧 git 树联动高亮(有 diff 才定位, 不自动打开)
 //   ├─ 右侧 git 树面板: 顶部当前分支(只读下拉) + 变更列表(相对 HEAD)
 //   │    变更单击 → diff 悬浮面板(向左浮出)
-//   ├─ 图钉: 钉住后两面板都不能收起; 未钉时点击面板外自动收起为细条
+//   ├─ 图钉: 每侧独立。单击 → 只固定/解除本侧; 双击 → 同时固定/解除两侧。
+//   │    固定后该侧不能收起; 未固定时鼠标离开该侧自动收起为细条(点击小三角再展开)
 //   └─ 几何: 两面板 fixed, top=会话 header 底部, bottom=composer card 底部,
 //       左树左缘跟随应用侧边栏右缘, 右树右缘让位 details 列; 左右可拉伸,
 //       钳制为不覆盖主对话区。锚点全部用稳定 data 属性, 不依赖哈希类名。
@@ -1260,31 +1261,6 @@ window.__ModuleLoader__.load({
         );
       }
 
-      // ---- 收起图标(» / «, 双箭头) ----
-      function CollapseIcon(props) {
-        var d =
-          props.dir === 'left'
-            ? ['M11 17l-5-5 5-5', 'M18 17l-5-5 5-5']
-            : ['M6 17l5-5-5-5', 'M13 17l5-5-5-5'];
-        return React.createElement(
-          'svg',
-          {
-            width: 14,
-            height: 14,
-            viewBox: '0 0 24 24',
-            fill: 'none',
-            stroke: 'currentColor',
-            strokeWidth: 2,
-            strokeLinecap: 'round',
-            strokeLinejoin: 'round',
-            'aria-hidden': 'true',
-            style: { display: 'block' },
-          },
-          React.createElement('path', { d: d[0] }),
-          React.createElement('path', { d: d[1] }),
-        );
-      }
-
       // ---- 关闭/停止图标(✕) ----
       function CloseIcon() {
         return React.createElement(
@@ -2131,8 +2107,8 @@ window.__ModuleLoader__.load({
                 title: props.pinDisabled
                   ? '非对话视图下暂不可操作图钉'
                   : props.pin
-                    ? '已固定: 点击解除固定'
-                    : '图钉: 固定后两个面板都不能收起',
+                    ? '本侧已固定: 单击解除本侧; 双击同时固定/解除两侧'
+                    : '单击固定本侧; 双击同时固定/解除两侧',
                 onClick: props.onPin,
                 disabled: !!props.pinDisabled,
               },
@@ -2146,16 +2122,6 @@ window.__ModuleLoader__.load({
                 onClick: props.onRefresh,
               },
               React.createElement(RefreshIcon, null),
-            ),
-            React.createElement(
-              'button',
-              {
-                className: 'fge-btn',
-                title: '收起为细条',
-                onClick: props.onCollapse,
-                disabled: props.pin,
-              },
-              React.createElement(CollapseIcon, { dir: 'right' }),
             ),
           ),
           searchOpen
@@ -2565,8 +2531,8 @@ window.__ModuleLoader__.load({
                 title: props.pinDisabled
                   ? '非对话视图下暂不可操作图钉'
                   : props.pin
-                    ? '已固定: 点击解除固定'
-                    : '图钉: 固定后两个面板都不能收起',
+                    ? '本侧已固定: 单击解除本侧; 双击同时固定/解除两侧'
+                    : '单击固定本侧; 双击同时固定/解除两侧',
                 onClick: props.onPin,
                 disabled: !!props.pinDisabled,
               },
@@ -2576,16 +2542,6 @@ window.__ModuleLoader__.load({
               'button',
               { className: 'fge-btn', title: '刷新 git 状态', onClick: props.onRefresh },
               React.createElement(RefreshIcon, null),
-            ),
-            React.createElement(
-              'button',
-              {
-                className: 'fge-btn',
-                title: '收起为细条',
-                onClick: props.onCollapse,
-                disabled: props.pin,
-              },
-              React.createElement(CollapseIcon, { dir: 'left' }),
             ),
           ),
           React.createElement(
@@ -3470,7 +3426,7 @@ window.__ModuleLoader__.load({
         );
       }
 
-      // ---- 细条(收起态): 只剩一个圆角箭头, 无边框底色; 悬停自动展开 ----
+      // ---- 细条(收起态): 只剩一个圆角箭头, 无边框底色; 点击小三角展开(不再悬停展开) ----
       function Strip(props) {
         return React.createElement(
           'div',
@@ -3478,7 +3434,6 @@ window.__ModuleLoader__.load({
             className: 'fge-strip',
             'data-fge-root': '1',
             style: props.style,
-            onMouseEnter: props.onExpand,
             onClick: props.onExpand,
             title: props.title,
           },
@@ -3521,9 +3476,15 @@ window.__ModuleLoader__.load({
         var statusState = React.useState(null);
         var status = statusState[0];
         var setStatus = statusState[1];
-        var pinState = React.useState(true);
-        var pin = pinState[0];
-        var setPin = pinState[1];
+        // 每侧独立固定: 单击图钉只固定本侧, 双击同时固定/解除两侧。
+        // 默认固定 + 展开(刷新/首次加载即锁定展开, 避免落到不固定的细条态);
+        // 固定态经缓存跨会话保留, 解除固定后本侧一起收起为细条。
+        var leftPinState = React.useState(true);
+        var leftPin = leftPinState[0];
+        var setLeftPin = leftPinState[1];
+        var rightPinState = React.useState(true);
+        var rightPin = rightPinState[0];
+        var setRightPin = rightPinState[1];
         var leftOpenState = React.useState(true);
         var leftOpen = leftOpenState[0];
         var setLeftOpen = leftOpenState[1];
@@ -3698,7 +3659,8 @@ window.__ModuleLoader__.load({
                 // 离场中不接受缓存回放(会顶掉强制收起态); 回对话后由快照还原负责
                 if (cached && !awayRef.current) {
                   cacheAppliedRef.current = true;
-                  if (typeof cached.pin === 'boolean') setPin(cached.pin);
+                  if (typeof cached.leftPin === 'boolean') setLeftPin(cached.leftPin);
+                  if (typeof cached.rightPin === 'boolean') setRightPin(cached.rightPin);
                   if (typeof cached.leftW === 'number') setLeftW(cached.leftW);
                   if (typeof cached.rightW === 'number') setRightW(cached.rightW);
                   if (typeof cached.leftOpen === 'boolean') setLeftOpen(cached.leftOpen);
@@ -3720,7 +3682,8 @@ window.__ModuleLoader__.load({
           function () {
             if (!cacheKey || awayRef.current) return;
             writeCache(cacheKey, {
-              pin: pin,
+              leftPin: leftPin,
+              rightPin: rightPin,
               leftW: leftW,
               rightW: rightW,
               leftOpen: leftOpen,
@@ -3728,7 +3691,7 @@ window.__ModuleLoader__.load({
               viewedBranch: viewedBranch,
             });
           },
-          [cacheKey, pin, leftW, rightW, leftOpen, rightOpen, viewedBranch],
+          [cacheKey, leftPin, rightPin, leftW, rightW, leftOpen, rightOpen, viewedBranch],
         );
 
         // 应用一次 status 结果: 更新状态、递增版本(驱动已打开 diff 重拉),
@@ -3811,7 +3774,7 @@ window.__ModuleLoader__.load({
           };
         }, []);
 
-        // 悬停交互: 面板由「鼠标悬停细条展开 / 鼠标离开面板收起」驱动,
+        // 开合交互: 面板由「点击细条小三角展开 / 鼠标离开面板收起」驱动,
         // 未固定时鼠标离开面板即自动收起为细条; 固定时保持展开。
         // 不再用「点击面板外收起」, 避免鼠标落在细条上时反复展开/收起。
 
@@ -3924,41 +3887,109 @@ window.__ModuleLoader__.load({
           });
         }, []);
 
-        // 图钉: 无论点哪个面板的图钉, 动作一致 —— 固定时两个面板都展开为卡片。
-        // 避免出现「已固定但另一侧仍是细条」的不一致状态。
-        var togglePin = React.useCallback(
-          function () {
-            var next = !pin;
-            setPin(next);
-            if (next) {
-              setLeftOpen(true);
-              setRightOpen(true);
+        // ---- 图钉(每侧独立): 单击固定/解除本侧, 双击同时固定/解除两侧。 ----
+        // 单击与双击用 260ms 定时器区分(浏览器双击先触发两次 click):
+        // 第一次 click 只安排单点定时器, 260ms 内再来一次 → 取消定时器、执行双击动作。
+        var pinTimerRef = React.useRef(null);
+        var leftPinRef = React.useRef(leftPin);
+        var rightPinRef = React.useRef(rightPin);
+        leftPinRef.current = leftPin;
+        rightPinRef.current = rightPin;
+        React.useEffect(function () {
+          return function () {
+            if (pinTimerRef.current) {
+              clearTimeout(pinTimerRef.current);
+              pinTimerRef.current = null;
             }
-          },
-          [pin],
-        );
+          };
+        }, []);
 
-        // 收起某侧(悬停离开延迟触发 / 收起按钮): 一并关闭该侧关联的悬浮面板,
+        var runDoublePin = React.useCallback(function () {
+          // 双击: 同时固定/解除两侧。当前两侧都固定 → 全部解除; 否则全部固定。
+          var both = leftPinRef.current && rightPinRef.current;
+          var next = !both;
+          setLeftPin(next);
+          setRightPin(next);
+          if (next) {
+            setLeftOpen(true);
+            setRightOpen(true);
+          } else {
+            // 解除固定 → 两侧一起收起为细条, 并关闭两侧悬浮栏(避免孤儿状态)
+            setLeftOpen(false);
+            setRightOpen(false);
+            setContent(null);
+            setDiff(null);
+            setHistoryOpen(false);
+            setHistFileDiff(null);
+          }
+        }, []);
+
+        var runSinglePin = React.useCallback(function (side) {
+          // 单击: 只切换本侧固定态; 变为固定时展开本侧, 解除时收起本侧(并关悬浮栏)。
+          if (side === 'left') {
+            var nextL = !leftPinRef.current;
+            setLeftPin(nextL);
+            if (nextL) {
+              setLeftOpen(true);
+            } else {
+              setLeftOpen(false);
+              setContent(null);
+            }
+          } else {
+            var nextR = !rightPinRef.current;
+            setRightPin(nextR);
+            if (nextR) {
+              setRightOpen(true);
+            } else {
+              setRightOpen(false);
+              setDiff(null);
+              setHistoryOpen(false);
+              setHistFileDiff(null);
+            }
+          }
+        }, []);
+
+        var makePinHandler = React.useCallback(
+          function (side) {
+            return function () {
+              if (pinTimerRef.current) {
+                clearTimeout(pinTimerRef.current);
+                pinTimerRef.current = null;
+                runDoublePin();
+              } else {
+                pinTimerRef.current = setTimeout(function () {
+                  pinTimerRef.current = null;
+                  runSinglePin(side);
+                }, 260);
+              }
+            };
+          },
+          [runDoublePin, runSinglePin],
+        );
+        var leftPinHandler = makePinHandler('left');
+        var rightPinHandler = makePinHandler('right');
+
+        // 收起某侧(鼠标离开延迟触发): 一并关闭该侧关联的悬浮面板,
         // 避免「侧栏收了、悬浮栏还在」的孤儿状态(联动)。
         var hideLeft = React.useCallback(
           function () {
-            if (!pin) {
+            if (!leftPin) {
               setLeftOpen(false);
               setContent(null);
             }
           },
-          [pin],
+          [leftPin],
         );
         var hideRight = React.useCallback(
           function () {
-            if (!pin) {
+            if (!rightPin) {
               setRightOpen(false);
               setDiff(null);
               setHistoryOpen(false);
               setHistFileDiff(null);
             }
           },
-          [pin],
+          [rightPin],
         );
 
         // 分支下拉与右侧悬浮栏互斥(防遮挡): 展开下拉时关闭 diff/历史/文件 diff 悬浮栏。
@@ -3983,9 +4014,15 @@ window.__ModuleLoader__.load({
             if (away && !awaySnapTakenRef.current) {
               awaySnapTakenRef.current = true;
               if (everChatRef.current && !cacheAppliedRef.current) {
-                awaySnapRef.current = { pin: pin, leftOpen: leftOpen, rightOpen: rightOpen };
+                awaySnapRef.current = {
+                  leftPin: leftPin,
+                  rightPin: rightPin,
+                  leftOpen: leftOpen,
+                  rightOpen: rightOpen,
+                };
               }
-              setPin(false);
+              setLeftPin(false);
+              setRightPin(false);
               setLeftOpen(false);
               setRightOpen(false);
               setContent(null);
@@ -3998,12 +4035,14 @@ window.__ModuleLoader__.load({
               var snap = awaySnapRef.current;
               awaySnapRef.current = null;
               if (snap) {
-                if (typeof snap.pin === 'boolean') setPin(snap.pin);
+                if (typeof snap.leftPin === 'boolean') setLeftPin(snap.leftPin);
+                if (typeof snap.rightPin === 'boolean') setRightPin(snap.rightPin);
                 if (typeof snap.leftOpen === 'boolean') setLeftOpen(snap.leftOpen);
                 if (typeof snap.rightOpen === 'boolean') setRightOpen(snap.rightOpen);
               } else {
                 // 无快照 → 回退默认展开+固定(共识口径)
-                setPin(true);
+                setLeftPin(true);
+                setRightPin(true);
                 setLeftOpen(true);
                 setRightOpen(true);
               }
@@ -4205,12 +4244,11 @@ window.__ModuleLoader__.load({
                 cwd: info.cwd,
                 root: root,
                 cacheKey: cacheKey,
-                pin: pin,
+                pin: leftPin,
                 pinDisabled: !!away,
                 track: leftTrack,
-                onPin: togglePin,
+                onPin: leftPinHandler,
                 onRefresh: refresh,
-                onCollapse: hideLeft,
                 onHide: hideLeft,
                 onResizeStart: resize('left'),
                 refreshTick: refreshTick,
@@ -4233,12 +4271,11 @@ window.__ModuleLoader__.load({
                 style: rightPanelStyle,
                 status: status,
                 repoRoot: info.repoRoot,
-                pin: pin,
+                pin: rightPin,
                 pinDisabled: !!away,
                 track: rightTrack,
-                onPin: togglePin,
+                onPin: rightPinHandler,
                 onRefresh: refresh,
-                onCollapse: hideRight,
                 onHide: hideRight,
                 onResizeStart: resize('right'),
                 viewedBranch: viewedBranch,

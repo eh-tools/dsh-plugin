@@ -3,5 +3,5 @@
   "name": "dsh-paste-image",
   "purpose": "让纯文本模型也能粘贴图片: 宿主包装 apiProxy.sessions.prompt, 模型不支持图片输入时把 image block 持久化到附件存储并替换成 [已粘贴图片: sha256:…] 文本标记, 供 tool-vision 识图。客户端保持原生粘贴。静态双半 npm 包,随 web profile 启动自动加载。",
   "files": ["package.json", "cordis.patch.yml", "lib/index.js", "lib/client.js"],
-  "install": "dsh plugin --profile web add link:<repo-abs-path>/plugins/paste-image"
+  "install": "dsh plugin --profile web add link:<repo-abs-path>/plugins/obsolete/paste-image"
 }

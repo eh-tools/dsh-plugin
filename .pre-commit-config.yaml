@@ -14,7 +14,7 @@ repos:
       - id: trailing-whitespace
       - id: end-of-file-fixer
       - id: check-yaml
-        exclude: ^plugins/tool-vision/cordis\.yml$ # markdown 内容, 非 YAML
+        exclude: ^plugins/obsolete/tool-vision/cordis\.yml$ # markdown 内容, 非 YAML
       - id: check-json
       - id: check-merge-conflict
       - id: check-added-large-files
@@ -76,7 +76,7 @@ repos:
         files: \.m?js$
       - id: smoke
         name: 冒烟测试 (tool-vision)
-        entry: node plugins/tool-vision/tests/smoke.mjs
+        entry: node plugins/obsolete/tool-vision/tests/smoke.mjs
         language: system
         stages: [pre-push]
         pass_filenames: false

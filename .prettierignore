@@ -2,12 +2,14 @@
 pnpm-lock.yaml
 # worktree 工作区
 .worktrees/
+# justfile 用 just 语法, prettier 无对应 parser 会解析失败, 不归 prettier 管
+justfile
 # 挂载示例文档:markdown 内容, 并非 YAML 文件, prettier 会解析失败
-plugins/tool-vision/cordis.yml
+plugins/obsolete/tool-vision/cordis.yml
 # 静态插件的 client bundle: 手写 4k+ 行浏览器闭包, 不归 prettier 管
 # (与 eslint.config.js 里 client bundle 整体豁免的约定一致)
 plugins/ds-balance/lib/client.js
-plugins/paste-image/lib/client.js
+plugins/obsolete/paste-image/lib/client.js
 plugins/file-git-explorer/lib/client.js
 plugins/db-console/lib/client.js
 plugins/deepseek-harness/lib/client.js

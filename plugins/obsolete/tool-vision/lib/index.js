@@ -29,7 +29,7 @@
  *
  * ```yaml
  * - id: tool-vision
- *   name: /Users/<you>/workspace/dsh-plugin/plugins/tool-vision/lib/index.js
+ *   name: /Users/<you>/workspace/dsh-plugin/plugins/obsolete/tool-vision/lib/index.js
  *   config:
  *     baseUrl: http://127.0.0.1:8080/v1
  *     model: ''            # '' auto-detects the first model from /v1/models
