@@ -1,6 +1,6 @@
 {
   "name": "dsh-db-console",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "数据库控制台: 会话头部新增「数据库」页签, 每项目一条 PostgreSQL 连接(完整链接串登录, 明文存 Host 侧), schema 树 + SQL 编辑器(三级补全+高亮) + 结果网格。静态双半插件。",
   "type": "module",
   "main": "lib/index.js",

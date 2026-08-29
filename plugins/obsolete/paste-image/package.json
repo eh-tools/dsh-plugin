@@ -1,6 +1,6 @@
 {
   "name": "dsh-paste-image",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "让纯文本模型也能粘贴图片 — 宿主包装 apiProxy.sessions.prompt, 把 image block 转成附件 id 文本标记, 客户端保持原生粘贴",
   "type": "module",
   "main": "lib/index.js",

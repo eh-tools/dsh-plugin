@@ -1,6 +1,6 @@
 {
   "name": "dsh-batch-archive",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "批量归档: 侧边栏底部「批量归档」按钮 + 多会话勾选面板, 一键归档所选会话",
   "type": "module",
   "main": "lib/index.js",

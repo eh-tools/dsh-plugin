@@ -1,6 +1,6 @@
 {
   "name": "dsh-ds-balance",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "DeepSeek 余额/调用量状态栏 — 静态双半插件(host HTTP API + client 状态栏行)",
   "type": "module",
   "main": "lib/index.js",
