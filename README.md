@@ -10,17 +10,18 @@
 
 DSH 的插件生态还在早期,本仓库把几个日常高频缺口做成了独立插件,一个插件一个目录,按需取用:
 
-| 插件                | 解决什么问题                             | 一句话说明                                                                                    |
-| ------------------- | ---------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `ds-balance`        | 官方状态栏看不到余额和用量               | stats 行下方加第二行:余额 + 今日/本月 token,每 5 分钟刷新                                     |
-| `tool-vision`       | DeepSeek 模型不支持图片输入              | 本地识图工具,把图片交给本地视觉模型(llama-server / LM Studio / Ollama)描述                    |
-| `paste-image`       | 粘贴图片发送会被"当前模型不支持图片"拒绝 | 粘贴瞬间把图片落盘成文件,路径写入草稿,配合 `tool-vision` 实现看图                             |
-| `file-git-explorer` | 看不到项目文件和 git 状态                | 左右树浏览:左侧文件树(可见/隐藏/忽略三区, 按名搜索)+ 右侧 git 树(分支/变更/diff/**提交历史**) |
-| `db-console`        | GUI 里没有数据库客户端                   | 会话头部「数据库」页签:PG 完整链接登录(按项目保存)、schema 树、SQL 补全高亮、结果网格         |
-| `deepseek-harness`  | 想要粒子鲸鱼背景                         | 蓝色粒子鲸鱼(DeepSeek 品牌蓝)默认开启,沿用官方明/暗/系统主题;`?dshtest=1` 隐藏式诊断面板      |
-| `batch-archive`     | 会话只能一个个归档                       | 侧边栏底部「批量归档」按钮 + 面板:勾选/全选多个会话一键归档(两次点击确认)                     |
+| 插件                | 状态   | 解决什么问题                             | 一句话说明                                                                                    |
+| ------------------- | ------ | ---------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `ds-balance`        | 维护中 | 官方状态栏看不到余额和用量               | stats 行下方加第二行:余额 + 今日/本月 token,每 5 分钟刷新                                     |
+| `file-git-explorer` | 维护中 | 看不到项目文件和 git 状态                | 左右树浏览:左侧文件树(可见/隐藏/忽略三区, 按名搜索)+ 右侧 git 树(分支/变更/diff/**提交历史**) |
+| `db-console`        | 维护中 | GUI 里没有数据库客户端                   | 会话头部「数据库」页签:PG 完整链接登录(按项目保存)、schema 树、SQL 补全高亮、结果网格         |
+| `deepseek-harness`  | 维护中 | 想要粒子鲸鱼背景                         | 蓝色粒子鲸鱼(DeepSeek 品牌蓝)默认开启,沿用官方明/暗/系统主题;`?dshtest=1` 隐藏式诊断面板      |
+| `batch-archive`     | 维护中 | 会话只能一个个归档                       | 侧边栏底部「批量归档」按钮 + 面板:勾选/全选多个会话一键归档(两次点击确认)                     |
+| `tool-vision`       | 已归档 | DeepSeek 模型不支持图片输入              | 本地识图工具,把图片交给本地视觉模型(llama-server / LM Studio / Ollama)描述                    |
+| `paste-image`       | 已归档 | 粘贴图片发送会被"当前模型不支持图片"拒绝 | 粘贴瞬间把图片落盘成文件,路径写入草稿,配合 `tool-vision` 实现看图                             |
 
-> `tool-vision` + `paste-image` 合起来的效果:你在输入框粘贴一张截图,agent 就能"看到"并描述它——完全绕开 DeepSeek 模型的图片输入限制。
+> ⚠️ `tool-vision` 与 `paste-image` 已**归档**:源码移到 `plugins/obsolete/`,不再维护、
+> 不再列入默认安装,仅保留以便参考。其余插件为当前维护中。
 
 ## 效果展示
 
@@ -30,7 +31,7 @@ DSH 的插件生态还在早期,本仓库把几个日常高频缺口做成了独
 
 前置:Node.js >= 20、已安装 DeepSeek Harness(`dsh` CLI)及 `web` profile。
 
-### 1. 克隆并安装两个 UI 插件
+### 1. 克隆并安装插件
 
 ```sh
 git clone https://github.com/eh-tools/dsh-plugin.git
@@ -38,7 +39,6 @@ cd dsh-plugin
 
 # <repo-abs-path> 换成你克隆下来的仓库绝对路径(link: 安装要求绝对路径)
 dsh plugin --profile web add link:<repo-abs-path>/plugins/ds-balance
-dsh plugin --profile web add link:<repo-abs-path>/plugins/obsolete/paste-image
 dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer
 dsh plugin --profile web add link:<repo-abs-path>/plugins/deepseek-harness
 dsh plugin --profile web add link:<repo-abs-path>/plugins/batch-archive
@@ -46,21 +46,12 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/batch-archive
 
 装完**重启 DSH 并硬刷新浏览器**(Cmd/Ctrl+Shift+R)生效。
 
-### 2. 挂载 tool-vision
-
-纯 host 插件不走 plugin 命令,把下面这段加进目标 preset 的 `agent.cordis.yml`(如
-`~/.dsh/.agent-presets/<id>/agent.cordis.yml`),保存后新建会话生效:
-
-```yaml
-- id: tool-vision
-  name: <repo-abs-path>/plugins/obsolete/tool-vision/lib/index.js
-  config:
-    baseUrl: http://127.0.0.1:8080/v1
-```
+> `tool-vision` 与 `paste-image` 已**归档**(`plugins/obsolete/`),不再列入默认安装;
+> 如需装旧版,安装 / 挂载命令见下文对应章节。
 
 > 更新插件:`git pull` 后重跑同一条安装命令;只改 `lib/client.js` 时刷新浏览器即可,
 > 改 `lib/index.js` 才需要重启 DSH。
-> 卸载:`dsh plugin --profile web remove dsh-ds-balance` / `dsh-paste-image`,然后重启 DSH。
+> 卸载:`dsh plugin --profile web remove dsh-ds-balance`,然后重启 DSH。
 
 ## 插件使用说明
 
@@ -97,7 +88,10 @@ DeepSeek ¥68.64 | 今日 34K tok | 本月 1.2M tok
 > 注意:调用量接口是平台用量页的**私有接口**(无公开文档),只返回 token 数不返回
 > 调用次数,且可能随时变动——这属于平台侧限制,插件无法控制。
 
-### tool-vision —— 本地识图工具
+### tool-vision —— 本地识图工具(已归档)
+
+> ⚠️ **已归档**:本插件不再维护、不再推荐,源码移至 `plugins/obsolete/tool-vision`,
+> 以下内容仅作参考。
 
 把图片路径交给它,返回视觉模型对图片的描述(读图 / OCR / 版面理解)。工具名 `vision`,
 agent 会自动调用;支持 PNG / JPEG / WebP / BMP / GIF。
@@ -134,7 +128,10 @@ agent 会自动调用;支持 PNG / JPEG / WebP / BMP / GIF。
 | 多轮讨论模型"不记得"之前的图    | 每次调用是独立请求,无会话记忆               | 这是服务侧限制,由 agent 自己带上下文                                                                    |
 | 常驻服务太占内存                | 模型常驻内存                                | `autoStart: true` + `keepAliveMs: 0`,用完即退                                                           |
 
-### paste-image —— 粘贴图片落盘
+### paste-image —— 粘贴图片落盘(已归档)
+
+> ⚠️ **已归档**:本插件不再维护、不再推荐,源码移至 `plugins/obsolete/paste-image`,
+> 以下内容仅作参考。
 
 在输入框 **Cmd+V / Ctrl+V** 粘贴图片时,自动把图片字节保存到**当前会话工作目录的
 `attachments/`**,并把绝对路径追加进草稿,形如:
