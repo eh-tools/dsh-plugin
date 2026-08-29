@@ -1518,19 +1518,22 @@ window.__ModuleLoader__.load({
             setStarting(false);
             setOutText('');
             setErrText('');
+            setValue(''); // 切走工作区即清空输入框, 不残留上一个工作区的命令文本
             fromRef.current = { out: 0, err: 0 };
             api('shellState', { root: props.root })
               .then(function (r) {
                 if (dead || !r || !r.ok || !r.job) return;
                 setJob(r.job);
+                // 认领到任务即把命令文本放回输入框(无论运行中/停止中/终态), 与
+                // 「执行后命令保留不清空」一致 —— 运行中显示的是被锁定的当前命令,
+                // 终态显示携带退出状态的命令上下文; 前提是不残留上一个工作区的内容
+                // (上方已 setValue('') 作先决清空)。
+                if (typeof r.job.label === 'string' && r.job.label !== '') {
+                  setValue(r.job.label);
+                }
                 // 输出窗常驻一行显示, 认领任务不自动展开
                 // 认领已终结的任务时轮询不会跑, 单次拉尾部输出填充
                 if (r.job.status !== 'running' && r.job.status !== 'stopping') {
-                  // 终态任务: 把命令文本放回输入框(与「执行后命令保留不清空」一致),
-                  // 让状态行有命令上下文, 不出现「空输入框 + 退出状态」的割裂观感
-                  if (typeof r.job.label === 'string' && r.job.label !== '') {
-                    setValue(r.job.label);
-                  }
                   api('shellOutput', { root: props.root, outFrom: 0, errFrom: 0 })
                     .then(function (o) {
                       if (dead || !o || !o.ok) return;
