@@ -130,8 +130,15 @@ window.__ModuleLoader__.load({
         'font-size:12px;overflow:hidden;z-index:40;}' +
         '.fge-float-head{display:flex;align-items:center;gap:6px;padding:6px 10px;border-bottom:1px solid var(--dsw-alias-border-l1);flex:none;}' +
         '.fge-float-title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;}' +
-        '.fge-float-body{flex:1;overflow:auto;min-height:0;padding:8px 10px;' +
-        'scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--dsw-alias-label-tertiary) 28%,transparent) transparent;}' +
+        '.fge-float-body{flex:1;overflow:auto;min-height:0;padding:8px 10px;}' +
+        // 只隐藏横向滚动条、保留纵向细滚条: 现代 Chromium(121+) 一旦设置 scrollbar-width /
+        // scrollbar-color 即覆盖 ::-webkit-scrollbar 的按轴定制、让横向滚条复现, 故这里不设
+        // 标准滚动条属性, 只用 ::-webkit-scrollbar 按轴定制(横向 height:0 隐藏、纵向 5px 细条,
+        // 横向仍可用 Alt+滚轮平移)。Firefox 无按轴隐藏, 以浏览器默认滚条作为回退。
+        '.fge-float-body::-webkit-scrollbar{width:5px;height:0;}' +
+        '.fge-float-body::-webkit-scrollbar-track{background:transparent;}' +
+        '.fge-float-body::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--dsw-alias-label-tertiary) 22%,transparent);border-radius:3px;}' +
+        '.fge-float-body::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb,var(--dsw-alias-label-tertiary) 40%,transparent);}' +
         '.fge-pre{margin:0;font-family:Consolas,Menlo,monospace;font-size:12px;line-height:1.5;white-space:pre;' +
         'color:var(--dsw-alias-label-primary);}' +
         '.fge-ln{display:inline-block;width:3ch;text-align:right;margin-right:10px;user-select:none;' +
@@ -219,6 +226,14 @@ window.__ModuleLoader__.load({
         'font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:1.5;' +
         // 不自动换行: 长行横向滚动, 终端式阅读更直观
         'white-space:pre;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-1);}' +
+        // 只隐藏横向滚动条、保留纵向细滚条: 现代 Chromium(121+) 一旦设置 scrollbar-width /
+        // scrollbar-color 即覆盖 ::-webkit-scrollbar 的按轴定制、让横向滚条复现, 故这里不设
+        // 标准滚动条属性, 只用 ::-webkit-scrollbar 按轴定制(横向 height:0 隐藏、纵向 5px 细条,
+        // 横向仍可用 Alt+滚轮平移)。Firefox 无按轴隐藏, 以浏览器默认滚条作为回退。
+        '.fge-shell-tail::-webkit-scrollbar{width:5px;height:0;}' +
+        '.fge-shell-tail::-webkit-scrollbar-track{background:transparent;}' +
+        '.fge-shell-tail::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--dsw-alias-label-tertiary) 22%,transparent);border-radius:3px;}' +
+        '.fge-shell-tail::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb,var(--dsw-alias-label-tertiary) 40%,transparent);}' +
         '.fge-shell-tail.fge-shell-tail-open{max-height:150px;overflow:auto;' +
         'animation:fge-tail-breathe-top 3s ease-in-out infinite;}' +
         '.fge-shell-tail.fge-shell-tail-open + .fge-shell-row{' +
@@ -340,6 +355,31 @@ window.__ModuleLoader__.load({
           .replace(/>/g, '&gt;')
           .replace(/"/g, '&quot;')
           .replace(/'/g, '&#39;');
+      }
+
+      // ---- Alt+滚轮 横滚(输出窗与悬浮栏共用) ----
+      // 横向滚动条已隐藏(height:0), 仅 Alt 时接管原生 wheel。React 的 onWheel 在 17+
+      // 是 passive, preventDefault 无效, 故用原生监听 {passive:false}。非 Alt 不干预,
+      // 维持原垂直/页面滚动。deltaMode=1(行)按 ~16px/行 换算, 与触控板/滚轮手感对齐。
+      function useAltWheelHScroll(ref) {
+        React.useEffect(
+          function () {
+            var el = ref.current;
+            if (!el) return undefined;
+            var onWheel = function (e) {
+              if (!e.altKey) return;
+              e.preventDefault();
+              var dx = e.deltaX !== 0 ? e.deltaX : e.deltaY;
+              if (e.deltaMode === 1) dx = dx * 16;
+              el.scrollLeft += dx;
+            };
+            el.addEventListener('wheel', onWheel, { passive: false });
+            return function () {
+              el.removeEventListener('wheel', onWheel);
+            };
+          },
+          [],
+        );
       }
 
       // ---- 会话头部 tablist 认领(观测器与几何回退共用) ----
@@ -1611,6 +1651,11 @@ window.__ModuleLoader__.load({
           [outText, errText, open],
         );
 
+        // Alt+滚轮 横滚输出窗: 横向滚动条已隐藏(height:0), 复用共享的
+        // useAltWheelHScroll(preRef)。React 的 onWheel 在 17+ 是 passive, preventDefault
+        // 无效, 故 hook 内用原生监听 {passive:false}。非 Alt 时不干预。
+        useAltWheelHScroll(preRef);
+
         var exec = function () {
           var cmd = value.trim();
           if (cmd === '' || busy) return;
@@ -2586,6 +2631,10 @@ window.__ModuleLoader__.load({
         // 延迟收起(悬浮栏): 由 FgeRoot 下发的保持区追踪器驱动(region 由调用方指定)
         var track = props.track;
         var region = props.region || 'fl';
+        // Alt+滚轮 横滚悬浮栏正文(文件内容/diff 均可): 横向滚动条已隐藏(height:0),
+        // 复用共享 useAltWheelHScroll; bodyRef 挂到 .fge-float-body 上(横向溢出在此容器)。
+        var bodyRef = React.useRef(null);
+        useAltWheelHScroll(bodyRef);
         return React.createElement(
           'div',
           {
@@ -2624,7 +2673,7 @@ window.__ModuleLoader__.load({
           ),
           React.createElement(
             'div',
-            Object.assign({ className: 'fge-float-body' }, props.bodyProps || {}),
+            Object.assign({ className: 'fge-float-body', ref: bodyRef }, props.bodyProps || {}),
             props.children,
           ),
         );
