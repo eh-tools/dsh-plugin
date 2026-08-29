@@ -38,7 +38,7 @@ cd dsh-plugin
 
 # <repo-abs-path> 换成你克隆下来的仓库绝对路径(link: 安装要求绝对路径)
 dsh plugin --profile web add link:<repo-abs-path>/plugins/ds-balance
-dsh plugin --profile web add link:<repo-abs-path>/plugins/paste-image
+dsh plugin --profile web add link:<repo-abs-path>/plugins/obsolete/paste-image
 dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer
 dsh plugin --profile web add link:<repo-abs-path>/plugins/deepseek-harness
 dsh plugin --profile web add link:<repo-abs-path>/plugins/batch-archive
@@ -53,7 +53,7 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/batch-archive
 
 ```yaml
 - id: tool-vision
-  name: <repo-abs-path>/plugins/tool-vision/lib/index.js
+  name: <repo-abs-path>/plugins/obsolete/tool-vision/lib/index.js
   config:
     baseUrl: http://127.0.0.1:8080/v1
 ```
@@ -156,9 +156,9 @@ agent 会自动调用;支持 PNG / JPEG / WebP / BMP / GIF。
 - **文件搜索**:左树头部放大镜展开输入框,按名/相对路径即时检索(不搜内容),结果平铺带 显/隐/忽 分区徽标;点文件直接打开预览,点目录在树内 reveal 定位。
 - **右树**:当前分支(只读下拉,本地/远程分组,不支持切换)+ 变更列表(相对 HEAD,含暂存/未暂存/未跟踪,状态徽标);点变更 → diff 悬浮面板(向左浮出)。
 - **提交历史**:右树头部时钟按钮浮出历史面板(与 diff 浮层互斥),跟随历史面板头部按钮点选的「查看分支」(默认当前分支);50 条/页滚动加载,点提交看说明 + 文件 ±行数,再点文件看该次 diff。
-- **图钉 📌**:钉住后两面板都不能收起;未钉时点面板外自动收起为细条。
+- **图钉 📌**(每侧独立): 单击只固定/解除本侧, 双击同时固定/解除两侧; 解除固定即连同其悬浮栏一起收起为细条。未固定时点面板外/移出该侧自动收起, 点击细条即展开。
 - **侧栏联动(页签感知)**:切到轨迹/数据库等非对话页签时,两树自动收成细条
-  (悬停细条仍可展开, 方便从文件里复制连接地址);切回对话恢复进入前的
+  (点击细条仍可展开, 方便从文件里复制连接地址);切回对话恢复进入前的
   固定/开合状态。鼠标在「侧栏 + 其悬浮栏」任一区域内移动都不会误收,
   全部离开才延迟收起。
 - 面板宽度 / 开合 / 「查看中」分支按仓库根缓存,切回自动恢复。

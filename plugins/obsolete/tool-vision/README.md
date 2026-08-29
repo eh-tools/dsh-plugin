@@ -66,7 +66,7 @@ llm-pi-ai:
 
 ```yaml
 - id: tool-vision
-  name: <repo-abs-path>/plugins/tool-vision/lib/index.js
+  name: <repo-abs-path>/plugins/obsolete/tool-vision/lib/index.js
   config:
     baseUrl: http://127.0.0.1:8080/v1
 ```
@@ -89,7 +89,7 @@ llm-pi-ai:
 
 ```yaml
 - id: tool-vision
-  name: <repo-abs-path>/plugins/tool-vision/lib/index.js
+  name: <repo-abs-path>/plugins/obsolete/tool-vision/lib/index.js
   config:
     baseUrl: https://api.openai.com/v1 # 换成你的服务地址(带 /v1)
     model: gpt-4o # 换成服务支持的视觉模型 id
@@ -127,7 +127,7 @@ llm-pi-ai:
 
   ```yaml
   - id: tool-vision
-    name: /path/to/dsh-plugin/plugins/tool-vision/lib/index.js
+    name: /path/to/dsh-plugin/plugins/obsolete/tool-vision/lib/index.js
     config:
       baseUrl: http://127.0.0.1:8080/v1
       model: qwen3.5-9b
@@ -153,11 +153,11 @@ llm-pi-ai:
 
 ```bash
 # 冒烟测试(内置 mock 服务器 + mock on-demand 拉起 + mock 附件服务,无需真实模型)
-pnpm test          # 或 node plugins/tool-vision/tests/smoke.mjs
+pnpm test          # 或 node plugins/obsolete/tool-vision/tests/smoke.mjs
 
 # 真实模型 e2e(两种模式)
-node plugins/tool-vision/tests/e2e.mjs            # 对接已在跑的 llama-server
-node plugins/tool-vision/tests/e2e.mjs --ondemand # 插件自动拉起 + 用完即退
+node plugins/obsolete/tool-vision/tests/e2e.mjs            # 对接已在跑的 llama-server
+node plugins/obsolete/tool-vision/tests/e2e.mjs --ondemand # 插件自动拉起 + 用完即退
 
 # 全量门禁:lint + prettier + smoke + audit
 just check

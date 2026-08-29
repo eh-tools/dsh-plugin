@@ -37,7 +37,7 @@ glm-5.2)只声明文本,所以带图消息在落盘前就被拒绝
 ## 挂载
 
 ```bash
-dsh plugin --profile web add link:<repo-abs-path>/plugins/paste-image
+dsh plugin --profile web add link:<repo-abs-path>/plugins/obsolete/paste-image
 ```
 
 挂载后随 web profile 启动自动加载, 无需动态插件流程。
@@ -45,7 +45,7 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/paste-image
 ## 开发与测试
 
 ```bash
-node plugins/paste-image/tests/save.test.mjs
+node plugins/obsolete/paste-image/tests/save.test.mjs
 ```
 
 覆盖: 文本模型转换+重试、视觉模型不转换、非模型类拒绝透传、

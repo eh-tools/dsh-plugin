@@ -5,7 +5,7 @@
 
 ```yaml
 - id: tool-vision
-  name: <repo-abs-path>/plugins/tool-vision/lib/index.js
+  name: <repo-abs-path>/plugins/obsolete/tool-vision/lib/index.js
   config:
     baseUrl: http://127.0.0.1:8080/v1
     model: ''            # 留空 = 自动探测 /v1/models 的第一个模型 id
@@ -79,7 +79,7 @@
 
 ```yaml
 - id: tool-vision
-  name: <repo-abs-path>/plugins/tool-vision/lib/index.js
+  name: <repo-abs-path>/plugins/obsolete/tool-vision/lib/index.js
   config:
     baseUrl: https://api.openai.com/v1      # 换成你的服务地址(带 /v1)
     model: gpt-4o                           # 换成服务支持的视觉模型 id

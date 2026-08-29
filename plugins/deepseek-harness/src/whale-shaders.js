@@ -186,6 +186,8 @@
     "  float alpha = vOpacity * (baseAlpha + glow);\n" +
     "  float shimmer = sin(uTime * 1.5 + vWorldPos.x * 5.0 + vWorldPos.y * 3.0) * 0.08 + 0.92;\n" +
     "  alpha *= shimmer * clamp(vLight * 0.85 + 0.25, 0.3, 1.0);\n" +
+    // 全局淡出一档: 粒子与光晕仍清晰可辨, 又不过度干扰对话区文本阅读
+    "  alpha *= 0.7;\n" +
     "  vec3 color = (uColor + glow * vec3(0.15, 0.25, 0.45)) * vLight;\n" +
     "  color = mix(color, vec3(1.0), clamp(vLight - 0.85, 0.0, 1.0) * 0.2);\n" +
     "  fragColor = vec4(color, alpha);\n" +

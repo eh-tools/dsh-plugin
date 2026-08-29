@@ -276,6 +276,11 @@ window.__ModuleLoader__.load({
               return s.archivedSessionIds;
             })
           : undefined;
+        var listIds = useSessions
+          ? useSessions(function (s) {
+              return s.ids;
+            })
+          : undefined;
 
         if (!openNow) return null;
 
@@ -329,9 +334,20 @@ window.__ModuleLoader__.load({
           );
         }
 
-        // 分组: 按工作区 + 未分组桶, 已归档会话不展示
+        // 分组: 按工作区 + 未分组桶。与官方 sidebar 口径一致 —— 只把"真正可见"的
+        // 会话当作可归档项: origin !== 'subagent'、未归档、非 blank 占位会话。
+        // 未分组只从权威的 list.ids 取(与官方 deriveGroups 的 stray 一致), 不直接
+        // 遍历 byId —— 否则会把 subagent / 内部 / 占位会话也列出来, 导致数量远超
+        // 工作区会话、且大半挤进"未分组"。
         var archived = {};
         for (var ai = 0; ai < (archivedIds || []).length; ai++) archived[archivedIds[ai]] = true;
+        function visibleSession(s) {
+          if (!s) return false;
+          if (s.origin === 'subagent') return false;
+          if (archived[s.id]) return false;
+          if (s.blank) return false;
+          return true;
+        }
         var groups = [];
         var seen = {};
         for (var wi = 0; wi < (wsItems || []).length; wi++) {
@@ -339,16 +355,17 @@ window.__ModuleLoader__.load({
           var list = [];
           for (var si = 0; si < (w.sessionIds || []).length; si++) {
             var sid = w.sessionIds[si];
-            if (byId[sid] && !archived[sid]) list.push(sid);
+            if (visibleSession(byId[sid])) list.push(sid);
           }
           if (list.length > 0)
             groups.push({ key: 'w:' + w.workspaceId, title: w.title || w.path, sessions: list });
           for (var s2 = 0; s2 < list.length; s2++) seen[list[s2]] = true;
         }
         var ungrouped = [];
-        for (var idk in byId) {
-          if (Object.prototype.hasOwnProperty.call(byId, idk) && !seen[idk] && !archived[idk])
-            ungrouped.push(idk);
+        var keys = listIds || [];
+        for (var ik = 0; ik < keys.length; ik++) {
+          var idk = keys[ik];
+          if (!seen[idk] && visibleSession(byId[idk])) ungrouped.push(idk);
         }
         if (ungrouped.length > 0)
           groups.push({ key: 'ungrouped', title: '未分组', sessions: ungrouped });
@@ -370,8 +387,8 @@ window.__ModuleLoader__.load({
         var allSelected = allIds.length > 0 && selectedCount === allIds.length;
         var busy = phase === 'busy';
         var totalSessions = 0;
-        for (var tk in byId) {
-          if (Object.prototype.hasOwnProperty.call(byId, tk)) totalSessions++;
+        for (var tk = 0; tk < (listIds || []).length; tk++) {
+          if (visibleSession(byId[listIds[tk]])) totalSessions++;
         }
         var archivedCount = 0;
         for (var ak in archived) {

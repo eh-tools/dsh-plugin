@@ -6,7 +6,7 @@
  * image through `attachments.saveImage` and replaces image blocks with
  * `[已粘贴图片: sha256:…]` text markers, then retries the prompt.
  *
- * Run: node plugins/paste-image/tests/save.test.mjs
+ * Run: node plugins/obsolete/paste-image/tests/save.test.mjs
  */
 
 import assert from 'node:assert/strict';
