@@ -5,7 +5,7 @@ DeepSeek Harness 主题 —— 复刻 <https://www.deepseek.com/harness/en/> 的
 ## 功能
 
 - **官方 WebGL2 粒子鲸鱼**：复刻 DeepSeek 官网 hero 鲸鱼——内嵌官方 `hero-whale.svg` 纹理，逐像素采样成点云，GLSL 着色器（粒子缩放 0.5–1.5、鼠标扭曲、光线跟随鼠标、easeOutCubic 组装入场、游泳波动），`webgl2` + `gl.POINTS`，WebGL2 不可用时回退 2D canvas。
-- **DeepSeek 品牌蓝粒子**：粒子用 DeepSeek 蓝（`#6799FE` 附近）、普通 alpha 混合，浅色/深色主题均可辨识。
+- **DeepSeek 品牌蓝粒子**：粒子用 DeepSeek 蓝（`#6799FE` 附近）、普通 alpha 混合，浅色/深色主题均可辨识；整体透明度下降一档（`alpha *= 0.7`），在清晰可辨与不干扰对话区文本阅读之间取平衡。
 - **跟随官方主题**：不改官方明/暗/系统主题，不强制深色，也无设置按钮——默认开启。
 - **隐藏式诊断面板**：URL 带 `?dshtest=1` 时右下角显示实时状态（theme / bodyBg / whaleGL / progs / state / count），排查用，平时不出现。
 

@@ -95,14 +95,14 @@ function initWhale(shared) {
           px.push(sx + drift); py.push(sy);
         }
         // 邻近连线（简化）
-        g.strokeStyle = "rgba(103,153,254," + (0.05 * D).toFixed(3) + ")";
+        g.strokeStyle = "rgba(103,153,254," + (0.035 * D).toFixed(3) + ")";
         g.lineWidth = 0.5;
         for (var a = 0; a < px.length; a++) {
           for (var b = a + 1; b < px.length; b++) {
             var dx = px[a]-px[b], dy = py[a]-py[b];
             var d2 = dx*dx + dy*dy;
             if (d2 < 12000 && d2 > 1) {
-              var al = (1 - d2/12000) * 0.05 * D;
+              var al = (1 - d2/12000) * 0.035 * D;
               g.strokeStyle = "rgba(103,153,254," + al.toFixed(3) + ")";
               g.beginPath(); g.moveTo(px[a], py[a]); g.lineTo(px[b], py[b]); g.stroke();
             }
@@ -114,7 +114,7 @@ function initWhale(shared) {
           var md = Math.sqrt(mx*mx+my*my), PUSH = 80;
           var fx = px[k], fy = py[k];
           if (md < PUSH && md > 0.001) { var f = (PUSH-md)/PUSH; fx += (mx/md)*f*14; fy += (my/md)*f*14; }
-          g.fillStyle = "rgba(103,153,254," + (0.2 * D).toFixed(3) + ")";
+          g.fillStyle = "rgba(103,153,254," + (0.14 * D).toFixed(3) + ")";
           g.beginPath(); g.arc(fx, fy, 1.5 + Math.random()*0.8, 0, Math.PI*2); g.fill();
         }
       }
