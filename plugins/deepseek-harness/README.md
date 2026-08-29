@@ -26,11 +26,11 @@ node scripts/build.mjs --check    # 校验 lib/client.js 与 src/ 一致
 
 ## 结构
 
-| 文件 | 说明 |
-| --- | --- |
-| `lib/index.js` | host 半：空 apply（纯客户端插件，无宿主副作用） |
-| `lib/client.js` | client 半：自动生成（build.mjs 拼接） |
-| `src/*.js` | 引擎源码：`whale-shaders`(SVG/GLSL/矩阵)、`whale`、`theme`、`settings`、`dom`、`boot`、`index` |
-| `src/css/00-background.css` | 背景层样式 |
-| `scripts/build.mjs` | 拼接构建脚本（零依赖） |
-| `cordis.patch.yml` | 本包挂载层（host 半随 profile boot 装载） |
+| 文件                        | 说明                                                                                           |
+| --------------------------- | ---------------------------------------------------------------------------------------------- |
+| `lib/index.js`              | host 半：空 apply（纯客户端插件，无宿主副作用）                                                |
+| `lib/client.js`             | client 半：自动生成（build.mjs 拼接）                                                          |
+| `src/*.js`                  | 引擎源码：`whale-shaders`(SVG/GLSL/矩阵)、`whale`、`theme`、`settings`、`dom`、`boot`、`index` |
+| `src/css/00-background.css` | 背景层样式                                                                                     |
+| `scripts/build.mjs`         | 拼接构建脚本（零依赖）                                                                         |
+| `cordis.patch.yml`          | 本包挂载层（host 半随 profile boot 装载）                                                      |

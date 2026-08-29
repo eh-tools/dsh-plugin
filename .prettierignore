@@ -13,3 +13,6 @@ plugins/obsolete/paste-image/lib/client.js
 plugins/file-git-explorer/lib/client.js
 plugins/db-console/lib/client.js
 plugins/deepseek-harness/lib/client.js
+# deepseek-harness 引擎源码: 紧凑风格手写(shader/矩阵), 且经 build.mjs 拼入已忽略的
+# lib/client.js —— 避免 prettier 重新排版导致 src 与产物不一致。不归 prettier 管。
+plugins/deepseek-harness/src/
