@@ -67,9 +67,12 @@ window.__ModuleLoader__.load({
       };
 
       // ---- 样式(手动 <style> 注入, 卸载时移除) ----
-      // 选中色取粒子鲸鱼插件的淡化蓝 rgb(103,153,254), 比官方 business-primary 更淡
+      // 选中色跟随当前主题的交互主色(state-business-primary):
+      //   默认主题是 DeepSeek 蓝, stylevault 的 Sage Mist 主题覆盖为绿色 #87BA81。
+      //   该 token 定义在 body 上(非 :root), 故本变量也落在 body 上才能解析;
+      //   若主题异常未定义, 回退到原来的粒子鲸鱼淡化蓝。
       var STYLE_CSS =
-        ':root{--dsh-batch-archive-accent:rgb(103,153,254)}' +
+        'body{--dsh-batch-archive-accent:var(--dsw-alias-state-business-primary,rgb(103,153,254))}' +
         // 侧边栏底部入口 —— 复刻官方 footer 单元格(CordisPanel layer/badge)与
         // 设置触发器(VOzbGW_trigger): 整行宽 42px, 整行 hover, rail 态 36px 圆钮
         '.baCell{flex:none;align-items:center;width:100%;height:42px;margin:8px 0 0;display:flex;position:relative}' +
@@ -83,29 +86,34 @@ window.__ModuleLoader__.load({
         '.baOverlay{z-index:1000;justify-content:center;align-items:center;display:flex;position:fixed;inset:0}' +
         '.baMask{background:var(--dsw-alias-bg-mask-1);backdrop-filter:var(--dsw-mask-blur);position:absolute;inset:0}' +
         '.baPanel{z-index:1;background:var(--dsw-alias-bg-layer-2);width:640px;max-width:calc(100vw - 48px);max-height:min(680px,calc(100vh - 48px));box-shadow:var(--dsw-shadow-lv3);--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2);border-radius:24px;display:flex;flex-direction:column;position:relative;overflow:hidden;font-size:14px;line-height:22px;color:var(--dsw-alias-label-primary)}' +
-        '.baHeader{box-sizing:border-box;flex:none;display:flex;align-items:center;gap:8px;height:54px;padding:20px 14px 8px 10px}' +
-        '.baTitle{flex:1;min-width:0;font-size:16px;font-weight:500;line-height:24px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
-        '.baHeaderNote{flex:none;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}' +
+        '.baHeader{box-sizing:border-box;flex:none;display:flex;align-items:center;gap:10px;height:56px;padding:16px 14px 12px 14px;border-bottom:1px solid var(--dsw-alias-border-l1)}' +
+        // 标题: 图标(跟随主题色) + 加粗 18px 文本, 让"批量归档"有功能标题的分量
+        '.baTitle{flex:1;min-width:0;display:flex;align-items:center;gap:8px;font-size:18px;font-weight:600;line-height:26px;color:var(--dsw-alias-label-primary);white-space:nowrap;overflow:hidden}' +
+        '.baTitleIcon{flex:none;width:20px;height:20px;color:var(--dsh-batch-archive-accent);display:inline-flex;align-items:center;justify-content:center}' +
+        '.baTitleText{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
         '.baClose{cursor:pointer;width:28px;height:28px;color:var(--dsw-alias-label-primary);background:transparent;border:none;border-radius:28px;justify-content:center;align-items:center;padding:0;display:inline-flex;flex:none}' +
         '.baClose:hover{background:var(--dsw-alias-interactive-bg-hover)}' +
         '.baClose:disabled{opacity:.4;cursor:not-allowed}' +
-        '.baToolbar{flex:none;display:flex;align-items:center;gap:14px;padding:2px 16px 10px;border-bottom:1px solid var(--dsw-alias-border-l1)}' +
-        '.baToolbarLabel{cursor:pointer;display:inline-flex;align-items:center;gap:8px;color:var(--dsw-alias-label-secondary);user-select:none;font-size:14px;line-height:22px}' +
-        '.baToolbarCount{margin-left:auto;flex:none;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary)}' +
+        // 全选 + 已选计数进头部(与标题同排): 全选文案加粗, 计数做成徽标, 选中时亮主题绿。
+        // 不再单独占一行工具栏, 避免"全选"孤零零悬在标题下方。
+        '.baToolbarLabel{cursor:pointer;display:inline-flex;align-items:center;gap:8px;color:var(--dsw-alias-label-primary);user-select:none;font-size:13px;line-height:20px;font-weight:500;flex:none}' +
+        '.baToolbarCount{display:inline-flex;align-items:center;flex:none;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);border-radius:12px;padding:2px 10px}' +
+        '.baToolbarCount.baActive{color:var(--dsw-alias-state-business-primary);background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 10%,var(--dsw-alias-bg-layer-1));border-color:color-mix(in srgb,var(--dsw-alias-state-business-primary) 40%,var(--dsw-alias-border-l1))}' +
         '.baList{flex:1;min-height:140px;overflow-y:auto;padding:0 8px 12px;scrollbar-width:thin;scrollbar-color:var(--dsw-alias-scrollbar-bg-l2) transparent}' +
         '.baList::-webkit-scrollbar{width:5px;height:5px}' +
         '.baList::-webkit-scrollbar-track{background:transparent}' +
         '.baList::-webkit-scrollbar-thumb{background:var(--dsw-alias-scrollbar-bg-l2);border-radius:3px}' +
         '.baList::-webkit-scrollbar-thumb:hover{background:var(--dsw-alias-scrollbar-hover-l2)}' +
-        // 分组头: 吸顶条带 + 组内全选 + 计数, 与行明显区分
-        '.baGroupHead{position:sticky;top:0;z-index:1;display:flex;align-items:center;gap:8px;height:36px;padding:0 12px;margin:0 -8px;border-bottom:1px solid var(--dsw-alias-border-l1);background:color-mix(in srgb,var(--dsw-alias-interactive-bg-hover) 40%,var(--dsw-alias-bg-layer-2));font-size:12px;line-height:16px;color:var(--dsw-alias-label-secondary);user-select:none}' +
+        // 分组头: 主题色圆点锚定 + 标题(13px 加粗) + 计数徽标, 让中文短标题不再单薄
+        '.baGroupHead{display:flex;align-items:center;gap:7px;height:38px;padding:0 12px;margin:0 -8px;border-bottom:1px solid var(--dsw-alias-border-l1);background:color-mix(in srgb,var(--dsw-alias-interactive-bg-hover) 40%,var(--dsw-alias-bg-layer-2));font-size:13px;line-height:18px;color:var(--dsw-alias-label-secondary);user-select:none}' +
+        '.baGroupDot{flex:none;width:6px;height:6px;border-radius:50%;background:var(--dsh-batch-archive-accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--dsh-batch-archive-accent) 18%,transparent)}' +
         '.baGroupHead:first-child{margin-top:6px}' +
-        '.baGroupTitle{flex:1;min-width:0;display:inline-flex;align-items:center;gap:6px;padding:0;border:none;background:none;font-family:inherit;font-size:12px;line-height:16px;font-weight:600;color:var(--dsw-alias-label-secondary);cursor:pointer;text-align:left;user-select:none}' +
-        '.baGroupTitle:hover{color:var(--dsw-alias-label-primary)}' +
+        '.baGroupTitle{flex:1;min-width:0;display:inline-flex;align-items:center;gap:6px;padding:0;border:none;background:none;font-family:inherit;font-size:13px;line-height:18px;font-weight:600;color:var(--dsw-alias-label-primary);cursor:pointer;text-align:left;user-select:none}' +
+        '.baGroupTitle:hover{color:var(--dsh-batch-archive-accent)}' +
         '.baGroupTitle.baGroupAll{color:var(--dsh-batch-archive-accent)}' +
         '.baGroupTitleText{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
         '.baGroupCheck{flex:none;color:var(--dsh-batch-archive-accent)}' +
-        '.baGroupCount{flex:none;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}' +
+        '.baGroupCount{flex:none;font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums;background:var(--dsw-alias-bg-base);border-radius:9px;padding:1px 8px}' +
         '.baRow{display:flex;align-items:center;gap:10px;height:40px;padding:0 12px;border-radius:12px;cursor:pointer;user-select:none}' +
         '.baRow:hover{background:var(--dsw-alias-interactive-bg-hover)}' +
         '.baRowTitle{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
@@ -123,7 +131,11 @@ window.__ModuleLoader__.load({
         '.baFooter{flex:none;display:flex;align-items:center;gap:8px;padding:12px 16px;border-top:1px solid var(--dsw-alias-border-l1)}' +
         '.baFooterMsg{flex:1;min-width:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
         '.baFooterMsg.baError{color:var(--dsw-alias-state-error-primary)}' +
-        '.baDanger{color:var(--dsw-alias-state-error-primary)}';
+        '.baDanger{color:var(--dsw-alias-state-error-primary)}' +
+        // 官方 Button 的 outline 变体用 --dsw-alias-border-l2(仅 10~12% 透明度)描边,
+        // 落在 bg-layer-2 面板底色上几乎不可见(近似无边框)。这里用更清晰的 border-l4 覆盖,
+        // 仅通过 .baFooterBtnOutline 作用于本面板底部两个 outline 按钮, 不影响其它 outline 按钮。
+        '.baFooter .baFooterBtnOutline{border:1px solid var(--dsw-alias-border-l4)}';
 
       var styleTag = null;
       function ensureStyles() {
@@ -315,7 +327,12 @@ window.__ModuleLoader__.load({
               React.createElement(
                 'div',
                 { className: 'baHeader' },
-                React.createElement('div', { className: 'baTitle' }, '批量归档'),
+                React.createElement(
+                  'div',
+                  { className: 'baTitle' },
+                  React.createElement(IconArchiveOutline20, { className: 'baTitleIcon' }),
+                  React.createElement('span', { className: 'baTitleText' }, '批量归档'),
+                ),
                 React.createElement(
                   'button',
                   {
@@ -386,10 +403,6 @@ window.__ModuleLoader__.load({
         }
         var allSelected = allIds.length > 0 && selectedCount === allIds.length;
         var busy = phase === 'busy';
-        var totalSessions = 0;
-        for (var tk = 0; tk < (listIds || []).length; tk++) {
-          if (visibleSession(byId[listIds[tk]])) totalSessions++;
-        }
         var archivedCount = 0;
         for (var ak in archived) {
           if (Object.prototype.hasOwnProperty.call(archived, ak)) archivedCount++;
@@ -503,6 +516,7 @@ window.__ModuleLoader__.load({
               React.createElement(
                 'div',
                 { key: g.key, className: 'baGroupHead' },
+                React.createElement('span', { className: 'baGroupDot' }),
                 React.createElement(
                   'button',
                   {
@@ -583,7 +597,7 @@ window.__ModuleLoader__.load({
 
         var primaryLabel;
         if (busy) primaryLabel = '归档中…';
-        else if (phase === 'confirm') primaryLabel = '确认归档 (' + selectedCount + ')？';
+        else if (phase === 'confirm') primaryLabel = '确认归档 (' + selectedCount + ')';
         else if (selectedCount > 0) primaryLabel = '归档所选 (' + selectedCount + ')';
         else primaryLabel = '归档所选';
         var cancelLabel = busy ? '关闭' : phase === 'confirm' ? '返回' : '取消';
@@ -595,29 +609,12 @@ window.__ModuleLoader__.load({
             React.createElement(
               'div',
               { className: 'baHeader' },
-              React.createElement('div', { className: 'baTitle' }, '批量归档'),
               React.createElement(
                 'div',
-                { className: 'baHeaderNote' },
-                '共 ' + totalSessions + ' 个会话',
+                { className: 'baTitle' },
+                React.createElement(IconArchiveOutline20, { className: 'baTitleIcon' }),
+                React.createElement('span', { className: 'baTitleText' }, '批量归档'),
               ),
-              React.createElement(
-                'button',
-                {
-                  type: 'button',
-                  className: 'baClose',
-                  'aria-label': '关闭',
-                  disabled: busy,
-                  onClick: function () {
-                    store.setOpen(false);
-                  },
-                },
-                React.createElement(IconCloseOutline16, {}),
-              ),
-            ),
-            React.createElement(
-              'div',
-              { className: 'baToolbar' },
               React.createElement(
                 'label',
                 { className: 'baToolbarLabel' },
@@ -631,8 +628,21 @@ window.__ModuleLoader__.load({
               ),
               React.createElement(
                 'span',
-                { className: 'baToolbarCount' },
+                { className: 'baToolbarCount' + (selectedCount > 0 ? ' baActive' : '') },
                 '已选 ' + selectedCount + ' / ' + allIds.length,
+              ),
+              React.createElement(
+                'button',
+                {
+                  type: 'button',
+                  className: 'baClose',
+                  'aria-label': '关闭',
+                  disabled: busy,
+                  onClick: function () {
+                    store.setOpen(false);
+                  },
+                },
+                React.createElement(IconCloseOutline16, {}),
               ),
             ),
             React.createElement('div', { className: 'baList' }, rows),
@@ -649,14 +659,20 @@ window.__ModuleLoader__.load({
               ),
               React.createElement(
                 Btn,
-                { variant: 'outline', disabled: busy, onClick: cancelAction },
+                {
+                  variant: 'outline',
+                  className: 'baFooterBtnOutline',
+                  disabled: busy,
+                  onClick: cancelAction,
+                },
                 cancelLabel,
               ),
               React.createElement(
                 Btn,
                 {
                   variant: phase === 'confirm' ? 'outline' : 'primary',
-                  className: phase === 'confirm' ? 'baDanger' : undefined,
+                  className:
+                    phase === 'confirm' ? 'baDanger baFooterBtnOutline' : undefined,
                   disabled: busy || selectedCount === 0,
                   onClick: primaryAction,
                 },
