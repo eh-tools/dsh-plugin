@@ -1,0 +1,21 @@
+# dsh-stylevault-localchrome bundle patch(本包自带的挂载层)
+#
+# 轻量「本地 Chrome 取色 → StyleVault 预设生成」插件。
+# 主题引擎与设置面板由上游 GptsApp/dsh-stylevault 提供(独立安装), 本插件不重复实现,
+# 也不触碰运行时主题 —— 它只做:
+#   - host 半: 读本机 Chrome Preferences, 解码 browser.theme.user_color → #RRGGBB,
+#     并从该 accent 推导完整调色板, 生成 StyleVault 1.0 预设 JSON;
+#     在 /svlc/api 暴露受信任栅栏保护的 GET chrome / POST preset 两个路由。
+#   - client 半: window.__SVLC__ 控制台助手(拉取 chrome 配色 / 生成 preset / 复制分享文案)。
+#   - assets/sage-mist.stylevault.json: 当前手调的 Sage Mist 预设, 可直接导入上游 StyleVault。
+#
+# 安装 ——
+#
+#   dsh plugin --profile web add link:<本目录绝对路径>
+#   # 主题引擎(上游, 独立安装):
+#   dsh plugin --profile web add github:GptsApp/dsh-stylevault
+#
+# 不要同时再手动挂载本插件, 否则会双挂载(两个 Node 半)。
+- insert:
+    - id: stylevault-localchrome
+      name: 'dsh-stylevault-localchrome'
