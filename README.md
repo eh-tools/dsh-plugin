@@ -10,15 +10,16 @@
 
 DSH 的插件生态还在早期,本仓库把几个日常高频缺口做成了独立插件,一个插件一个目录,按需取用:
 
-| 插件                | 状态   | 解决什么问题                             | 一句话说明                                                                                    |
-| ------------------- | ------ | ---------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `ds-balance`        | 维护中 | 官方状态栏看不到余额和用量               | stats 行下方加第二行:余额 + 今日/本月 token,每 5 分钟刷新                                     |
-| `file-git-explorer` | 维护中 | 看不到项目文件和 git 状态                | 左右树浏览:左侧文件树(可见/隐藏/忽略三区, 按名搜索)+ 右侧 git 树(分支/变更/diff/**提交历史**) |
-| `db-console`        | 维护中 | GUI 里没有数据库客户端                   | 会话头部「数据库」页签:PG 完整链接登录(按项目保存)、schema 树、SQL 补全高亮、结果网格         |
-| `deepseek-harness`  | 维护中 | 想要粒子鲸鱼背景                         | 蓝色粒子鲸鱼(DeepSeek 品牌蓝)默认开启,沿用官方明/暗/系统主题;`?dshtest=1` 隐藏式诊断面板      |
-| `batch-archive`     | 维护中 | 会话只能一个个归档                       | 侧边栏底部「批量归档」按钮 + 面板:勾选/全选多个会话一键归档(两次点击确认)                     |
-| `tool-vision`       | 已归档 | DeepSeek 模型不支持图片输入              | 本地识图工具,把图片交给本地视觉模型(llama-server / LM Studio / Ollama)描述                    |
-| `paste-image`       | 已归档 | 粘贴图片发送会被"当前模型不支持图片"拒绝 | 粘贴瞬间把图片落盘成文件,路径写入草稿,配合 `tool-vision` 实现看图                             |
+| 插件                     | 状态   | 解决什么问题                             | 一句话说明                                                                                             |
+| ------------------------ | ------ | ---------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `ds-balance`             | 维护中 | 官方状态栏看不到余额和用量               | stats 行下方加第二行:余额 + 今日/本月 token,每 5 分钟刷新                                              |
+| `file-git-explorer`      | 维护中 | 看不到项目文件和 git 状态                | 左右树浏览:左侧文件树(可见/隐藏/忽略三区, 按名搜索)+ 右侧 git 树(分支/变更/diff/**提交历史**)          |
+| `db-console`             | 维护中 | GUI 里没有数据库客户端                   | 会话头部「数据库」页签:PG 完整链接登录(按项目保存)、schema 树、SQL 补全高亮、结果网格                  |
+| `deepseek-harness`       | 维护中 | 想要粒子鲸鱼背景                         | 蓝色粒子鲸鱼(DeepSeek 品牌蓝)默认开启,沿用官方明/暗/系统主题;`?dshtest=1` 隐藏式诊断面板               |
+| `stylevault-localchrome` | 维护中 | 想用本机 Chrome 配色当 DSH 主题          | 读本机 Chrome 用户色, 解码成 `#RRGGBB` 生成 StyleVault 1.0 预设; 授权后自动应用(需先装上游 StyleVault) |
+| `batch-archive`          | 维护中 | 会话只能一个个归档                       | 侧边栏底部「批量归档」按钮 + 面板:勾选/全选多个会话一键归档(两次点击确认)                              |
+| `tool-vision`            | 已归档 | DeepSeek 模型不支持图片输入              | 本地识图工具,把图片交给本地视觉模型(llama-server / LM Studio / Ollama)描述                             |
+| `paste-image`            | 已归档 | 粘贴图片发送会被"当前模型不支持图片"拒绝 | 粘贴瞬间把图片落盘成文件,路径写入草稿,配合 `tool-vision` 实现看图                                      |
 
 > ⚠️ `tool-vision` 与 `paste-image` 已**归档**:源码移到 `plugins/obsolete/`,不再维护、
 > 不再列入默认安装,仅保留以便参考。其余插件为当前维护中。
@@ -52,6 +53,14 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/batch-archive
 > 更新插件:`git pull` 后重跑同一条安装命令;只改 `lib/client.js` 时刷新浏览器即可,
 > 改 `lib/index.js` 才需要重启 DSH。
 > 卸载:`dsh plugin --profile web remove dsh-ds-balance`,然后重启 DSH。
+
+> `stylevault-localchrome` 是**可选**插件:它只负责「取色 + 生成预设」,要**应用**成 DSH 主题,
+> 需**先装上游主题引擎**。推荐一起装:
+>
+> ```sh
+> dsh plugin --profile web add github:GptsApp/dsh-stylevault
+> dsh plugin --profile web add link:<repo-abs-path>/plugins/stylevault-localchrome
+> ```
 
 ## 插件使用说明
 
@@ -188,6 +197,20 @@ agent 会自动调用;支持 PNG / JPEG / WebP / BMP / GIF。
   (走客户端 `workspaces.archiveSession`,与行内归档同一接口);已归档会话自动从列表
   隐藏,会话日志保留。防误触:二次确认 + 归档中锁定界面。
 - 纯客户端实现(无 Host 逻辑),会话数据来自槽位标准 props,不落盘任何状态。
+
+### stylevault-localchrome —— 本机 Chrome 配色 → DSH 主题
+
+把本机 Google Chrome 的「自定义外观」用户色读出来, 解码成 `#RRGGBB`(带符号 SkColor `0xAARRGGBB`),
+再据此推导一套完整调色板, 生成可导入上游 [StyleVault](https://github.com/GptsApp/dsh-stylevault) 的预设 JSON。
+在**已装上游 StyleVault 且你同意**的前提下, 首次启动自动应用为 DSH 主题。
+
+- **依赖**: 需先装上游 `GptsApp/dsh-stylevault` 才会「应用」; 不装则只生成预设 JSON, 不接管主题。
+- **CLI(不用挂载)**: `node plugins/stylevault-localchrome/scripts/build-preset.js` 生成预设, 粘到上游面板导入。
+- **自动应用**: 首次启动弹窗询问, 同意后每次启动自动应用当前 Chrome 配色;
+  之后可在 **Settings → StyleVault · Local Chrome** 卡片改主意。
+- 只读本机 `Preferences` 的 `browser.theme.user_color`, 主题引擎与设置面板指向上游, 本插件不实现。
+
+详见 `plugins/stylevault-localchrome/README.md`。
 
 ## 常见问题速查
 
