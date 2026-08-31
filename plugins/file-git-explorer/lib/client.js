@@ -180,6 +180,12 @@ window.__ModuleLoader__.load({
         '.fge-commit-meta{display:flex;align-items:center;gap:6px;margin-top:1px;' +
         'font-size:10px;color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));}' +
         '.fge-hash{font-family:Consolas,Menlo,monospace;}' +
+        // 历史哈希胶囊: 可点复制完整版本号, 复制后短暂显示 ✓
+        '.fge-hash-copy{cursor:pointer;display:inline-flex;align-items:center;padding:0 7px;' +
+        'border-radius:999px;border:1px solid var(--dsw-alias-border-l2);' +
+        'background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);line-height:1.6;}' +
+        '.fge-hash-copy:hover{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-label-secondary);}' +
+        '.fge-hash-copy.fge-copied{color:var(--dsw-alias-state-success-primary);border-color:var(--dsw-alias-state-success-primary);}' +
         '.fge-stat-add{color:var(--dsw-alias-state-success-primary);flex:none;}' +
         '.fge-stat-del{color:var(--dsw-alias-state-error-primary);flex:none;}' +
         '.fge-cfile{display:flex;align-items:center;gap:8px;padding:3px 4px;border-radius:0;cursor:pointer;' +
@@ -3132,6 +3138,20 @@ window.__ModuleLoader__.load({
         var setDetail = detailState[1];
         var listRef = React.useRef(null);
         var shownHeadRef = React.useRef(null); // 本列表已知的 HEAD(供刷新比对)
+        // 哈希胶囊复制反馈: 记录最近复制的 hash, 1200ms 后还原为短 hash
+        var copiedHashState = React.useState(null);
+        var copiedHash = copiedHashState[0];
+        var setCopiedHash = copiedHashState[1];
+        var copyHashTimerRef = React.useRef(null);
+        function onCopyHash(hash) {
+          if (copyText(hash)) {
+            setCopiedHash(hash);
+            if (copyHashTimerRef.current) clearTimeout(copyHashTimerRef.current);
+            copyHashTimerRef.current = setTimeout(function () {
+              setCopiedHash(null);
+            }, 1200);
+          }
+        }
 
         // ---- 头部「查看分支」切换器 ----
         // 分支名可点: 弹出与右树同款的本地/远程分组菜单, 点选即改写
@@ -3442,7 +3462,19 @@ window.__ModuleLoader__.load({
                       { className: 'fge-commit-meta' },
                       React.createElement('span', null, c.author),
                       React.createElement('span', null, fmtRelTime(c.at)),
-                      React.createElement('span', { className: 'fge-hash' }, c.short),
+                      React.createElement(
+                        'span',
+                        {
+                          className:
+                            'fge-hash fge-hash-copy' + (copiedHash === c.hash ? ' fge-copied' : ''),
+                          title: c.hash + '（点击复制完整版本号）',
+                          onClick: function (e) {
+                            e.stopPropagation(); // 复制不触发展开详情
+                            onCopyHash(c.hash);
+                          },
+                        },
+                        copiedHash === c.hash ? '✓ 已复制' : c.short,
+                      ),
                     ),
                   ),
                 );

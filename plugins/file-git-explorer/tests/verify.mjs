@@ -595,4 +595,33 @@ ok('shellStart/shellStop: 非法命令(invalid-command)/非法 root(invalid-root
     }
 }
 
+// 15. 回归: 仓库根缓存失效 —— 工作区建了 .git 后应即时识别, 不得再返回旧父仓库。
+//     旧实现按 root 永久缓存 findRepoRoot 结果: base 首次查询时若无 .git 会向上命中父仓库并
+//     缓存 `base → 父仓库`; 之后 base 自己 init 成仓库, 缓存仍返回父仓库 → 右侧 git 树渲染成
+//     父仓库的变更。修复后每次实时重算, 应即时切回 base 自身。
+{
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'fge-cache-'));
+    const sub = path.join(parent, 'sub');
+    fs.mkdirSync(sub, { recursive: true });
+    try {
+        execFileSync('git', ['init', '-q'], { cwd: parent }); // 父目录先入仓, sub 还不是
+        const before = await callAt('POST', base('info'), { root: sub });
+        assert.equal(before.body.ok, true);
+        assert.equal(before.body.repoRoot, parent, 'sub 未入仓前 repoRoot 应为父仓库');
+        assert.notEqual(before.body.repoRoot, sub);
+
+        execFileSync('git', ['init', '-q'], { cwd: sub }); // sub 现在自成独立仓库
+        const after = await callAt('POST', base('info'), { root: sub });
+        assert.equal(after.body.ok, true);
+        assert.equal(
+            after.body.repoRoot,
+            sub,
+            'sub 成为仓库后 repoRoot 应即时更新为 sub, 而非旧缓存里的父仓库',
+        );
+    } finally {
+        fs.rmSync(parent, { recursive: true, force: true });
+    }
+    ok('regression: 工作区新建 .git 后 repoRoot 即时失效(cache 不再吞掉新仓库)');
+}
+
 console.log('\nHOST LOGIC CHECKS PASSED (' + passed + ' groups)');
