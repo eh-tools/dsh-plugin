@@ -82,7 +82,6 @@ const SEARCH_RETURN_CAP = 300; // 搜索返回条目上限(排序后截断)
 
 export function apply(ctx) {
   const CWD = process.cwd();
-  const repoRootCache = new Map();
 
   // ---- 通用工具 ----
 
@@ -113,12 +112,23 @@ export function apply(ctx) {
     }
   }
 
-  /** 某根目录的仓库根(按根缓存)。 */
+  /**
+   * 某根目录的仓库根。
+   *
+   * 刻意不做按 root 缓存: 仓库根会随 .git 的新建/删除/移动而变化, 任何固定键缓存都可能在
+   * 首次查询(工作区尚未成为仓库)后永久失效。历史 bug 正是如此 —— s3 工作区首次打开时
+   * 还没有 .git, 向上命中了父仓库并在缓存里记下 `s3 → 父仓库`; 之后 s3 建了自己的 .git,
+   * 缓存却仍返回父仓库, 右侧 git 树因此渲染成了父仓库的变更。
+   *
+   * 不能用"命中时重验已缓存 root 的 .git 是否还在"来救: findRepoRoot 返回的是从 base 向上
+   * 最近的 .git, 要验证其仍是最新最近值, 唯一正确做法是把向上遍历重跑一遍 —— 一旦重跑,
+   * 缓存就不再省任何事。所以直接每次实时算。
+   *
+   * findRepoRoot 向上遍历只做 O(目录深度) 次 stat(microseconds 级, 远小于一次 readdir 或
+   * git 子进程), 每次重算成本可忽略, 却能彻底消除这类失效问题。
+   */
   async function repoRootFor(base) {
-    if (repoRootCache.has(base)) return repoRootCache.get(base);
-    const found = await findRepoRoot(base);
-    repoRootCache.set(base, found);
-    return found;
+    return findRepoRoot(base);
   }
 
   /** 校验 body.repoRoot: 缺失 → no-repo, 非绝对路径 → invalid-root; 否则给绝对路径。 */
