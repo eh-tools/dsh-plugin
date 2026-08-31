@@ -1,0 +1,18 @@
+{
+  "kind": "static",
+  "name": "dsh-stylevault-localchrome",
+  "purpose": "读取本机 Google Chrome 浏览器主题(user_color)并解码成 #RRGGBB, 从该 accent 推导一套完整调色板, 生成可导入 dsh-stylevault 的 StyleVault 1.0 预设 JSON。在用户同意且已安装上游 StyleVault 的前提下, 首次启动自动应用为 DSH 主题; 不同意则仅生成预设 JSON。主题引擎与设置面板指向上游 GptsApp/dsh-stylevault, 本插件负责取色/生成与受控应用。client 半提供授权闸自动应用 + settings 卡片 + window.__SVLC__ 助手, host 半提供 chrome 读取/预设生成能力与受信任 HTTP 路由; 内置当前 Sage Mist 预设作示例。",
+  "upstream": "https://github.com/GptsApp/dsh-stylevault",
+  "files": [
+    "package.json",
+    "cordis.patch.yml",
+    "README.md",
+    "lib/index.js",
+    "lib/client.js",
+    "lib/chrome-theme.js",
+    "lib/presets.js",
+    "scripts/build-preset.js",
+    "assets/sage-mist.stylevault.json"
+  ],
+  "install": "dsh plugin --profile web add link:<repo-abs-path>/plugins/stylevault-localchrome"
+}

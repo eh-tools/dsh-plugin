@@ -22,6 +22,7 @@ export default [
       'plugins/db-console/lib/client.js',
       'plugins/deepseek-harness/lib/client.js',
       'plugins/batch-archive/lib/client.js',
+      'plugins/stylevault-localchrome/lib/client.js',
       // deepseek-harness 的浏览器端源码(经 scripts/build.mjs 打包进 client
       // bundle): 运行在浏览器上下文且依赖打包期符号, node globals 下无法检查
       'plugins/deepseek-harness/src',

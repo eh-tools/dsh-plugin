@@ -1,0 +1,58 @@
+{
+  "name": "dsh-stylevault-localchrome",
+  "version": "0.1.0",
+  "description": "本地 Chrome 配色 → StyleVault 预设: 读取本机 Google Chrome 浏览器主题(user_color)并解码为 #RRGGBB, 一键生成可导入 dsh-stylevault 的 1.0 预设 JSON; 在用户同意且已安装上游 StyleVault 的前提下, 首次启动自动应用为 DSH 主题(不同意则仅生成预设)。主题引擎指向上游 GptsApp/dsh-stylevault, 本包只做取色/生成/受控应用。",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./chrome-theme": {
+      "default": "./lib/chrome-theme.js"
+    },
+    "./presets": {
+      "default": "./lib/presets.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "svlc-build-preset": "./scripts/build-preset.js"
+  },
+  "files": [
+    "lib",
+    "scripts",
+    "assets",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [],
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "react": "^18.2.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "upstream": {
+    "name": "dsh-stylevault",
+    "repo": "https://github.com/GptsApp/dsh-stylevault",
+    "note": "本插件仅生成/携带预设 JSON; 完整主题引擎与设置面板由上游 StyleVault 提供。安装上游: dsh plugin --profile web add github:GptsApp/dsh-stylevault"
+  }
+}
