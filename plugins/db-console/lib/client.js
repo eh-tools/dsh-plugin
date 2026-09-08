@@ -136,7 +136,7 @@ window.__ModuleLoader__.load({
         '.dbc-editor:focus-within{border-color:var(--dsw-alias-state-business-primary);}' +
         '.dbc-editor-scroll{position:relative;flex:1;min-height:0;}' +
         '.dbc-hl,.dbc-ta{position:absolute;inset:0;margin:0;padding:10px 14px 12px;border:0;' +
-        'font-family:var(--ds-font-family-code);font-size:13px;line-height:22px;' +
+        'font-family:var(--ds-font-family-code);font-size:13px;line-height:22px;box-sizing:border-box;' +
         'white-space:pre-wrap;word-break:break-all;overflow-wrap:break-word;tab-size:2;}' +
         '.dbc-hl{pointer-events:none;overflow:hidden;color:var(--dsw-alias-label-primary);background:none;}' +
         '.dbc-ta{width:100%;height:100%;resize:none;background:none;outline:none;overflow:auto;' +
@@ -923,10 +923,126 @@ window.__ModuleLoader__.load({
           });
         }
 
+        // ---- 执行范围: 选区优先, 否则光标所在语句 ----
+        // 从 SQL 文本里取出光标所在的完整语句(单引号/双引号/-- 注释/块注释内不切分)。
+        function statementAtCursor(text, caret) {
+          if (typeof caret !== 'number' || caret < 0) return '';
+          var n = text.length;
+          var segs = []; // {start, end}, end = ';' 后一位 / 串尾
+          var cur = 0;
+          var i = 0;
+          var st = 'n'; // n normal, s single, d double, l lineComment, b blockComment
+          function flush(end) {
+            segs.push({ start: cur, end: end });
+            cur = end;
+          }
+          while (i < n) {
+            var ch = text[i];
+            var two = text.slice(i, i + 2);
+            if (st === 'n') {
+              if (two === '--') {
+                st = 'l';
+                i += 2;
+                continue;
+              }
+              if (two === '/*') {
+                st = 'b';
+                i += 2;
+                continue;
+              }
+              if (ch === "'") {
+                st = 's';
+                i++;
+                continue;
+              }
+              if (ch === '"') {
+                st = 'd';
+                i++;
+                continue;
+              }
+              if (ch === ';') {
+                flush(i + 1);
+                i++;
+                continue;
+              }
+              i++;
+              continue;
+            }
+            if (st === 's') {
+              if (ch === "'" && text[i + 1] === "'") i += 2;
+              else if (ch === "'") {
+                st = 'n';
+                i++;
+              } else i++;
+              continue;
+            }
+            if (st === 'd') {
+              if (ch === '"') {
+                st = 'n';
+                i++;
+              } else i++;
+              continue;
+            }
+            if (st === 'l') {
+              if (ch === '\n') {
+                st = 'n';
+                i++;
+              } else i++;
+              continue;
+            }
+            // blockComment
+            if (two === '*/') {
+              st = 'n';
+              i += 2;
+              continue;
+            }
+            i++;
+          }
+          flush(n);
+          // caret 归属段: start <= caret < end; 恰在 ';' 后(caret === seg.end)归下一段
+          var target = null;
+          for (var s = 0; s < segs.length; s++) {
+            if (segs[s].start <= caret && caret < segs[s].end) {
+              target = segs[s];
+              break;
+            }
+          }
+          if (target === null) target = segs[segs.length - 1];
+          var t = text.slice(target.start, target.end).trim();
+          if (t !== '') return t;
+          // 落在空白/注释段: 取最近的非空段
+          var idx = segs.indexOf(target);
+          for (var a = idx - 1; a >= 0; a--) {
+            var tt = text.slice(segs[a].start, segs[a].end).trim();
+            if (tt !== '') return tt;
+          }
+          for (var b2 = idx + 1; b2 < segs.length; b2++) {
+            var tb = text.slice(segs[b2].start, segs[b2].end).trim();
+            if (tb !== '') return tb;
+          }
+          return '';
+        }
+
         function runQuery() {
-          if (!sql.trim()) return;
+          // 执行目标: 有选区先执行选区, 否则执行光标所在语句(取 textarea 实时值,
+          // 不用受控 state —— state 落后最后一次按键一拍, 会把光标所在语句算错)。
+          var ta = taRef.current;
+          var live = ta ? ta.value : sql;
+          var caret =
+            ta && typeof ta.selectionStart === 'number' ? ta.selectionStart : null;
+          var selEnd =
+            ta && typeof ta.selectionEnd === 'number' ? ta.selectionEnd : null;
+          var target = null;
+          if (ta && caret !== null && selEnd !== null && caret !== selEnd) {
+            target = live.slice(caret, selEnd);
+          } else if (caret !== null) {
+            target = statementAtCursor(live, caret);
+          }
+          if (target === null) target = sql; // 兜底: 无 textarea(罕见)
+          target = target.trim();
+          if (!target) return;
           setResult({ pending: true });
-          api('query', { root: sessionCwd || '', sql: sql })
+          api('query', { root: sessionCwd || '', sql: target })
             .then(function (res) {
               if (!res || !res.ok) {
                 setResult({ err: (res && res.error) || '执行失败' });
@@ -1363,7 +1479,9 @@ window.__ModuleLoader__.load({
                     ref: hlRef,
                     className: 'dbc-hl',
                     'aria-hidden': 'true',
-                    dangerouslySetInnerHTML: { __html: highlightSqlHtml(sql) + '\n' },
+                    // underlay 内容与 textarea 完全一致(不额外加 '\n'): 高亮层与输入层
+                    // 行数/几何保持一致, 光标(在 textarea 上)才与可见文本逐字符对齐。
+                    dangerouslySetInnerHTML: { __html: highlightSqlHtml(sql) },
                   }),
                   React.createElement('textarea', {
                     ref: taRef,
