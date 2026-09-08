@@ -132,7 +132,7 @@ window.__ModuleLoader__.load({
         'box-shadow:var(--dsw-shadow-lv2);overflow:hidden;transition:border-color .12s var(--ds-ease-in-out);}' +
         '.dbc-editor:focus-within{border-color:var(--dsw-alias-state-business-primary);}' +
         '.dbc-editor-scroll{position:relative;flex:1;min-height:0;}' +
-        '.dbc-hl,.dbc-ta{position:absolute;inset:0;margin:0;padding:10px 14px 12px;border:0;' +
+        '.dbc-hl,.dbc-ta{position:absolute;inset:0;width:100%;height:100%;margin:0;padding:10px 14px 12px;border:0;' +
         'font-family:var(--ds-font-family-code);font-size:13px;line-height:22px;box-sizing:border-box;' +
         'white-space:pre-wrap;word-break:break-all;overflow-wrap:break-word;tab-size:2;}' +
         '.dbc-hl{pointer-events:none;overflow:hidden;color:var(--dsw-alias-label-primary);background:none;}' +
