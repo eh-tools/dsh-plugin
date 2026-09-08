@@ -29,9 +29,6 @@ window.__ModuleLoader__.load({
     exports.apply = function (ctx) {
       var slots = ctx.slots;
 
-      // 样式注入: 插件挂载即注入(幂等); 视图组件内还会再守一道
-      ensureStyles();
-
       // ---- 与 host 通信 ----
       // 诊断开关: URL 带 ?dbcdebug=1 时向控制台输出关键链路
       var DBG = /[?&]dbcdebug=1/.test(window.location.search);
@@ -147,6 +144,9 @@ window.__ModuleLoader__.load({
         '.dbc-hl .kw{color:#4176e6;font-weight:600;}' +
         '.dbc-hl .str{color:#1f9e5f;}.dbc-hl .num{color:#c77700;}' +
         '.dbc-hl .com{color:var(--dsw-alias-label-tertiary);font-style:italic;}' +
+        // 行尾空白可视化: 只上背景, 不改变空格/制表符的排版宽度
+        '.dbc-hl .dbc-ws{background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 12%,transparent);' +
+        'border-radius:2px;}' +
         '.dbc-editor-bar{flex:none;height:34px;display:flex;align-items:center;gap:8px;padding:0 6px;' +
         'border-top:1px solid var(--dsw-alias-border-l2-darkmode-thin);}' +
         '.dbc-hint{font:var(--dsw-font-xxs-12);color:var(--dsw-alias-label-caption);}' +
@@ -182,6 +182,9 @@ window.__ModuleLoader__.load({
         'body.dbc-on [data-composer-card]{display:none !important;}';
 
       var styleEl = null;
+      // 必须在 STYLE_CSS 赋值、styleEl 初始化之后调用: STYLE_CSS 声明在本函数
+      // 尾部, var 提升会让提前调用拿到 undefined, 结果注入一个空 <style>。
+      ensureStyles();
       function ensureStyles() {
         if (styleEl && styleEl.isConnected) return;
         styleEl = document.createElement('style');
@@ -332,7 +335,15 @@ window.__ModuleLoader__.load({
           push('', ch);
           i++;
         }
-        return out.join('');
+        // 行尾空白在 textarea 里占位、但在高亮层没有可见字形, 原生光标会像
+        // 「漂」在文本末尾之外。给行尾空格/制表符包一层极淡底色, 让光标位置
+        // 可见、可解释(仅改背景, 不改变字形宽度, 不影响对齐)。
+        return out.join('').replace(
+          /([ \t]+)((?:<\/span>)*)(?=\r?\n|$)/g,
+          function (m, spaces, closes) {
+            return '<span class="dbc-ws">' + spaces + '</span>' + closes;
+          },
+        );
       }
 
       // ---- 光标坐标(mirror 测量) ----
@@ -1479,9 +1490,12 @@ window.__ModuleLoader__.load({
                     ref: hlRef,
                     className: 'dbc-hl',
                     'aria-hidden': 'true',
-                    // underlay 内容与 textarea 完全一致(不额外加 '\n'): 高亮层与输入层
-                    // 行数/几何保持一致, 光标(在 textarea 上)才与可见文本逐字符对齐。
-                    dangerouslySetInnerHTML: { __html: highlightSqlHtml(sql) },
+                    // <pre> 会吞掉单个结尾换行, 而 textarea 会为它保留一个空末行:
+                    // SQL 以换行结尾时给 underlay 补一个 '\n', 两层行数/scrollHeight
+                    // 才会一致, 滚到底时光标才不会与可见文本差一行(表现为偏前)。
+                    dangerouslySetInnerHTML: {
+                      __html: highlightSqlHtml(sql) + (sql.slice(-1) === '\n' ? '\n' : ''),
+                    },
                   }),
                   React.createElement('textarea', {
                     ref: taRef,
