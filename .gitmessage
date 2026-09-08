@@ -2,10 +2,19 @@
 #
 # type: feat | fix | docs | style | refactor | perf | test | build | ci | chore | revert
 #
+# 内容要求(commit-msg hook 强制, body 需与 subject 空一行):
+#   fix       必填: 现象 / 成因 / 复测
+#   perf      必填: 基线 / 优化 / 度量
+#   refactor  必填: 动机 / 验证
+#   feat 及其余类型不强制, subject 写清即可; fixup!/squash!/Merge 等自动提交自动放行
+#
 # 示例:
-#   feat(auth): 支持邮箱登录
-#   fix: 修复空列表渲染崩溃
+#   fix(login): 修复登录后未跳回来源页
+#
+#   现象: 在 /settings 点登录, 成功后落到首页而非 /settings
+#   成因: 成功回调里写死 router.push('/'), 未读取 returnUrl
+#   复测: 未登录访问 /settings -> 登录 -> 应回到 /settings
 #
 # 规则:
-#   - subject 不超过 72 字符,不以句号结尾
-#   - body 解释 why,不解释 what(与 subject 空一行,可选)
+#   - subject 不超过 72 字符, 不以句号结尾
+#   - body 解释 why, 不解释 what(与 subject 空一行, 按上述标签补齐)
