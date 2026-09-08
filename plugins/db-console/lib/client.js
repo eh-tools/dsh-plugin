@@ -1208,6 +1208,88 @@ window.__ModuleLoader__.load({
           }
         }
 
+        // 两层逐像素对齐的硬保证。壳层 / 主题插件 / 浏览器扩展可能只改写 textarea
+        // 或只改写高亮层的字体度量(字号、字距、字体), 也可能因经典滚动条占位让输入层
+        // 比高亮层窄 —— 任一情况都会让可见文本与原生光标越差越远(表现为「光标追不上
+        // 行尾, 打字却出现在末尾」)。这里不跟任何外部 CSS 讲道理, 直接把输入层的实测
+        // 度量与内容宽度镜像到高亮层。
+        var MIRRORED_METRICS = [
+          'fontFamily',
+          'fontSize',
+          'lineHeight',
+          'letterSpacing',
+          'wordSpacing',
+          'fontFeatureSettings',
+          'fontKerning',
+          'fontVariant',
+          'fontStretch',
+          'textIndent',
+          'tabSize',
+          'direction',
+          'boxSizing',
+          'whiteSpace',
+          'wordBreak',
+          'overflowWrap',
+          'hyphens',
+          'paddingLeft',
+          'paddingTop',
+          'paddingBottom',
+        ];
+        function syncLayerMetrics() {
+          var ta = taRef.current;
+          var hl = hlRef.current;
+          if (!ta || !hl) return;
+          var cs = window.getComputedStyle(ta);
+          for (var i = 0; i < MIRRORED_METRICS.length; i++) {
+            var prop = MIRRORED_METRICS[i];
+            var value = cs[prop];
+            if (!value) continue; // 该浏览器不支持此属性: 跳过, 不写入空值
+            var css = prop.replace(/[A-Z]/g, function (ch) {
+              return '-' + ch.toLowerCase();
+            });
+            hl.style.setProperty(css, value, 'important');
+          }
+          // 滚动条占位补偿: 让高亮层的内容宽度等于输入层的内容宽度, 换行点才会一致
+          var gutter = ta.offsetWidth - ta.clientWidth;
+          hl.style.setProperty(
+            'padding-right',
+            parseFloat(cs.paddingRight) + gutter + 'px',
+            'important',
+          );
+        }
+
+        // 内容变化后重新对齐(滚动条可能随行数出现/消失)
+        React.useEffect(
+          function () {
+            syncLayerMetrics();
+          },
+          [sql],
+        );
+        // 尺寸变化后重新对齐(编辑器拉伸、侧栏开合、窗口缩放)
+        React.useEffect(function () {
+          syncLayerMetrics();
+          function onResize() {
+            syncLayerMetrics();
+          }
+          window.addEventListener('resize', onResize);
+          var ro = null;
+          var ta = taRef.current;
+          if (ta && typeof ResizeObserver !== 'undefined') {
+            ro = new ResizeObserver(function () {
+              syncLayerMetrics();
+            });
+            try {
+              ro.observe(ta, { box: 'content-box' });
+            } catch (e) {
+              ro.observe(ta);
+            }
+          }
+          return function () {
+            window.removeEventListener('resize', onResize);
+            if (ro) ro.disconnect();
+          };
+        }, []);
+
         // 激活标记: 全局 CSS 据 body.dbc-on 隐藏会话输入框; 离开视图即恢复
         React.useEffect(function () {
           document.body.classList.add('dbc-on');
@@ -1488,11 +1570,17 @@ window.__ModuleLoader__.load({
                 React.createElement(
                   'div',
                   { className: 'dbc-editor-scroll' },
-                  React.createElement('pre', {
+                  // underlay 必须与 textarea 逐像素同度量, 所以刻意用 <div> 而非
+                  // <pre>: 壳层/主题插件会用 `#root pre{font-size:Npx!important;
+                  // line-height:1.55}` 全局改写代码块字号(stylevault 的代码块字号层
+                  // 就是如此), 一旦命中 underlay 就会让两层字号 14px/13px 不一致,
+                  // 可见文本比原生光标每行多出约 7.7% 宽度 —— 表现为「光标永远追不上
+                  // 行尾, 打字却出现在末尾」。div 不落入任何代码块选择器。
+                  React.createElement('div', {
                     ref: hlRef,
                     className: 'dbc-hl',
                     'aria-hidden': 'true',
-                    // <pre> 会吞掉单个结尾换行, 而 textarea 会为它保留一个空末行:
+                    // 块级 pre-wrap 会吞掉单个结尾换行, 而 textarea 会为它保留一个空末行:
                     // SQL 以换行结尾时给 underlay 补一个 '\n', 两层行数/scrollHeight
                     // 才会一致, 滚到底时光标才不会与可见文本差一行(表现为偏前)。
                     dangerouslySetInnerHTML: {
