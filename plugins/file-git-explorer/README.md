@@ -32,7 +32,7 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer
 - **头部路径**: 左树头部显示当前根路径, **中间省略**(保头保尾, `…`), 点击路径复制完整路径到剪贴板(复制后短暂显示「✓ 已复制」)。
 - **图钉(无色线条版 📌)**: **每侧独立**, 默认**固定**(展开并锁定, 刷新 / 首次加载仍停留在固定展开态)。**单击**固定/解除**本侧**——固定时本侧展开并锁定, 解除时本侧连同其悬浮栏一起收起为细条; **双击**同时**固定 / 解除两侧**(解除时两侧一起收起); 固定态随 cwd 缓存(按仓库根)跨会话 / 刷新保留。
 - **悬浮栏联动**: 点文件/diff 弹出的悬浮栏与**源侧栏联动** —— 鼠标移到悬浮栏时侧栏保持展开(悬浮栏豁免收起); 移出整块区域(侧栏+悬浮栏)延迟后侧栏收起并**一并关闭该悬浮栏**, 不留下「侧栏已收、悬浮栏还在」的孤儿状态。
-- **刷新 ⟳**: 重读 `info`(根 / 仓库根 / 当前分支) + 重跑 git status, 并作废三棵树已加载的缓存。**只读本地状态, 不执行 `git fetch`** —— 远程分支列表只反映上次 fetch 的结果。
+- **刷新 ⟳**: **先 `git fetch --all --prune`** 更新远程跟踪引用(非交互 `GIT_TERMINAL_PROMPT=0` + 20s 宽限; 失败静默、不阻断后续), 再重读 `info`(根 / 仓库根 / 当前分支) + 重跑 git status, 并作废三棵树已加载的缓存; fetch 期间 ⟳ 置灰并旋转。**自动刷新(turn 结束)不 fetch** —— 避免每个 turn 都打一次网络。
 - **外观**: 面板背景 = 对话消息列(`.Md3f7G_column` 的 `--dsw-alias-bg-base`), 与聊天区域同底色; 头部图标(图钉 / 刷新 / 收起 / 关闭 / 分支)全部用单色线稿 SVG 对齐; 面板内滚动条细且半透明(悬停才加深), 拖拽柄只在悬停时显示一条细线。
 
 ### 左侧文件树(三区, 独立滚动)
@@ -128,6 +128,7 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer
 | `POST /fge/api/info`        | `{root?}`                                  | `{cwd(=root), repoRoot, branch, head}`                             |
 | `POST /fge/api/tree`        | `{root?, path, mode, reveal}`              | 目录三区条目 `[{name, rel, type, dot, ignored, subIgnored}]`       |
 | `POST /fge/api/status`      | `{root?, repoRoot}`                        | `{current, head, branches[], changes[]}`                           |
+| `POST /fge/api/fetch`       | `{root?, repoRoot}`                        | `{ok}`; 手动 ⟳ 的 `git fetch --all --prune`(失败回 fetch-failed)   |
 | `POST /fge/api/diff`        | `{root?, repoRoot, path, status, from}`    | `{kind: 'diff'\|'untracked', text, ...}`                           |
 | `POST /fge/api/file`        | `{root?, path}`                            | `{text, binary, truncated, size, mtimeMs}`(mtimeMs 供保存校验)     |
 | `POST /fge/api/search`      | `{root?, query}`                           | `{matches[{rel, type, zone, nameHit}], truncated}`                 |

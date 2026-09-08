@@ -11,6 +11,8 @@
  *   POST /fge/api/info    → { root? } → { cwd(root), repoRoot, currentBranch }
  *   POST /fge/api/tree    → { root?, path, mode, reveal } → 目录三区分组条目
  *   POST /fge/api/status  → { root?, repoRoot } → 分支列表 + 工作区变更列表
+ *   POST /fge/api/fetch   → { root?, repoRoot } → 手动 ⟳ 的 `git fetch --all --prune`
+ *       (非交互 GIT_TERMINAL_PROMPT=0 + 20s 宽限; 失败不致命, 只回错误码)
  *   POST /fge/api/diff    → { repoRoot, path, status, from } → 单文件 diff
  *   POST /fge/api/file    → { root?, path } → 文件内容预览(≤1MiB, NUL 探测)
  *   POST /fge/api/search  → { root?, query } → 按名搜索命中项(三区徽标, 截断上限)
@@ -155,12 +157,13 @@ export function apply(ctx) {
     const handle = subprocess.spawn({
       argv: ['git', ...args],
       cwd: opts.cwd ?? CWD,
+      env: opts.env, // undefined = 继承(子进程服务把显式 env 合并在清洗后的父环境之上)
       stdio: {
         stdin: opts.input !== undefined ? 'pipe' : 'ignore',
         stdout: { maxBytes: opts.maxBytes ?? 16 * 1024 * 1024 },
         stderr: { maxBytes: 2 * 1024 * 1024 },
       },
-      graceMs: 15000,
+      graceMs: opts.graceMs ?? 15000,
     });
     if (opts.input !== undefined && handle.stdin !== undefined) {
       try {
@@ -400,6 +403,32 @@ export function apply(ctx) {
     const current = cur.exitCode === 0 ? cur.stdout.trim() : null;
     const head = await headOf(absRoot);
     return { ok: true, current, head, branches, changes };
+  }
+
+  /**
+   * 手动 ⟳ 的 fetch: 更新远程跟踪引用(`--all --prune`)。
+   *
+   * 非交互: GIT_TERMINAL_PROMPT=0 —— 无 TTY 时凭据提示会让子进程挂起, 直接失败
+   * 更好; 20s 宽限覆盖慢网络, 超时即按 fetch-failed 返回。失败不致命: 客户端仍
+   * 重读本地 status, 只是远程分支列表停在旧值。
+   */
+  async function handleFetch(body) {
+    const rr = absRepoRootOf(body);
+    if (rr.error) return { ok: false, error: rr.error };
+    const r = await runGit(['fetch', '--all', '--prune'], {
+      cwd: rr.dir,
+      env: { GIT_TERMINAL_PROMPT: '0' },
+      graceMs: 20000,
+      maxBytes: 4 * 1024 * 1024,
+    });
+    if (r.exitCode !== 0) {
+      return {
+        ok: false,
+        error: 'fetch-failed',
+        detail: (r.stderr || r.stdout).trim().slice(0, 500),
+      };
+    }
+    return { ok: true };
   }
 
   /**
@@ -1094,6 +1123,7 @@ export function apply(ctx) {
     info: handleInfo,
     tree: handleTree,
     status: handleStatus,
+    fetch: handleFetch,
     diff: handleDiff,
     file: handleFile,
     search: handleSearch,

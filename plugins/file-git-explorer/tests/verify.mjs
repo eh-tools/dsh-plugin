@@ -20,9 +20,11 @@ import assert from 'node:assert/strict';
 import { apply } from '../lib/index.js';
 
 // ---- fake subprocess: 真实 child_process spawn + offset 制输出收集 + terminate ----
+const spawnLog = []; // 记录每次 spawn 的 spec(argv/env/...), 供路由参数断言
 function fakeSubprocess() {
     return {
         spawn(spec) {
+            spawnLog.push(spec);
             const cp = spawn(spec.argv[0], spec.argv.slice(1), {
                 cwd: spec.cwd,
                 env: { ...process.env, ...(spec.env || {}) },
@@ -199,6 +201,45 @@ assert.ok(!st.body.branches.some((b) => b.name.endsWith('/HEAD')), '应过滤 */
 assert.ok(Array.isArray(st.body.changes), 'changes 应为数组');
 assert.ok(st.body.head === null || typeof st.body.head === 'string', 'head 应为 string|null');
 ok('status: 分支/变更/HEAD 过滤');
+
+// 5b. fetch: 在本地 file:// remote 上真跑 `git fetch --all --prune`(离线, 不碰网络),
+//     并断言 argv 与 GIT_TERMINAL_PROMPT=0(无 TTY 时不挂起等凭据)。
+{
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fge-fetch-'));
+    const remote = path.join(tmp, 'remote.git');
+    const work = path.join(tmp, 'work');
+    const quiet = { stdio: 'ignore' };
+    const ident = {
+        ...process.env,
+        GIT_AUTHOR_NAME: 't',
+        GIT_AUTHOR_EMAIL: 't@t',
+        GIT_COMMITTER_NAME: 't',
+        GIT_COMMITTER_EMAIL: 't@t',
+    };
+    execFileSync('git', ['init', '--bare', remote], quiet);
+    execFileSync('git', ['init', work], quiet);
+    execFileSync('git', ['-C', work, 'remote', 'add', 'origin', remote], quiet);
+    execFileSync('git', ['-C', work, 'commit', '--allow-empty', '-m', 'x'], {
+        stdio: 'ignore',
+        env: ident,
+    });
+
+    const fr = await callAt('POST', base('fetch'), { root: work, repoRoot: work });
+    assert.equal(fr.body.ok, true, '本地 remote fetch 应成功: ' + JSON.stringify(fr.body));
+    const rec = spawnLog.filter((s) => s.argv[1] === 'fetch').pop();
+    assert.ok(rec, 'fetch 应经 subprocess 执行 git fetch');
+    assert.deepEqual(rec.argv, ['git', 'fetch', '--all', '--prune']);
+    assert.equal(rec.env.GIT_TERMINAL_PROMPT, '0');
+    assert.equal(rec.graceMs, 20000);
+
+    // 缺 repoRoot → no-repo(不发子进程)
+    const noRepo = await callAt('POST', base('fetch'), { root: work });
+    assert.equal(noRepo.body.ok, false);
+    assert.equal(noRepo.body.error, 'no-repo');
+
+    fs.rmSync(tmp, { recursive: true, force: true });
+    ok('fetch: --all --prune + GIT_TERMINAL_PROMPT=0(本地 remote)');
+}
 
 // 6. diff: 取当前第一个变更动态校验(状态无关); 若工作区干净则跳过
 if (st.body.changes.length > 0) {

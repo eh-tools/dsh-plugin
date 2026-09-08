@@ -67,6 +67,11 @@ window.__ModuleLoader__.load({
         '.fge-btn:disabled{opacity:.35;cursor:not-allowed;}' +
         '.fge-btn-active{color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-layer-2);}' +
         '.fge-btn-copied{color:var(--dsw-alias-state-success-primary);}' +
+        // 手动 ⟳ 的 git fetch 在途: 按钮禁用 + 图标旋转(降低动效偏好下只保留禁用态)
+        '.fge-btn:disabled.fge-btn-fetching{opacity:.75;cursor:progress;}' +
+        '.fge-btn-fetching svg{animation:fge-spin .9s linear infinite;}' +
+        '@keyframes fge-spin{to{transform:rotate(360deg);}}' +
+        '@media (prefers-reduced-motion:reduce){.fge-btn-fetching svg{animation:none;}}' +
         '.fge-section{display:flex;flex-direction:column;min-height:0;}' +
         '.fge-section-head{flex:none;padding:3px 8px;font-size:11px;color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));' +
         'border-top:1px solid var(--dsw-alias-border-l1);}' +
@@ -2391,8 +2396,9 @@ window.__ModuleLoader__.load({
             React.createElement(
               'button',
               {
-                className: 'fge-btn',
-                title: '刷新(重扫文件树与 git 状态)',
+                className: 'fge-btn' + (props.fetching ? ' fge-btn-fetching' : ''),
+                title: props.fetching ? '正在 git fetch…' : '刷新(重扫文件树 + git fetch + 重取状态)',
+                disabled: !!props.fetching,
                 onClick: props.onRefresh,
               },
               React.createElement(RefreshIcon, null),
@@ -2818,7 +2824,12 @@ window.__ModuleLoader__.load({
             ),
             React.createElement(
               'button',
-              { className: 'fge-btn', title: '刷新 git 状态', onClick: props.onRefresh },
+              {
+                className: 'fge-btn' + (props.fetching ? ' fge-btn-fetching' : ''),
+                title: props.fetching ? '正在 git fetch…' : '刷新 git 状态(git fetch + 重取 status)',
+                disabled: !!props.fetching,
+                onClick: props.onRefresh,
+              },
               React.createElement(RefreshIcon, null),
             ),
           ),
@@ -3930,6 +3941,9 @@ window.__ModuleLoader__.load({
         var refreshTickState = React.useState(0);
         var refreshTick = refreshTickState[0];
         var setRefreshTick = refreshTickState[1];
+        var fetchingState = React.useState(false); // 手动 ⟳ 的 git fetch 在途(按钮禁用 + 旋转)
+        var fetching = fetchingState[0];
+        var setFetching = fetchingState[1];
         // 状态版本: 每次 status 重取(自动/手动)递增, 驱动已打开的 diff 悬浮栏重拉
         var statusVersionState = React.useState(0);
         var statusVersion = statusVersionState[0];
@@ -4140,24 +4154,37 @@ window.__ModuleLoader__.load({
           [info, applyStatus],
         );
 
-        // 手动刷新(⟳): 重读 info + status, 树缓存作废; 无视冷却, 立刻执行。
+        // 手动刷新(⟳): 先 git fetch 更新远程分支(--all --prune), 再重读 info + status,
+        // 并作废文件树缓存; 无视冷却, 立刻执行。fetch 失败静默(离线/无凭据常见),
+        // 本地 status 照常刷新 —— 自动刷新(见下)不 fetch, 避免每个 turn 结束都打网络。
         var refresh = React.useCallback(
           function () {
             var req = root ? { root: root } : {};
+            setFetching(true);
+            var done = function () {
+              setFetching(false);
+            };
             api('info', req)
               .then(function (res) {
-                if (!res || !res.ok) return;
+                if (!res || !res.ok) return null;
                 setInfo(res);
                 setRefreshTick(function (t) {
                   return t + 1;
                 });
-                if (res.repoRoot) {
-                  api('status', { root: res.cwd, repoRoot: res.repoRoot })
-                    .then(applyStatus)
-                    .catch(function () {});
-                }
+                if (!res.repoRoot) return null;
+                return api('fetch', { root: res.cwd, repoRoot: res.repoRoot })
+                  .catch(function (e) {
+                    console.warn('[fge] git fetch 失败', e);
+                    return null;
+                  })
+                  .then(function (fr) {
+                    if (fr && fr.ok === false) console.warn('[fge] git fetch 失败', fr.error);
+                    return api('status', { root: res.cwd, repoRoot: res.repoRoot });
+                  })
+                  .then(applyStatus);
               })
-              .catch(function () {});
+              .catch(function () {})
+              .then(done);
           },
           [root, applyStatus],
         );
@@ -4693,6 +4720,7 @@ window.__ModuleLoader__.load({
                 track: leftTrack,
                 onPin: leftPinHandler,
                 onRefresh: refresh,
+                fetching: fetching,
                 onHide: hideLeft,
                 onResizeStart: resize('left'),
                 refreshTick: refreshTick,
@@ -4720,6 +4748,7 @@ window.__ModuleLoader__.load({
                 track: rightTrack,
                 onPin: rightPinHandler,
                 onRefresh: refresh,
+                fetching: fetching,
                 onHide: hideRight,
                 onResizeStart: resize('right'),
                 viewedBranch: viewedBranch,
