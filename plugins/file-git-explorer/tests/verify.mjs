@@ -20,9 +20,11 @@ import assert from 'node:assert/strict';
 import { apply } from '../lib/index.js';
 
 // ---- fake subprocess: 真实 child_process spawn + offset 制输出收集 + terminate ----
+const spawnLog = []; // 记录每次 spawn 的 spec(argv/env/...), 供路由参数断言
 function fakeSubprocess() {
     return {
         spawn(spec) {
+            spawnLog.push(spec);
             const cp = spawn(spec.argv[0], spec.argv.slice(1), {
                 cwd: spec.cwd,
                 env: { ...process.env, ...(spec.env || {}) },
@@ -92,10 +94,14 @@ const jobsSvc = (() => {
 })();
 
 let capturedRoute = null;
+const fakeAgent = { id: 'session-under-test' };
 const ctx = {
     get: (name) => {
         if (name === 'subprocess') return fakeSubprocess();
         if (name === 'jobs') return jobsSvc;
+        // agents 注册表: sessionId → Agent, 供 shellStart 解析 job owner
+        if (name === 'agents')
+            return { get: (id) => (id === 'session-under-test' ? fakeAgent : undefined) };
         return undefined;
     },
     webServer: {
@@ -196,6 +202,45 @@ assert.ok(Array.isArray(st.body.changes), 'changes 应为数组');
 assert.ok(st.body.head === null || typeof st.body.head === 'string', 'head 应为 string|null');
 ok('status: 分支/变更/HEAD 过滤');
 
+// 5b. fetch: 在本地 file:// remote 上真跑 `git fetch --all --prune`(离线, 不碰网络),
+//     并断言 argv 与 GIT_TERMINAL_PROMPT=0(无 TTY 时不挂起等凭据)。
+{
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fge-fetch-'));
+    const remote = path.join(tmp, 'remote.git');
+    const work = path.join(tmp, 'work');
+    const quiet = { stdio: 'ignore' };
+    const ident = {
+        ...process.env,
+        GIT_AUTHOR_NAME: 't',
+        GIT_AUTHOR_EMAIL: 't@t',
+        GIT_COMMITTER_NAME: 't',
+        GIT_COMMITTER_EMAIL: 't@t',
+    };
+    execFileSync('git', ['init', '--bare', remote], quiet);
+    execFileSync('git', ['init', work], quiet);
+    execFileSync('git', ['-C', work, 'remote', 'add', 'origin', remote], quiet);
+    execFileSync('git', ['-C', work, 'commit', '--allow-empty', '-m', 'x'], {
+        stdio: 'ignore',
+        env: ident,
+    });
+
+    const fr = await callAt('POST', base('fetch'), { root: work, repoRoot: work });
+    assert.equal(fr.body.ok, true, '本地 remote fetch 应成功: ' + JSON.stringify(fr.body));
+    const rec = spawnLog.filter((s) => s.argv[1] === 'fetch').pop();
+    assert.ok(rec, 'fetch 应经 subprocess 执行 git fetch');
+    assert.deepEqual(rec.argv, ['git', 'fetch', '--all', '--prune']);
+    assert.equal(rec.env.GIT_TERMINAL_PROMPT, '0');
+    assert.equal(rec.graceMs, 20000);
+
+    // 缺 repoRoot → no-repo(不发子进程)
+    const noRepo = await callAt('POST', base('fetch'), { root: work });
+    assert.equal(noRepo.body.ok, false);
+    assert.equal(noRepo.body.error, 'no-repo');
+
+    fs.rmSync(tmp, { recursive: true, force: true });
+    ok('fetch: --all --prune + GIT_TERMINAL_PROMPT=0(本地 remote)');
+}
+
 // 6. diff: 取当前第一个变更动态校验(状态无关); 若工作区干净则跳过
 if (st.body.changes.length > 0) {
     const first = st.body.changes[0];
@@ -255,6 +300,21 @@ const trav = await callAt('POST', base('file'), { path: '../../outside.txt' });
 assert.equal(trav.body.ok, false);
 assert.equal(trav.body.error, 'outside-root');
 ok('防穿越: outside-root 拒绝');
+
+// 9b. open: 只读路由的路径校验(拒绝穿越/.git/不存在/非法 root —— 均在 spawn 之前返回)
+const openTrav = await callAt('POST', base('open'), { path: '../../outside.txt' });
+assert.equal(openTrav.body.ok, false);
+assert.equal(openTrav.body.error, 'invalid-path');
+const openDotGit = await callAt('POST', base('open'), { path: '.git' });
+assert.equal(openDotGit.body.ok, false);
+assert.equal(openDotGit.body.error, 'invalid-path');
+const openMissing = await callAt('POST', base('open'), { path: 'no-such-entry-xyz' });
+assert.equal(openMissing.body.ok, false);
+assert.equal(openMissing.body.error, 'not-found');
+const openBadRoot = await callAt('POST', base('open'), { root: 'relative/path', path: 'x' });
+assert.equal(openBadRoot.body.ok, false);
+assert.equal(openBadRoot.body.error, 'invalid-root');
+ok('open: 穿越/.git/不存在/非法 root 拒绝');
 
 // 10. 信任栅栏: 无 x-dsh-plugin 头 / 非回环 host / 非 POST
 const noHeader = await callAt('POST', base('info'), {}, { 'x-dsh-plugin': undefined });
@@ -489,6 +549,7 @@ ok('shellStart/shellStop: 非法命令(invalid-command)/非法 root(invalid-root
     const started = await callAt('POST', base('shellStart'), {
         root: CWD,
         command: 'echo fge-shell-ok',
+        sessionId: 'session-under-test',
     });
     assert.equal(started.body.ok, true);
     assert.match(started.body.job.id, /^shell-\d+$/);
@@ -501,6 +562,8 @@ ok('shellStart/shellStop: 非法命令(invalid-command)/非法 root(invalid-root
     assert.equal(rec.spec.kind, 'shell');
     assert.equal(rec.spec.label, 'echo fge-shell-ok');
     assert.equal(typeof rec.spec.run, 'function');
+    // sessionId 解析为 owner → 任务只属于发起会话(不再每个工作区都显示)
+    assert.equal(rec.spec.owner, fakeAgent);
 
     const fin = await drainUntil((a) => a.res.done && a.out.includes('fge-shell-ok'));
     assert.equal(fin.res.job.status, 'completed');
@@ -516,6 +579,8 @@ ok('shellStart/shellStop: 非法命令(invalid-command)/非法 root(invalid-root
 {
     const long = await callAt('POST', base('shellStart'), { root: CWD, command: 'sleep 2' });
     assert.equal(long.body.ok, true);
+    // 无 sessionId → 退化为无主任务(不阻断启动)
+    assert.equal(jobsSvc.started[jobsSvc.started.length - 1].spec.owner, undefined);
     const busy = await callAt('POST', base('shellStart'), { root: CWD, command: 'echo nope' });
     assert.equal(busy.body.ok, false);
     assert.equal(busy.body.error, 'busy');

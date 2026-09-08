@@ -29,9 +29,6 @@ window.__ModuleLoader__.load({
     exports.apply = function (ctx) {
       var slots = ctx.slots;
 
-      // 样式注入: 插件挂载即注入(幂等); 视图组件内还会再守一道
-      ensureStyles();
-
       // ---- 与 host 通信 ----
       // 诊断开关: URL 带 ?dbcdebug=1 时向控制台输出关键链路
       var DBG = /[?&]dbcdebug=1/.test(window.location.search);
@@ -135,18 +132,23 @@ window.__ModuleLoader__.load({
         'box-shadow:var(--dsw-shadow-lv2);overflow:hidden;transition:border-color .12s var(--ds-ease-in-out);}' +
         '.dbc-editor:focus-within{border-color:var(--dsw-alias-state-business-primary);}' +
         '.dbc-editor-scroll{position:relative;flex:1;min-height:0;}' +
-        '.dbc-hl,.dbc-ta{position:absolute;inset:0;margin:0;padding:10px 14px 12px;border:0;' +
-        'font-family:var(--ds-font-family-code);font-size:13px;line-height:22px;' +
+        '.dbc-hl,.dbc-ta{position:absolute;inset:0;width:100%;height:100%;margin:0;padding:10px 14px 12px;border:0;' +
+        'font-family:var(--ds-font-family-code);font-size:13px;line-height:22px;box-sizing:border-box;' +
         'white-space:pre-wrap;word-break:break-all;overflow-wrap:break-word;tab-size:2;}' +
         '.dbc-hl{pointer-events:none;overflow:hidden;color:var(--dsw-alias-label-primary);background:none;}' +
         '.dbc-ta{width:100%;height:100%;resize:none;background:none;outline:none;overflow:auto;' +
         'color:transparent;-webkit-text-fill-color:transparent;caret-color:var(--dsw-alias-state-business-primary);}' +
         '.dbc-ta::placeholder{color:var(--dsw-alias-label-caption);}' +
         '.dbc-ta::selection{background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 30%,transparent);}' +
-        // 语法着色: 选用在明暗两种底色上都可读的中等亮度值(壳层无语法代币)
-        '.dbc-hl .kw{color:#4176e6;font-weight:600;}' +
+        // 语法着色: 只用颜色, 不改 font-weight/font-style —— highlighter 是
+        // textarea 的透明 underlay, 任何字重/斜体变化都会让两种字体度量不一致,
+        // 导致选区/光标与可见文本错位(部分字体下尤其明显)。
+        '.dbc-hl .kw{color:#4176e6;}' +
         '.dbc-hl .str{color:#1f9e5f;}.dbc-hl .num{color:#c77700;}' +
-        '.dbc-hl .com{color:var(--dsw-alias-label-tertiary);font-style:italic;}' +
+        '.dbc-hl .com{color:var(--dsw-alias-label-tertiary);}' +
+        // 行尾空白可视化: 只上背景, 不改变空格/制表符的排版宽度
+        '.dbc-hl .dbc-ws{background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 12%,transparent);' +
+        'border-radius:2px;}' +
         '.dbc-editor-bar{flex:none;height:34px;display:flex;align-items:center;gap:8px;padding:0 6px;' +
         'border-top:1px solid var(--dsw-alias-border-l2-darkmode-thin);}' +
         '.dbc-hint{font:var(--dsw-font-xxs-12);color:var(--dsw-alias-label-caption);}' +
@@ -182,6 +184,9 @@ window.__ModuleLoader__.load({
         'body.dbc-on [data-composer-card]{display:none !important;}';
 
       var styleEl = null;
+      // 必须在 STYLE_CSS 赋值、styleEl 初始化之后调用: STYLE_CSS 声明在本函数
+      // 尾部, var 提升会让提前调用拿到 undefined, 结果注入一个空 <style>。
+      ensureStyles();
       function ensureStyles() {
         if (styleEl && styleEl.isConnected) return;
         styleEl = document.createElement('style');
@@ -332,7 +337,15 @@ window.__ModuleLoader__.load({
           push('', ch);
           i++;
         }
-        return out.join('');
+        // 行尾空白在 textarea 里占位、但在高亮层没有可见字形, 原生光标会像
+        // 「漂」在文本末尾之外。给行尾空格/制表符包一层极淡底色, 让光标位置
+        // 可见、可解释(仅改背景, 不改变字形宽度, 不影响对齐)。
+        return out.join('').replace(
+          /([ \t]+)((?:<\/span>)*)(?=\r?\n|$)/g,
+          function (m, spaces, closes) {
+            return '<span class="dbc-ws">' + spaces + '</span>' + closes;
+          },
+        );
       }
 
       // ---- 光标坐标(mirror 测量) ----
@@ -923,10 +936,126 @@ window.__ModuleLoader__.load({
           });
         }
 
+        // ---- 执行范围: 选区优先, 否则光标所在语句 ----
+        // 从 SQL 文本里取出光标所在的完整语句(单引号/双引号/-- 注释/块注释内不切分)。
+        function statementAtCursor(text, caret) {
+          if (typeof caret !== 'number' || caret < 0) return '';
+          var n = text.length;
+          var segs = []; // {start, end}, end = ';' 后一位 / 串尾
+          var cur = 0;
+          var i = 0;
+          var st = 'n'; // n normal, s single, d double, l lineComment, b blockComment
+          function flush(end) {
+            segs.push({ start: cur, end: end });
+            cur = end;
+          }
+          while (i < n) {
+            var ch = text[i];
+            var two = text.slice(i, i + 2);
+            if (st === 'n') {
+              if (two === '--') {
+                st = 'l';
+                i += 2;
+                continue;
+              }
+              if (two === '/*') {
+                st = 'b';
+                i += 2;
+                continue;
+              }
+              if (ch === "'") {
+                st = 's';
+                i++;
+                continue;
+              }
+              if (ch === '"') {
+                st = 'd';
+                i++;
+                continue;
+              }
+              if (ch === ';') {
+                flush(i + 1);
+                i++;
+                continue;
+              }
+              i++;
+              continue;
+            }
+            if (st === 's') {
+              if (ch === "'" && text[i + 1] === "'") i += 2;
+              else if (ch === "'") {
+                st = 'n';
+                i++;
+              } else i++;
+              continue;
+            }
+            if (st === 'd') {
+              if (ch === '"') {
+                st = 'n';
+                i++;
+              } else i++;
+              continue;
+            }
+            if (st === 'l') {
+              if (ch === '\n') {
+                st = 'n';
+                i++;
+              } else i++;
+              continue;
+            }
+            // blockComment
+            if (two === '*/') {
+              st = 'n';
+              i += 2;
+              continue;
+            }
+            i++;
+          }
+          flush(n);
+          // caret 归属段: start <= caret < end; 恰在 ';' 后(caret === seg.end)归下一段
+          var target = null;
+          for (var s = 0; s < segs.length; s++) {
+            if (segs[s].start <= caret && caret < segs[s].end) {
+              target = segs[s];
+              break;
+            }
+          }
+          if (target === null) target = segs[segs.length - 1];
+          var t = text.slice(target.start, target.end).trim();
+          if (t !== '') return t;
+          // 落在空白/注释段: 取最近的非空段
+          var idx = segs.indexOf(target);
+          for (var a = idx - 1; a >= 0; a--) {
+            var tt = text.slice(segs[a].start, segs[a].end).trim();
+            if (tt !== '') return tt;
+          }
+          for (var b2 = idx + 1; b2 < segs.length; b2++) {
+            var tb = text.slice(segs[b2].start, segs[b2].end).trim();
+            if (tb !== '') return tb;
+          }
+          return '';
+        }
+
         function runQuery() {
-          if (!sql.trim()) return;
+          // 执行目标: 有选区先执行选区, 否则执行光标所在语句(取 textarea 实时值,
+          // 不用受控 state —— state 落后最后一次按键一拍, 会把光标所在语句算错)。
+          var ta = taRef.current;
+          var live = ta ? ta.value : sql;
+          var caret =
+            ta && typeof ta.selectionStart === 'number' ? ta.selectionStart : null;
+          var selEnd =
+            ta && typeof ta.selectionEnd === 'number' ? ta.selectionEnd : null;
+          var target = null;
+          if (ta && caret !== null && selEnd !== null && caret !== selEnd) {
+            target = live.slice(caret, selEnd);
+          } else if (caret !== null) {
+            target = statementAtCursor(live, caret);
+          }
+          if (target === null) target = sql; // 兜底: 无 textarea(罕见)
+          target = target.trim();
+          if (!target) return;
           setResult({ pending: true });
-          api('query', { root: sessionCwd || '', sql: sql })
+          api('query', { root: sessionCwd || '', sql: target })
             .then(function (res) {
               if (!res || !res.ok) {
                 setResult({ err: (res && res.error) || '执行失败' });
@@ -1003,12 +1132,15 @@ window.__ModuleLoader__.load({
           var caret = ta.selectionStart;
           if (caret === null || typeof caret !== 'number' || cmp.ctxStart < 0) return;
           if (cmp.ctxStart > caret) return; // 防御: 锚点越界(理论不达)直接放弃
-          var next = live.slice(0, cmp.ctxStart) + label + live.slice(caret);
+          // 上屏位置必须在 closeCmp() 之前算好: closeCmp 会把 cmp.ctxStart 置 -1,
+          // 若在 rAF 里再读就成了「label.length - 1」—— 多行 SQL 里表现为光标跳回开头。
+          var start = cmp.ctxStart;
+          var pos = start + label.length;
+          var next = live.slice(0, start) + label + live.slice(caret);
           setSql(next);
           closeCmp();
           requestAnimationFrame(function () {
             if (taRef.current) {
-              var pos = cmp.ctxStart + label.length;
               taRef.current.focus();
               taRef.current.setSelectionRange(pos, pos);
             }
@@ -1075,6 +1207,88 @@ window.__ModuleLoader__.load({
             hlRef.current.scrollLeft = ta.scrollLeft;
           }
         }
+
+        // 两层逐像素对齐的硬保证。壳层 / 主题插件 / 浏览器扩展可能只改写 textarea
+        // 或只改写高亮层的字体度量(字号、字距、字体), 也可能因经典滚动条占位让输入层
+        // 比高亮层窄 —— 任一情况都会让可见文本与原生光标越差越远(表现为「光标追不上
+        // 行尾, 打字却出现在末尾」)。这里不跟任何外部 CSS 讲道理, 直接把输入层的实测
+        // 度量与内容宽度镜像到高亮层。
+        var MIRRORED_METRICS = [
+          'fontFamily',
+          'fontSize',
+          'lineHeight',
+          'letterSpacing',
+          'wordSpacing',
+          'fontFeatureSettings',
+          'fontKerning',
+          'fontVariant',
+          'fontStretch',
+          'textIndent',
+          'tabSize',
+          'direction',
+          'boxSizing',
+          'whiteSpace',
+          'wordBreak',
+          'overflowWrap',
+          'hyphens',
+          'paddingLeft',
+          'paddingTop',
+          'paddingBottom',
+        ];
+        function syncLayerMetrics() {
+          var ta = taRef.current;
+          var hl = hlRef.current;
+          if (!ta || !hl) return;
+          var cs = window.getComputedStyle(ta);
+          for (var i = 0; i < MIRRORED_METRICS.length; i++) {
+            var prop = MIRRORED_METRICS[i];
+            var value = cs[prop];
+            if (!value) continue; // 该浏览器不支持此属性: 跳过, 不写入空值
+            var css = prop.replace(/[A-Z]/g, function (ch) {
+              return '-' + ch.toLowerCase();
+            });
+            hl.style.setProperty(css, value, 'important');
+          }
+          // 滚动条占位补偿: 让高亮层的内容宽度等于输入层的内容宽度, 换行点才会一致
+          var gutter = ta.offsetWidth - ta.clientWidth;
+          hl.style.setProperty(
+            'padding-right',
+            parseFloat(cs.paddingRight) + gutter + 'px',
+            'important',
+          );
+        }
+
+        // 内容变化后重新对齐(滚动条可能随行数出现/消失)
+        React.useEffect(
+          function () {
+            syncLayerMetrics();
+          },
+          [sql],
+        );
+        // 尺寸变化后重新对齐(编辑器拉伸、侧栏开合、窗口缩放)
+        React.useEffect(function () {
+          syncLayerMetrics();
+          function onResize() {
+            syncLayerMetrics();
+          }
+          window.addEventListener('resize', onResize);
+          var ro = null;
+          var ta = taRef.current;
+          if (ta && typeof ResizeObserver !== 'undefined') {
+            ro = new ResizeObserver(function () {
+              syncLayerMetrics();
+            });
+            try {
+              ro.observe(ta, { box: 'content-box' });
+            } catch (e) {
+              ro.observe(ta);
+            }
+          }
+          return function () {
+            window.removeEventListener('resize', onResize);
+            if (ro) ro.disconnect();
+          };
+        }, []);
 
         // 激活标记: 全局 CSS 据 body.dbc-on 隐藏会话输入框; 离开视图即恢复
         React.useEffect(function () {
@@ -1356,11 +1570,22 @@ window.__ModuleLoader__.load({
                 React.createElement(
                   'div',
                   { className: 'dbc-editor-scroll' },
-                  React.createElement('pre', {
+                  // underlay 必须与 textarea 逐像素同度量, 所以刻意用 <div> 而非
+                  // <pre>: 壳层/主题插件会用 `#root pre{font-size:Npx!important;
+                  // line-height:1.55}` 全局改写代码块字号(stylevault 的代码块字号层
+                  // 就是如此), 一旦命中 underlay 就会让两层字号 14px/13px 不一致,
+                  // 可见文本比原生光标每行多出约 7.7% 宽度 —— 表现为「光标永远追不上
+                  // 行尾, 打字却出现在末尾」。div 不落入任何代码块选择器。
+                  React.createElement('div', {
                     ref: hlRef,
                     className: 'dbc-hl',
                     'aria-hidden': 'true',
-                    dangerouslySetInnerHTML: { __html: highlightSqlHtml(sql) + '\n' },
+                    // 块级 pre-wrap 会吞掉单个结尾换行, 而 textarea 会为它保留一个空末行:
+                    // SQL 以换行结尾时给 underlay 补一个 '\n', 两层行数/scrollHeight
+                    // 才会一致, 滚到底时光标才不会与可见文本差一行(表现为偏前)。
+                    dangerouslySetInnerHTML: {
+                      __html: highlightSqlHtml(sql) + (sql.slice(-1) === '\n' ? '\n' : ''),
+                    },
                   }),
                   React.createElement('textarea', {
                     ref: taRef,

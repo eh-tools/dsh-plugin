@@ -32,7 +32,7 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer
 - **头部路径**: 左树头部显示当前根路径, **中间省略**(保头保尾, `…`), 点击路径复制完整路径到剪贴板(复制后短暂显示「✓ 已复制」)。
 - **图钉(无色线条版 📌)**: **每侧独立**, 默认**固定**(展开并锁定, 刷新 / 首次加载仍停留在固定展开态)。**单击**固定/解除**本侧**——固定时本侧展开并锁定, 解除时本侧连同其悬浮栏一起收起为细条; **双击**同时**固定 / 解除两侧**(解除时两侧一起收起); 固定态随 cwd 缓存(按仓库根)跨会话 / 刷新保留。
 - **悬浮栏联动**: 点文件/diff 弹出的悬浮栏与**源侧栏联动** —— 鼠标移到悬浮栏时侧栏保持展开(悬浮栏豁免收起); 移出整块区域(侧栏+悬浮栏)延迟后侧栏收起并**一并关闭该悬浮栏**, 不留下「侧栏已收、悬浮栏还在」的孤儿状态。
-- **刷新 ⟳**: 重读 `info`(根 / 仓库根 / 当前分支) + 重跑 git status, 并作废三棵树已加载的缓存。
+- **刷新 ⟳**: **先 `git fetch --all --prune`** 更新远程跟踪引用(非交互 `GIT_TERMINAL_PROMPT=0` + 20s 宽限; 失败静默、不阻断后续), 再重读 `info`(根 / 仓库根 / 当前分支) + 重跑 git status, 并作废三棵树已加载的缓存; fetch 期间 ⟳ 置灰并旋转。**自动刷新(turn 结束)不 fetch** —— 避免每个 turn 都打一次网络。
 - **外观**: 面板背景 = 对话消息列(`.Md3f7G_column` 的 `--dsw-alias-bg-base`), 与聊天区域同底色; 头部图标(图钉 / 刷新 / 收起 / 关闭 / 分支)全部用单色线稿 SVG 对齐; 面板内滚动条细且半透明(悬停才加深), 拖拽柄只在悬停时显示一条细线。
 
 ### 左侧文件树(三区, 独立滚动)
@@ -47,16 +47,18 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer
 - 点**文件** → 行高亮 + **内容悬浮面板向右浮出**(可越过对话区, 文本 + 行号 + **逐行语法高亮**: 关键字 / 类型·类名 / 函数调用 / 字符串 / 注释 / 数字, 覆盖 JS/TS/Python/Rust/Go/Java/C 等常见语言; >1 MiB 或二进制只显示提示、不预览)。
 - 点文件同时触发**联动**: 右侧 git 树若存在该文件 diff, 滚动定位并闪现高亮; **不自动打开 diff**; 无 diff 则无操作。
 - 目录单击 = 展开 / 折叠切换。
+- **行操作按钮**(悬停出现, 目录/文件行一致, 共三件): `⧉` **复制绝对路径**(成功后该钮就地变绿 `✓`, 1.2s 还原)、**文件夹图标**在**系统资源管理器中打开**(目录打开自身置前 / 文件打开所在目录, Windows `/select,` 与 macOS `-R` 顺带选中该文件)、`⋮` **更多** —— 原来平铺的 `+ / ✎ / ✕` 收进下拉(新建仅目录行; 删除为危险色)。`⋮` 下拉是固定定位小面板, 右缘对齐按钮、上缘与行底重叠 2px(鼠标从按钮移到菜单不会经过行按钮闪没的空档), 窗口底部放不下自动改为向上开; 点面板外 / Esc / 滚动 / 窗口缩放收起, 点菜单不触发行展开折叠。
 
 #### 文件编辑与树内写操作
 
 ![文件悬浮预览 + 行内编辑](../../png/文件详情.png)
 
 - **编辑**: 内容悬浮面板头部的「编辑」把高亮预览切换为**纯 textarea**(只读视图保持原样, 不引入编辑器依赖)。**⌘S / Ctrl+S** 保存, **Esc** 退出编辑; 未保存时标题带 `•` 点并给出确认(关闭 / 退出编辑均会拦截询问); Tab 插入两个空格。
+- **复制 / 选区**: 头部「复制」一键复制当前内容(编辑态复制未保存草稿, 只读态复制磁盘正文), 成功后按钮短暂显示 `✓ 已复制`; 面板内 **Ctrl/⌘+A 只选中本面板正文**(修复原先会选中整页), 编辑态焦点在 textarea 时放行原生全选。
 - **保存的并发保护**: 读取时返回 `mtimeMs`, 保存时回传做**乐观校验** —— 磁盘已被外部改动(如 agent 同时在写)时**拒绝保存并提示冲突**, 可「重新加载磁盘版」或「仍要覆盖写入」(Shift+⌘S 亦可强制)。内容上限 1 MiB 与预览对称, 超出时保存按钮禁用并提示。
 - **保存后自动刷新右侧 git 状态**(变更列表 / 徽标随之更新); 树内结构变化(新建 / 重命名 / 删除)则**局部重载受影响目录**, 不打断展开状态。
-- **新建**: 每分区头部 `+` 在当前分区根新建; 目录行的悬停 `+` 在其内新建(自动展开)。名称**以 `/` 结尾 = 建目录**, 可写 `a/b/c.ts` 嵌套(父目录自动补建); 文件名重名报「同名条目已存在」。
-- **重命名 / 删除**: 行悬停出现 `✎` / `✕`; 重命名行内输入、Enter 确认; 删除先经确认框(**目录 = 连同全部内容递归删除, 不可恢复**), 非空目录在 host 侧同样要求显式 `recursive` 才放行。
+- **新建**: 每分区头部 `+` 在当前分区根新建; 目录行的 `⋮ → + 新建` 在其内新建(自动展开)。名称**以 `/` 结尾 = 建目录**, 可写 `a/b/c.ts` 嵌套(父目录自动补建); 文件名重名报「同名条目已存在」。
+- **重命名 / 删除**: 行悬停 `⋮ → ✎ 重命名 / ✕ 删除`(删除为危险色); 重命名行内输入、Enter 确认; 删除先经确认框(**目录 = 连同全部内容递归删除, 不可恢复**), 非空目录在 host 侧同样要求显式 `recursive` 才放行。
 - 已打开的内容面板**跟随重命名**(含祖先目录改名)并**在删除时自动关闭**; 所有写操作拒绝触及 `.git` 段(路径逐段校验)。
 
 #### 文件搜索(name search)
@@ -82,8 +84,7 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer
 - **不消失**: 执行后命令文本保留在输入框(不清空); ↑/↓ 在历史间导航(相邻去重, 上限 100 条),
   历史随仓库根持久化(`fge-cache-v1` 的 `shellHistory` 字段)。Esc = 输入框失焦(stopPropagation, 不波及常驻 Esc 监听)。
   **输入框右缘内按需显示运行状态点**(绿色 = 运行中/启动中, 红色 = 已停止且命令在框内; 空闲或输入框为空时不显示), pointer-events 穿透不挡输入; 修改/清空命令即作废上一任务(状态点消失, 输出窗回到一行); 刷新/切工作区认领到终态任务时命令文本回填输入框。
-- **挂后台任务**: 启动即注册为 DSH 后台任务(kind `shell`, label = 命令原文), 出现在各会话头部的任务弹层并计入徽标;
-  无主任务 —— 完成**不通知模型**。GUI 任务列表只读, 故 ✕ 是人停止任务的唯一入口
+- **挂后台任务**: 启动即注册为 DSH 后台任务(kind `shell`, label = 命令原文), **owner = 发起它的会话**(客户端把 `sessionId` 随请求下发, 宿主经 `ctx.agents` 解析), 故只在**该会话**头部的任务弹层出现并计入徽标 —— 其他工作区 / 会话不再显示它; 完成**不通知模型**。GUI 任务列表只读, 故 ✕ 是人停止任务的唯一入口
   (整棵进程树 TERM → 3s → KILL)。
 - **单槽(按工作区)**: 每个工作区各自至多一条 running/stopping(宿主侧按 root 记账, 跨刷新 / 多标签成立;
   不同工作区可并行各跑各的); 切工作区只显示本区任务 —— 刷新后自动认领本区仍在跑的任务(running 态 + ✕ 照常可停);
@@ -95,6 +96,7 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer
 - 顶部: 当前分支(前有竖着 git 分支 SVG 图标; 实时读 `git branch --show-current`), 点击从**面板左侧**弹出**所有分支下拉**(本地 / 远程分组, 纯展示清单: 行不可点、无 hover 反色, 仅以「当前 / 查看中」标记状态, 不支持切换)。**单击下拉外任意位置即收起**, 不必再点分支名。下拉与 diff / 提交历史悬浮栏**互斥**(开一关一, 两者同占面板左侧留白带, 避免互相遮挡)。
 - 下方: 工作区相对 **HEAD** 的变更列表(已暂存 + 未暂存 + 未跟踪), 平铺 + 状态徽标(`M`/`A`/`D`/`R`/`U`), 按路径排序。
 - 点变更文件 → **diff 悬浮面板向左浮出**(unified, 行级 +/− 着色, 增删行内容同样做**代码语法高亮**; 未跟踪文件显示内容; rename 用 `-M` 双路径 diff; 二进制显示提示)。再点同一项或点 ✕ 关闭。
+- diff 面板头部「**复制**」一键复制 diff 原文(untracked 为文件内容; 二进制/超限置灰), 成功后短暂显示 `✓ 已复制`; 面板内 **Ctrl/⌘+A 只选中 diff 正文**(与文件内容面板同一套「最近交互浮层」作用域)。
 - 非 git 目录: 右侧树显示「(工作区干净)」占位, 分支区为空, 历史按钮置灰。
 
 #### 提交历史(commit history)
@@ -107,7 +109,7 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer
 
 - 头部**时钟按钮**向左浮出历史面板, 与 diff 浮层**互斥共享锚位**(开一关一)。
 - 跟随「**查看分支**」= 历史面板头部按钮最后点选的分支(默认当前分支; 分支被删时回退当前分支)。右树顶部的分支下拉不含切换入口。
-- 面板头部的**分支名按钮**可直接切换查看分支: 点击弹出同款本地 / 远程分组菜单(标记「当前 / 查看中」), 点选即按该分支重拉列表 —— 这是「查看分支」的唯一入口; 只读, 不切换工作区分支。
+- 面板头部的**分支名按钮**可直接切换查看分支: 点击弹出同款本地 / 远程分组菜单(标记「当前 / 查看中」), 点选即按该分支重拉列表 —— 这是「查看分支」的唯一入口; 只读, 不切换工作区分支。**点「当前」分支即回到跟随当前分支**(默认态, 不再卡在之前选的分支)。
 - 列表每页 50 条, 滚动到底自动追加(`--skip` 分页); 条目 = subject + 作者 · 相对时间 · 短 hash; **条目间有分割线**, 详情里文件行之间同样有分割线。
 - 点条目**仍在当前面板**看详情: 完整提交说明 + 按文件 ±行数列表(numstat); **merge 提交只显示说明、不展示 diff**(combined diff 无阅读价值)。点某条文件记录,在历史面板**左侧单开该文件的 diff 悬浮栏**(与变更列表点开 diff 同一套交互、复用同一面板; 再点同一行或 ✕ 关闭), 历史列表与详情保持不动。收起右栏 / Esc / 切换工作区会一并关闭。
 - agent turn 结束的自动刷新同样覆盖历史: 面板可见且 HEAD 变了才整页重拉已加载页数, 尽量保留滚动位置; Esc / 收起右栏 / 切换工作区都会关闭历史浮层。
@@ -126,6 +128,7 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer
 | `POST /fge/api/info`        | `{root?}`                                  | `{cwd(=root), repoRoot, branch, head}`                             |
 | `POST /fge/api/tree`        | `{root?, path, mode, reveal}`              | 目录三区条目 `[{name, rel, type, dot, ignored, subIgnored}]`       |
 | `POST /fge/api/status`      | `{root?, repoRoot}`                        | `{current, head, branches[], changes[]}`                           |
+| `POST /fge/api/fetch`       | `{root?, repoRoot}`                        | `{ok}`; 手动 ⟳ 的 `git fetch --all --prune`(失败回 fetch-failed)   |
 | `POST /fge/api/diff`        | `{root?, repoRoot, path, status, from}`    | `{kind: 'diff'\|'untracked', text, ...}`                           |
 | `POST /fge/api/file`        | `{root?, path}`                            | `{text, binary, truncated, size, mtimeMs}`(mtimeMs 供保存校验)     |
 | `POST /fge/api/search`      | `{root?, query}`                           | `{matches[{rel, type, zone, nameHit}], truncated}`                 |
@@ -135,6 +138,7 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer
 | `POST /fge/api/create`      | `{root?, path, kind: 'file'\|'dir'}`       | `{kind, size, mtimeMs}`; 父目录自动补建, 同名 exists 拒绝          |
 | `POST /fge/api/rename`      | `{root?, path, newName}`                   | `{}`; 同目录重命名, 目标已存在 exists / 非法名 invalid-name 拒绝   |
 | `POST /fge/api/remove`      | `{root?, path, recursive?}`                | `{}`; 目录需显式 recursive=true(否则非空 not-empty 拒绝)           |
+| `POST /fge/api/open`        | `{root?, path}`                            | `{ok}`; 在系统资源管理器中打开(目录开自身 / 文件开所在目录)        |
 | `POST /fge/api/shellStart`  | `{root?, command}`                         | `{job{id, label, status, ...}}`; busy / invalid-command 等拒绝     |
 | `POST /fge/api/shellState`  | `{root?}`                                  | `{job \| null}`(本工作区槽, GUI 刷新恢复用)                        |
 | `POST /fge/api/shellOutput` | `{root?, outFrom?, errFrom?}`              | `{job, done, out{text,next,base,lossy}, err{...}}`(绝对字符位增量) |
@@ -169,6 +173,7 @@ git 一律经 `subprocess` 服务执行(argv 数组, 无 shell)。shell 行是�
 node tests/git.test.mjs    # 纯函数层单测(status 解析 / 三区划分 / 防穿越 / diff 参数)
 node tests/shell.test.mjs  # shell 行纯函数层单测(解释器解析 / 历史 / 尾部窗口数学)
 node tests/edit.test.mjs   # 写类接口单测(save 并发冲突 / create / rename / remove, 临时目录)
+node tests/open.test.mjs   # 「打开文件夹」argv 映射单测(win/mac/linux × 目录/文件)
 node tests/verify.mjs      # host 集成冒烟(真实 git, 需在仓库内运行)
 eslint .                   # 仓库统一 lint(client bundle 按惯例忽略)
 ```

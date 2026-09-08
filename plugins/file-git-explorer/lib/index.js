@@ -11,6 +11,8 @@
  *   POST /fge/api/info    → { root? } → { cwd(root), repoRoot, currentBranch }
  *   POST /fge/api/tree    → { root?, path, mode, reveal } → 目录三区分组条目
  *   POST /fge/api/status  → { root?, repoRoot } → 分支列表 + 工作区变更列表
+ *   POST /fge/api/fetch   → { root?, repoRoot } → 手动 ⟳ 的 `git fetch --all --prune`
+ *       (非交互 GIT_TERMINAL_PROMPT=0 + 20s 宽限; 失败不致命, 只回错误码)
  *   POST /fge/api/diff    → { repoRoot, path, status, from } → 单文件 diff
  *   POST /fge/api/file    → { root?, path } → 文件内容预览(≤1MiB, NUL 探测)
  *   POST /fge/api/search  → { root?, query } → 按名搜索命中项(三区徽标, 截断上限)
@@ -23,6 +25,8 @@
  *   POST /fge/api/rename  → { root?, path, newName } → 同目录重命名(目标存在即拒绝)
  *   POST /fge/api/remove  → { root?, path, recursive? } → 删除文件/符号链接/目录
  *       目录必须显式 recursive=true 才整体删除; 所有写类接口拒绝触及 .git 段。
+ *   POST /fge/api/open    → { root?, path } → 在系统资源管理器中打开(目录开自身,
+ *       文件开所在目录; win/mac 顺带选中该文件)。只读, 路径同款逐段白校验。
  *   POST /fge/api/shellStart  → { root?, command } → 该工作区启动后台命令(挂 ctx.jobs, kind 'shell')
  *   POST /fge/api/shellState  → { root? } → 该工作区槽内任务快照(GUI 刷新恢复用)
  *   POST /fge/api/shellOutput → { root?, outFrom?, errFrom? } → 尾部输出增量(绝对字符位切片)
@@ -66,6 +70,7 @@ import {
   validShellCommand,
   SHELL_STREAM_CAP_CHARS,
 } from './shell.js';
+import { openTargetArgv } from './open.js';
 
 export const name = 'dsh-file-git-explorer';
 
@@ -152,12 +157,13 @@ export function apply(ctx) {
     const handle = subprocess.spawn({
       argv: ['git', ...args],
       cwd: opts.cwd ?? CWD,
+      env: opts.env, // undefined = 继承(子进程服务把显式 env 合并在清洗后的父环境之上)
       stdio: {
         stdin: opts.input !== undefined ? 'pipe' : 'ignore',
         stdout: { maxBytes: opts.maxBytes ?? 16 * 1024 * 1024 },
         stderr: { maxBytes: 2 * 1024 * 1024 },
       },
-      graceMs: 15000,
+      graceMs: opts.graceMs ?? 15000,
     });
     if (opts.input !== undefined && handle.stdin !== undefined) {
       try {
@@ -397,6 +403,32 @@ export function apply(ctx) {
     const current = cur.exitCode === 0 ? cur.stdout.trim() : null;
     const head = await headOf(absRoot);
     return { ok: true, current, head, branches, changes };
+  }
+
+  /**
+   * 手动 ⟳ 的 fetch: 更新远程跟踪引用(`--all --prune`)。
+   *
+   * 非交互: GIT_TERMINAL_PROMPT=0 —— 无 TTY 时凭据提示会让子进程挂起, 直接失败
+   * 更好; 20s 宽限覆盖慢网络, 超时即按 fetch-failed 返回。失败不致命: 客户端仍
+   * 重读本地 status, 只是远程分支列表停在旧值。
+   */
+  async function handleFetch(body) {
+    const rr = absRepoRootOf(body);
+    if (rr.error) return { ok: false, error: rr.error };
+    const r = await runGit(['fetch', '--all', '--prune'], {
+      cwd: rr.dir,
+      env: { GIT_TERMINAL_PROMPT: '0' },
+      graceMs: 20000,
+      maxBytes: 4 * 1024 * 1024,
+    });
+    if (r.exitCode !== 0) {
+      return {
+        ok: false,
+        error: 'fetch-failed',
+        detail: (r.stderr || r.stdout).trim().slice(0, 500),
+      };
+    }
+    return { ok: true };
   }
 
   /**
@@ -650,6 +682,48 @@ export function apply(ctx) {
   }
 
   /**
+   * 在系统资源管理器中打开目标: 目录打开自身(窗口置前), 文件打开其所在目录
+   * (Windows /select,、macOS -R 顺带选中该文件)。只读操作, 路径与写类接口同款
+   * 逐段白校验 + resolveWithin(拒绝 .git 段与穿越)。
+   *
+   * 注: Windows 的 explorer.exe 即便成功也常返回退出码 1, 故非零退出不算失败 ——
+   * 只有 spawn 抛错才报 open-failed。
+   */
+  async function handleOpen(body) {
+    const base = baseOf(body);
+    if (base === null) return { ok: false, error: 'invalid-root' };
+    const segs = splitEditRel(typeof body.path === 'string' ? body.path : '');
+    if (segs === null) return { ok: false, error: 'invalid-path' };
+    const abs = resolveWithin(base, segs.join('/'));
+    if (abs === null) return { ok: false, error: 'invalid-path' };
+    const st = await lstatOrNull(abs);
+    if (st === null) return { ok: false, error: 'not-found' };
+    const subprocess = ctx.get('subprocess');
+    if (subprocess === undefined) return { ok: false, error: 'subprocess-unavailable' };
+    let handle;
+    try {
+      handle = subprocess.spawn({
+        argv: openTargetArgv(process.platform, abs, st.isDirectory()),
+        cwd: base,
+        stdio: {
+          stdin: 'ignore',
+          stdout: { maxBytes: 4096 },
+          stderr: { maxBytes: 4096 },
+        },
+        graceMs: 5000,
+      });
+    } catch (err) {
+      return {
+        ok: false,
+        error: 'open-failed',
+        detail: String((err && err.message) || err || 'open failed').slice(0, 200),
+      };
+    }
+    await handle.done.catch(() => {}); // 退出码不可信(explorer 常返 1), 只等它结束
+    return { ok: true };
+  }
+
+  /**
    * 文件搜索(按名/相对路径, 大小写不敏感子串): 三区覆盖 + 截断上限。
    * git 仓库: `ls-files -c -o --exclude-standard`(可见+隐藏)与
    * `ls-files -o -i --exclude-standard`(忽略)各扫一遍; 目录命中项由文件路径
@@ -805,6 +879,29 @@ export function apply(ctx) {
   }
 
   /**
+   * 把请求携带的会话 id 解析成 Agent, 作为后台任务的 owner。
+   *
+   * 不传 owner 时 jobs 建的是「无主任务」——按 JobRegistry 契约, 无主任务对
+   * **每个** caller 都可见(每个会话的后台任务列表都会列出它), 这正是
+   * 「shell 执行后多个工作区都显示后台任务」的根因。带上 owner 后任务只属于
+   * 发起它的会话, 其他会话/工作区的任务列表不再显示它。
+   *
+   * 解析不到(缺 sessionId / agents 服务缺失 / 会话已销毁)时返回 undefined,
+   * 退化为原来的无主行为, 不阻断启动。
+   */
+  function ownerAgentOf(body) {
+    const sid = typeof body.sessionId === 'string' && body.sessionId !== '' ? body.sessionId : null;
+    if (sid === null) return undefined;
+    const agents = ctx.get('agents');
+    if (agents === undefined || typeof agents.get !== 'function') return undefined;
+    try {
+      return agents.get(sid) ?? undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
    * 单槽记账: 每个工作区(cwd)各自至多一条 running/stopping 任务(宿主侧记账,
    * 跨 GUI 刷新/多开成立; 不同工作区互不可见、可并行)。任务终结后记录保留
    * (shellState/shellOutput 仍可查), 直到该工作区下一次 start 覆盖;
@@ -928,6 +1025,7 @@ export function apply(ctx) {
       const jobId = jobs.start({
         kind: 'shell',
         label: cmd,
+        owner: ownerAgentOf(body),
         run: () => ({
           cancel: () => {
             if (slot.status === 'running') slot.status = 'stopping';
@@ -1025,6 +1123,7 @@ export function apply(ctx) {
     info: handleInfo,
     tree: handleTree,
     status: handleStatus,
+    fetch: handleFetch,
     diff: handleDiff,
     file: handleFile,
     search: handleSearch,
@@ -1034,6 +1133,7 @@ export function apply(ctx) {
     create: handleCreate,
     rename: handleRename,
     remove: handleRemove,
+    open: handleOpen,
     shellStart: handleShellStart,
     shellState: handleShellState,
     shellOutput: handleShellOutput,

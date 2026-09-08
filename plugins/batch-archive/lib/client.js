@@ -84,7 +84,9 @@ window.__ModuleLoader__.load({
         '.baCell.baRail .baAction{width:36px;height:36px;border-radius:50%;justify-content:center;gap:0;margin:0;padding:0}' +
         // 浮层 —— 复刻官方设置浮层(VOzbGW overlay/mask/panel)
         '.baOverlay{z-index:1000;justify-content:center;align-items:center;display:flex;position:fixed;inset:0}' +
-        '.baMask{background:var(--dsw-alias-bg-mask-1);backdrop-filter:var(--dsw-mask-blur);position:absolute;inset:0}' +
+        // 半透明遮罩去掉 backdrop-filter 高斯模糊: 全屏毛玻璃会让列表每滚一帧都对整个
+        // 视口(底下是完整聊天界面)重算一次模糊。保留半透明遮罩即可。
+        '.baMask{background:var(--dsw-alias-bg-mask-1);position:absolute;inset:0}' +
         '.baPanel{z-index:1;background:var(--dsw-alias-bg-layer-2);width:640px;max-width:calc(100vw - 48px);max-height:min(680px,calc(100vh - 48px));box-shadow:var(--dsw-shadow-lv3);--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2);border-radius:24px;display:flex;flex-direction:column;position:relative;overflow:hidden;font-size:14px;line-height:22px;color:var(--dsw-alias-label-primary)}' +
         '.baHeader{box-sizing:border-box;flex:none;display:flex;align-items:center;gap:10px;height:56px;padding:16px 14px 12px 14px;border-bottom:1px solid var(--dsw-alias-border-l1)}' +
         // 标题: 图标(跟随主题色) + 加粗 18px 文本, 让"批量归档"有功能标题的分量
@@ -230,9 +232,74 @@ window.__ModuleLoader__.load({
         );
       }
 
+      // ---- 行 / 分组头: React.memo + 原始值 props + 稳定回调 ----
+      // 会话 store 每次 flush 都从零重建 byId(新引用), 面板必然重渲染; 把行与分组头
+      // 提成 memo 组件后, 只有自身原始值真的变了的行才重渲染, 不再全量重排整列表。
+      var Row = React.memo(function Row(props) {
+        return React.createElement(
+          'label',
+          { className: 'baRow' },
+          React.createElement(Checkbox, {
+            checked: props.checked,
+            disabled: props.disabled,
+            onChange: function () {
+              props.onToggle(props.id);
+            },
+            'aria-label': props.title,
+          }),
+          React.createElement('span', { className: 'baRowTitle' }, props.title),
+          React.createElement(
+            'span',
+            { className: 'baRowMeta' },
+            props.running
+              ? React.createElement('span', { className: 'baDot', title: '运行中' })
+              : null,
+            React.createElement('span', null, props.time),
+          ),
+        );
+      });
+
+      var GroupHead = React.memo(function GroupHead(props) {
+        return React.createElement(
+          'div',
+          { className: 'baGroupHead' },
+          React.createElement('span', { className: 'baGroupDot' }),
+          React.createElement(
+            'button',
+            {
+              type: 'button',
+              className: 'baGroupTitle' + (props.allSelected ? ' baGroupAll' : ''),
+              onClick: function () {
+                props.onToggleGroup(props.groupKey);
+              },
+              'aria-label': '全选' + props.title,
+              title: '点击全选/取消该分组',
+            },
+            [
+              props.allSelected
+                ? React.createElement(IconCheckOutline14, { key: 'ck', className: 'baGroupCheck' })
+                : null,
+              React.createElement(
+                'span',
+                { key: 'tx', className: 'baGroupTitleText' },
+                props.title,
+              ),
+            ],
+          ),
+          React.createElement('span', { className: 'baGroupCount' }, props.count + ' 个'),
+        );
+      });
+
       // ---- 批量归档面板(复刻官方设置浮层) ----
+      // 闸门: 关闭时只保留「开合状态」这一个轻订阅, 主体不挂载 —— 关闭态零会话/工作区
+      // 订阅、零渲染; 打开即挂载主体(勾选/阶段等状态天然重置)。
       function BatchArchivePanel(props) {
         var openNow = usePanelOpen();
+        if (!openNow) return null;
+        return React.createElement(BatchArchivePanelBody, props);
+      }
+
+      function BatchArchivePanelBody(props) {
         var selectedState = React.useState({});
         var selected = selectedState[0];
         var setSelected = selectedState[1];
@@ -242,22 +309,75 @@ window.__ModuleLoader__.load({
         var messageState = React.useState('');
         var message = messageState[0];
         var setMessage = messageState[1];
+        var progressState = React.useState(null); // {done, total, failed} —— 归档进行中
+        var progress = progressState[0];
+        var setProgress = progressState[1];
+        var busy = phase === 'busy';
 
-        React.useEffect(
-          function () {
-            if (openNow) {
-              setSelected({});
-              setPhase('idle');
-              setMessage('');
-            }
+        // 稳定回调(必须与其它 hooks 同序, 故放在所有早退之前): 行/分组头是 React.memo
+        // 组件, 回调身份必须跨会话 flush 不变, 否则每次重渲染都给所有行换新 props、memo
+        // 失效。phase / groups 经 ref 读取, 避免把它们塞进依赖数组。
+        var phaseRef = React.useRef(phase);
+        phaseRef.current = phase;
+        var groupsRef = React.useRef([]);
+        var touch = React.useCallback(function () {
+          if (phaseRef.current !== 'busy') {
+            setPhase('idle');
+            setMessage('');
+          }
+        }, []);
+        var onToggle = React.useCallback(
+          function (id) {
+            touch();
+            setSelected(function (prev) {
+              var next = {};
+              for (var k in prev) {
+                if (Object.prototype.hasOwnProperty.call(prev, k)) next[k] = prev[k];
+              }
+              if (next[id]) delete next[id];
+              else next[id] = true;
+              return next;
+            });
           },
-          [openNow],
+          [touch],
+        );
+        var onToggleGroup = React.useCallback(
+          function (groupKey) {
+            touch();
+            var arr = groupsRef.current;
+            var g = null;
+            for (var i = 0; i < arr.length; i++) {
+              if (arr[i].key === groupKey) {
+                g = arr[i];
+                break;
+              }
+            }
+            if (g === null) return;
+            setSelected(function (prev) {
+              var next = {};
+              for (var k in prev) {
+                if (Object.prototype.hasOwnProperty.call(prev, k)) next[k] = prev[k];
+              }
+              var all = true;
+              for (var j = 0; j < g.sessions.length; j++) {
+                if (!prev[g.sessions[j]]) {
+                  all = false;
+                  break;
+                }
+              }
+              for (var m = 0; m < g.sessions.length; m++) {
+                if (all) delete next[g.sessions[m]];
+                else next[g.sessions[m]] = true;
+              }
+              return next;
+            });
+          },
+          [touch],
         );
 
-        // ESC 关闭面板(归档进行中不响应)
+        // ESC 关闭面板(归档进行中不响应); 主体只在打开时挂载, 无需再判 openNow
         React.useEffect(
           function () {
-            if (!openNow) return;
             function onKey(e) {
               if (e.key === 'Escape' && phase !== 'busy') {
                 store.setOpen(false);
@@ -268,7 +388,7 @@ window.__ModuleLoader__.load({
               window.removeEventListener('keydown', onKey);
             };
           },
-          [openNow, phase],
+          [phase],
         );
 
         var useSessions = props.useSessions;
@@ -293,8 +413,6 @@ window.__ModuleLoader__.load({
               return s.ids;
             })
           : undefined;
-
-        if (!openNow) return null;
 
         function renderShell(content) {
           return React.createElement(
@@ -391,6 +509,7 @@ window.__ModuleLoader__.load({
             return (byId[b].updatedAt || 0) - (byId[a].updatedAt || 0);
           });
         }
+        groupsRef.current = groups; // 供稳定的 onToggleGroup 读取最新分组
 
         var allIds = [];
         for (var g2 = 0; g2 < groups.length; g2++) {
@@ -402,30 +521,11 @@ window.__ModuleLoader__.load({
           if (selected[allIds[sc]]) selectedCount++;
         }
         var allSelected = allIds.length > 0 && selectedCount === allIds.length;
-        var busy = phase === 'busy';
         var archivedCount = 0;
         for (var ak in archived) {
           if (Object.prototype.hasOwnProperty.call(archived, ak)) archivedCount++;
         }
 
-        function touch() {
-          if (phase !== 'busy') {
-            setPhase('idle');
-            setMessage('');
-          }
-        }
-        function toggle(id) {
-          touch();
-          setSelected(function (prev) {
-            var next = {};
-            for (var k in prev) {
-              if (Object.prototype.hasOwnProperty.call(prev, k)) next[k] = prev[k];
-            }
-            if (next[id]) delete next[id];
-            else next[id] = true;
-            return next;
-          });
-        }
         function toggleAll() {
           touch();
           if (allSelected) {
@@ -443,49 +543,56 @@ window.__ModuleLoader__.load({
           }
           return group.sessions.length > 0 && n === group.sessions.length;
         }
-        function toggleGroup(group) {
-          touch();
-          var all = groupAllSelected(group);
-          setSelected(function (prev) {
-            var next = {};
-            for (var k in prev) {
-              if (Object.prototype.hasOwnProperty.call(prev, k)) next[k] = prev[k];
-            }
-            for (var i = 0; i < group.sessions.length; i++) {
-              if (all) delete next[group.sessions[i]];
-              else next[group.sessions[i]] = true;
-            }
-            return next;
-          });
-        }
+        // 8 路并发归档(宿主侧本就串行落盘, 安全): 完成数/失败数实时进 footer。
         function runArchive() {
           var ids = [];
           for (var i = 0; i < allIds.length; i++) {
             if (selected[allIds[i]]) ids.push(allIds[i]);
           }
           if (ids.length === 0 || busy) return;
+          var total = ids.length;
           setPhase('busy');
           setMessage('');
-          (function () {
-            var chain = Promise.resolve();
-            for (var i = 0; i < ids.length; i++) {
-              (function (id) {
-                chain = chain.then(function () {
-                  return workspaces.archiveSession(id);
-                });
-              })(ids[i]);
+          setProgress({ done: 0, total: total, failed: 0 });
+
+          var idx = 0;
+          var done = 0;
+          var failed = 0;
+          var failedIds = {};
+          function worker() {
+            if (idx >= ids.length) return Promise.resolve();
+            var id = ids[idx++];
+            return workspaces.archiveSession(id).then(
+              function () {
+                done += 1;
+                setProgress({ done: done, total: total, failed: failed });
+                return worker();
+              },
+              function () {
+                done += 1;
+                failed += 1;
+                failedIds[id] = true;
+                setProgress({ done: done, total: total, failed: failed });
+                return worker();
+              },
+            );
+          }
+          var runners = [];
+          var width = Math.min(8, total);
+          for (var w = 0; w < width; w++) runners.push(worker());
+          Promise.all(runners).then(function () {
+            if (failed === 0) {
+              setPhase('done');
+              setMessage('已归档 ' + total + ' 个会话');
+              setSelected({});
+              return;
             }
-            chain
-              .then(function () {
-                setPhase('done');
-                setMessage('已归档 ' + ids.length + ' 个会话');
-                setSelected({});
-              })
-              .catch(function (err) {
-                setPhase('error');
-                setMessage('归档失败：' + (err && err.message ? err.message : String(err)));
-              });
-          })();
+            setPhase('error');
+            setMessage(
+              '已归档 ' + (total - failed) + ' / ' + total + ' 个，失败 ' + failed + ' 个',
+            );
+            setSelected(failedIds); // 失败项留在勾选中, 便于重试
+          });
         }
         function primaryAction() {
           if (busy) return;
@@ -508,80 +615,36 @@ window.__ModuleLoader__.load({
           store.setOpen(false);
         }
 
-        // 行元素
+        // 行元素(memo 组件: 原始值 props + 稳定回调)
         var rows = [];
         for (var rgi = 0; rgi < groups.length; rgi++) {
-          (function (g) {
+          var g = groups[rgi];
+          rows.push(
+            React.createElement(GroupHead, {
+              key: g.key,
+              groupKey: g.key,
+              title: g.title,
+              count: g.sessions.length,
+              allSelected: groupAllSelected(g),
+              onToggleGroup: onToggleGroup,
+            }),
+          );
+          for (var ri = 0; ri < g.sessions.length; ri++) {
+            var id = g.sessions[ri];
+            var s = byId[id];
             rows.push(
-              React.createElement(
-                'div',
-                { key: g.key, className: 'baGroupHead' },
-                React.createElement('span', { className: 'baGroupDot' }),
-                React.createElement(
-                  'button',
-                  {
-                    type: 'button',
-                    className: 'baGroupTitle' + (groupAllSelected(g) ? ' baGroupAll' : ''),
-                    onClick: function () {
-                      toggleGroup(g);
-                    },
-                    'aria-label': '全选' + g.title,
-                    title: '点击全选/取消该分组',
-                  },
-                  [
-                    groupAllSelected(g)
-                      ? React.createElement(IconCheckOutline14, {
-                          key: 'ck',
-                          className: 'baGroupCheck',
-                        })
-                      : null,
-                    React.createElement(
-                      'span',
-                      { key: 'tx', className: 'baGroupTitleText' },
-                      g.title,
-                    ),
-                  ],
-                ),
-                React.createElement(
-                  'span',
-                  { className: 'baGroupCount' },
-                  g.sessions.length + ' 个',
-                ),
-              ),
+              React.createElement(Row, {
+                key: id,
+                id: id,
+                title: s.displayTitle || s.title || id,
+                time: timeAgo(s.updatedAt),
+                running: !!s.running,
+                checked: !!selected[id],
+                disabled: busy,
+                onToggle: onToggle,
+              }),
             );
-            for (var ri = 0; ri < g.sessions.length; ri++) {
-              (function (id) {
-                var s = byId[id];
-                rows.push(
-                  React.createElement(
-                    'label',
-                    { key: id, className: 'baRow' },
-                    React.createElement(Checkbox, {
-                      checked: !!selected[id],
-                      disabled: busy,
-                      onChange: function () {
-                        toggle(id);
-                      },
-                      'aria-label': s.displayTitle || s.title || id,
-                    }),
-                    React.createElement(
-                      'span',
-                      { className: 'baRowTitle' },
-                      s.displayTitle || s.title || id,
-                    ),
-                    React.createElement(
-                      'span',
-                      { className: 'baRowMeta' },
-                      s.running
-                        ? React.createElement('span', { className: 'baDot', title: '运行中' })
-                        : null,
-                      React.createElement('span', null, timeAgo(s.updatedAt)),
-                    ),
-                  ),
-                );
-              })(g.sessions[ri]);
-            }
-          })(groups[rgi]);
+          }
         }
         if (rows.length === 0) {
           rows.push(
@@ -601,6 +664,16 @@ window.__ModuleLoader__.load({
         else if (selectedCount > 0) primaryLabel = '归档所选 (' + selectedCount + ')';
         else primaryLabel = '归档所选';
         var cancelLabel = busy ? '关闭' : phase === 'confirm' ? '返回' : '取消';
+        // 归档进行中: footer 实时显示「已归档 x / N」+ 失败计数
+        var footerMsg = message;
+        if (busy && progress) {
+          footerMsg =
+            '已归档 ' +
+            progress.done +
+            ' / ' +
+            progress.total +
+            (progress.failed > 0 ? '，失败 ' + progress.failed : '');
+        }
 
         return renderShell(
           React.createElement(
@@ -653,9 +726,9 @@ window.__ModuleLoader__.load({
                 'div',
                 {
                   className: 'baFooterMsg' + (phase === 'error' ? ' baError' : ''),
-                  title: message,
+                  title: footerMsg,
                 },
-                message,
+                footerMsg,
               ),
               React.createElement(
                 Btn,
