@@ -1003,12 +1003,15 @@ window.__ModuleLoader__.load({
           var caret = ta.selectionStart;
           if (caret === null || typeof caret !== 'number' || cmp.ctxStart < 0) return;
           if (cmp.ctxStart > caret) return; // 防御: 锚点越界(理论不达)直接放弃
-          var next = live.slice(0, cmp.ctxStart) + label + live.slice(caret);
+          // 上屏位置必须在 closeCmp() 之前算好: closeCmp 会把 cmp.ctxStart 置 -1,
+          // 若在 rAF 里再读就成了「label.length - 1」—— 多行 SQL 里表现为光标跳回开头。
+          var start = cmp.ctxStart;
+          var pos = start + label.length;
+          var next = live.slice(0, start) + label + live.slice(caret);
           setSql(next);
           closeCmp();
           requestAnimationFrame(function () {
             if (taRef.current) {
-              var pos = cmp.ctxStart + label.length;
               taRef.current.focus();
               taRef.current.setSelectionRange(pos, pos);
             }
