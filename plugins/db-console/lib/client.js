@@ -140,10 +140,12 @@ window.__ModuleLoader__.load({
         'color:transparent;-webkit-text-fill-color:transparent;caret-color:var(--dsw-alias-state-business-primary);}' +
         '.dbc-ta::placeholder{color:var(--dsw-alias-label-caption);}' +
         '.dbc-ta::selection{background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 30%,transparent);}' +
-        // 语法着色: 选用在明暗两种底色上都可读的中等亮度值(壳层无语法代币)
-        '.dbc-hl .kw{color:#4176e6;font-weight:600;}' +
+        // 语法着色: 只用颜色, 不改 font-weight/font-style —— highlighter 是
+        // textarea 的透明 underlay, 任何字重/斜体变化都会让两种字体度量不一致,
+        // 导致选区/光标与可见文本错位(部分字体下尤其明显)。
+        '.dbc-hl .kw{color:#4176e6;}' +
         '.dbc-hl .str{color:#1f9e5f;}.dbc-hl .num{color:#c77700;}' +
-        '.dbc-hl .com{color:var(--dsw-alias-label-tertiary);font-style:italic;}' +
+        '.dbc-hl .com{color:var(--dsw-alias-label-tertiary);}' +
         // 行尾空白可视化: 只上背景, 不改变空格/制表符的排版宽度
         '.dbc-hl .dbc-ws{background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 12%,transparent);' +
         'border-radius:2px;}' +
