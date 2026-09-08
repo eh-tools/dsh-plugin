@@ -92,10 +92,14 @@ const jobsSvc = (() => {
 })();
 
 let capturedRoute = null;
+const fakeAgent = { id: 'session-under-test' };
 const ctx = {
     get: (name) => {
         if (name === 'subprocess') return fakeSubprocess();
         if (name === 'jobs') return jobsSvc;
+        // agents 注册表: sessionId → Agent, 供 shellStart 解析 job owner
+        if (name === 'agents')
+            return { get: (id) => (id === 'session-under-test' ? fakeAgent : undefined) };
         return undefined;
     },
     webServer: {
@@ -504,6 +508,7 @@ ok('shellStart/shellStop: 非法命令(invalid-command)/非法 root(invalid-root
     const started = await callAt('POST', base('shellStart'), {
         root: CWD,
         command: 'echo fge-shell-ok',
+        sessionId: 'session-under-test',
     });
     assert.equal(started.body.ok, true);
     assert.match(started.body.job.id, /^shell-\d+$/);
@@ -516,6 +521,8 @@ ok('shellStart/shellStop: 非法命令(invalid-command)/非法 root(invalid-root
     assert.equal(rec.spec.kind, 'shell');
     assert.equal(rec.spec.label, 'echo fge-shell-ok');
     assert.equal(typeof rec.spec.run, 'function');
+    // sessionId 解析为 owner → 任务只属于发起会话(不再每个工作区都显示)
+    assert.equal(rec.spec.owner, fakeAgent);
 
     const fin = await drainUntil((a) => a.res.done && a.out.includes('fge-shell-ok'));
     assert.equal(fin.res.job.status, 'completed');
@@ -531,6 +538,8 @@ ok('shellStart/shellStop: 非法命令(invalid-command)/非法 root(invalid-root
 {
     const long = await callAt('POST', base('shellStart'), { root: CWD, command: 'sleep 2' });
     assert.equal(long.body.ok, true);
+    // 无 sessionId → 退化为无主任务(不阻断启动)
+    assert.equal(jobsSvc.started[jobsSvc.started.length - 1].spec.owner, undefined);
     const busy = await callAt('POST', base('shellStart'), { root: CWD, command: 'echo nope' });
     assert.equal(busy.body.ok, false);
     assert.equal(busy.body.error, 'busy');

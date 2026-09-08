@@ -850,6 +850,29 @@ export function apply(ctx) {
   }
 
   /**
+   * 把请求携带的会话 id 解析成 Agent, 作为后台任务的 owner。
+   *
+   * 不传 owner 时 jobs 建的是「无主任务」——按 JobRegistry 契约, 无主任务对
+   * **每个** caller 都可见(每个会话的后台任务列表都会列出它), 这正是
+   * 「shell 执行后多个工作区都显示后台任务」的根因。带上 owner 后任务只属于
+   * 发起它的会话, 其他会话/工作区的任务列表不再显示它。
+   *
+   * 解析不到(缺 sessionId / agents 服务缺失 / 会话已销毁)时返回 undefined,
+   * 退化为原来的无主行为, 不阻断启动。
+   */
+  function ownerAgentOf(body) {
+    const sid = typeof body.sessionId === 'string' && body.sessionId !== '' ? body.sessionId : null;
+    if (sid === null) return undefined;
+    const agents = ctx.get('agents');
+    if (agents === undefined || typeof agents.get !== 'function') return undefined;
+    try {
+      return agents.get(sid) ?? undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
    * 单槽记账: 每个工作区(cwd)各自至多一条 running/stopping 任务(宿主侧记账,
    * 跨 GUI 刷新/多开成立; 不同工作区互不可见、可并行)。任务终结后记录保留
    * (shellState/shellOutput 仍可查), 直到该工作区下一次 start 覆盖;
@@ -973,6 +996,7 @@ export function apply(ctx) {
       const jobId = jobs.start({
         kind: 'shell',
         label: cmd,
+        owner: ownerAgentOf(body),
         run: () => ({
           cancel: () => {
             if (slot.status === 'running') slot.status = 'stopping';

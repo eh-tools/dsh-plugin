@@ -1864,7 +1864,11 @@ window.__ModuleLoader__.load({
           // 执行即离开输入框: 配合下方只读锁, 运行中光标不再停留在输入框内
           if (inputRef.current) inputRef.current.blur();
           setStarting(true); // ○ 启动中(请求在途)
-          api('shellStart', { root: props.root, command: cmd })
+          api('shellStart', {
+            root: props.root,
+            command: cmd,
+            sessionId: props.sessionId || undefined,
+          })
             .then(function (r) {
               setStarting(false);
               if (!r || !r.ok) {
@@ -2551,7 +2555,11 @@ window.__ModuleLoader__.load({
                   ),
                 ),
               ),
-            React.createElement(ShellBar, { root: props.root, cacheKey: props.cacheKey }),
+            React.createElement(ShellBar, {
+              root: props.root,
+              cacheKey: props.cacheKey,
+              sessionId: props.sessionId,
+            }),
             React.createElement('div', {
               className: 'fge-resize fge-resize-left',
               onPointerDown: props.onResizeStart,
@@ -3490,7 +3498,10 @@ window.__ModuleLoader__.load({
                     (isViewed ? ' fge-branch-viewed' : ''),
                   onClick: function () {
                     setPickOpen(false);
-                    if (!isCur && props.onViewBranch) props.onViewBranch(br.name);
+                    if (!props.onViewBranch) return;
+                    // 点当前分支 = 回到「跟随当前分支」(viewedBranch 归 null);
+                    // 点其他分支 = 固定看该分支。原先 isCur 直接 return, 切走后回不来。
+                    props.onViewBranch(isCur ? null : br.name);
                   },
                   title: isCur ? '当前分支(默认跟随)' : '查看该分支的提交历史(只读, 不切换工作区)',
                 },
@@ -3851,6 +3862,15 @@ window.__ModuleLoader__.load({
           running = useSessions(function (s) {
             var sess = currentSession(s);
             return !!(sess && sess.running);
+          });
+        }
+
+        // 当前会话 id: 随 shellStart 下发, 让宿主把后台任务挂到发起会话名下。
+        // 不带它时宿主建的是无主任务, 每个会话/工作区的任务列表都会显示它。
+        var sessionId = null;
+        if (typeof useSessions === 'function') {
+          sessionId = useSessions(function (s) {
+            return s && typeof s.current === 'string' && s.current !== '' ? s.current : null;
           });
         }
         var prevRunningRef = React.useRef(running);
@@ -4667,6 +4687,7 @@ window.__ModuleLoader__.load({
                 cwd: info.cwd,
                 root: root,
                 cacheKey: cacheKey,
+                sessionId: sessionId,
                 pin: leftPin,
                 pinDisabled: !!away,
                 track: leftTrack,
