@@ -47,16 +47,18 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer
 - 点**文件** → 行高亮 + **内容悬浮面板向右浮出**(可越过对话区, 文本 + 行号 + **逐行语法高亮**: 关键字 / 类型·类名 / 函数调用 / 字符串 / 注释 / 数字, 覆盖 JS/TS/Python/Rust/Go/Java/C 等常见语言; >1 MiB 或二进制只显示提示、不预览)。
 - 点文件同时触发**联动**: 右侧 git 树若存在该文件 diff, 滚动定位并闪现高亮; **不自动打开 diff**; 无 diff 则无操作。
 - 目录单击 = 展开 / 折叠切换。
+- **行操作按钮**(悬停出现, 目录/文件行一致, 共三件): `⧉` **复制绝对路径**(成功后该钮就地变绿 `✓`, 1.2s 还原)、**文件夹图标**在**系统资源管理器中打开**(目录打开自身置前 / 文件打开所在目录, Windows `/select,` 与 macOS `-R` 顺带选中该文件)、`⋮` **更多** —— 原来平铺的 `+ / ✎ / ✕` 收进下拉(新建仅目录行; 删除为危险色)。`⋮` 下拉是固定定位小面板, 右缘对齐按钮、上缘与行底重叠 2px(鼠标从按钮移到菜单不会经过行按钮闪没的空档), 窗口底部放不下自动改为向上开; 点面板外 / Esc / 滚动 / 窗口缩放收起, 点菜单不触发行展开折叠。
 
 #### 文件编辑与树内写操作
 
 ![文件悬浮预览 + 行内编辑](../../png/文件详情.png)
 
 - **编辑**: 内容悬浮面板头部的「编辑」把高亮预览切换为**纯 textarea**(只读视图保持原样, 不引入编辑器依赖)。**⌘S / Ctrl+S** 保存, **Esc** 退出编辑; 未保存时标题带 `•` 点并给出确认(关闭 / 退出编辑均会拦截询问); Tab 插入两个空格。
+- **复制 / 选区**: 头部「复制」一键复制当前内容(编辑态复制未保存草稿, 只读态复制磁盘正文), 成功后按钮短暂显示 `✓ 已复制`; 面板内 **Ctrl/⌘+A 只选中本面板正文**(修复原先会选中整页), 编辑态焦点在 textarea 时放行原生全选。
 - **保存的并发保护**: 读取时返回 `mtimeMs`, 保存时回传做**乐观校验** —— 磁盘已被外部改动(如 agent 同时在写)时**拒绝保存并提示冲突**, 可「重新加载磁盘版」或「仍要覆盖写入」(Shift+⌘S 亦可强制)。内容上限 1 MiB 与预览对称, 超出时保存按钮禁用并提示。
 - **保存后自动刷新右侧 git 状态**(变更列表 / 徽标随之更新); 树内结构变化(新建 / 重命名 / 删除)则**局部重载受影响目录**, 不打断展开状态。
-- **新建**: 每分区头部 `+` 在当前分区根新建; 目录行的悬停 `+` 在其内新建(自动展开)。名称**以 `/` 结尾 = 建目录**, 可写 `a/b/c.ts` 嵌套(父目录自动补建); 文件名重名报「同名条目已存在」。
-- **重命名 / 删除**: 行悬停出现 `✎` / `✕`; 重命名行内输入、Enter 确认; 删除先经确认框(**目录 = 连同全部内容递归删除, 不可恢复**), 非空目录在 host 侧同样要求显式 `recursive` 才放行。
+- **新建**: 每分区头部 `+` 在当前分区根新建; 目录行的 `⋮ → + 新建` 在其内新建(自动展开)。名称**以 `/` 结尾 = 建目录**, 可写 `a/b/c.ts` 嵌套(父目录自动补建); 文件名重名报「同名条目已存在」。
+- **重命名 / 删除**: 行悬停 `⋮ → ✎ 重命名 / ✕ 删除`(删除为危险色); 重命名行内输入、Enter 确认; 删除先经确认框(**目录 = 连同全部内容递归删除, 不可恢复**), 非空目录在 host 侧同样要求显式 `recursive` 才放行。
 - 已打开的内容面板**跟随重命名**(含祖先目录改名)并**在删除时自动关闭**; 所有写操作拒绝触及 `.git` 段(路径逐段校验)。
 
 #### 文件搜索(name search)
@@ -95,6 +97,7 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer
 - 顶部: 当前分支(前有竖着 git 分支 SVG 图标; 实时读 `git branch --show-current`), 点击从**面板左侧**弹出**所有分支下拉**(本地 / 远程分组, 纯展示清单: 行不可点、无 hover 反色, 仅以「当前 / 查看中」标记状态, 不支持切换)。**单击下拉外任意位置即收起**, 不必再点分支名。下拉与 diff / 提交历史悬浮栏**互斥**(开一关一, 两者同占面板左侧留白带, 避免互相遮挡)。
 - 下方: 工作区相对 **HEAD** 的变更列表(已暂存 + 未暂存 + 未跟踪), 平铺 + 状态徽标(`M`/`A`/`D`/`R`/`U`), 按路径排序。
 - 点变更文件 → **diff 悬浮面板向左浮出**(unified, 行级 +/− 着色, 增删行内容同样做**代码语法高亮**; 未跟踪文件显示内容; rename 用 `-M` 双路径 diff; 二进制显示提示)。再点同一项或点 ✕ 关闭。
+- diff 面板头部「**复制**」一键复制 diff 原文(untracked 为文件内容; 二进制/超限置灰), 成功后短暂显示 `✓ 已复制`; 面板内 **Ctrl/⌘+A 只选中 diff 正文**(与文件内容面板同一套「最近交互浮层」作用域)。
 - 非 git 目录: 右侧树显示「(工作区干净)」占位, 分支区为空, 历史按钮置灰。
 
 #### 提交历史(commit history)
@@ -135,6 +138,7 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer
 | `POST /fge/api/create`      | `{root?, path, kind: 'file'\|'dir'}`       | `{kind, size, mtimeMs}`; 父目录自动补建, 同名 exists 拒绝          |
 | `POST /fge/api/rename`      | `{root?, path, newName}`                   | `{}`; 同目录重命名, 目标已存在 exists / 非法名 invalid-name 拒绝   |
 | `POST /fge/api/remove`      | `{root?, path, recursive?}`                | `{}`; 目录需显式 recursive=true(否则非空 not-empty 拒绝)           |
+| `POST /fge/api/open`        | `{root?, path}`                            | `{ok}`; 在系统资源管理器中打开(目录开自身 / 文件开所在目录)        |
 | `POST /fge/api/shellStart`  | `{root?, command}`                         | `{job{id, label, status, ...}}`; busy / invalid-command 等拒绝     |
 | `POST /fge/api/shellState`  | `{root?}`                                  | `{job \| null}`(本工作区槽, GUI 刷新恢复用)                        |
 | `POST /fge/api/shellOutput` | `{root?, outFrom?, errFrom?}`              | `{job, done, out{text,next,base,lossy}, err{...}}`(绝对字符位增量) |
@@ -169,6 +173,7 @@ git 一律经 `subprocess` 服务执行(argv 数组, 无 shell)。shell 行是�
 node tests/git.test.mjs    # 纯函数层单测(status 解析 / 三区划分 / 防穿越 / diff 参数)
 node tests/shell.test.mjs  # shell 行纯函数层单测(解释器解析 / 历史 / 尾部窗口数学)
 node tests/edit.test.mjs   # 写类接口单测(save 并发冲突 / create / rename / remove, 临时目录)
+node tests/open.test.mjs   # 「打开文件夹」argv 映射单测(win/mac/linux × 目录/文件)
 node tests/verify.mjs      # host 集成冒烟(真实 git, 需在仓库内运行)
 eslint .                   # 仓库统一 lint(client bundle 按惯例忽略)
 ```

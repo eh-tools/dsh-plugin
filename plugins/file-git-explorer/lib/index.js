@@ -23,6 +23,8 @@
  *   POST /fge/api/rename  → { root?, path, newName } → 同目录重命名(目标存在即拒绝)
  *   POST /fge/api/remove  → { root?, path, recursive? } → 删除文件/符号链接/目录
  *       目录必须显式 recursive=true 才整体删除; 所有写类接口拒绝触及 .git 段。
+ *   POST /fge/api/open    → { root?, path } → 在系统资源管理器中打开(目录开自身,
+ *       文件开所在目录; win/mac 顺带选中该文件)。只读, 路径同款逐段白校验。
  *   POST /fge/api/shellStart  → { root?, command } → 该工作区启动后台命令(挂 ctx.jobs, kind 'shell')
  *   POST /fge/api/shellState  → { root? } → 该工作区槽内任务快照(GUI 刷新恢复用)
  *   POST /fge/api/shellOutput → { root?, outFrom?, errFrom? } → 尾部输出增量(绝对字符位切片)
@@ -66,6 +68,7 @@ import {
   validShellCommand,
   SHELL_STREAM_CAP_CHARS,
 } from './shell.js';
+import { openTargetArgv } from './open.js';
 
 export const name = 'dsh-file-git-explorer';
 
@@ -650,6 +653,48 @@ export function apply(ctx) {
   }
 
   /**
+   * 在系统资源管理器中打开目标: 目录打开自身(窗口置前), 文件打开其所在目录
+   * (Windows /select,、macOS -R 顺带选中该文件)。只读操作, 路径与写类接口同款
+   * 逐段白校验 + resolveWithin(拒绝 .git 段与穿越)。
+   *
+   * 注: Windows 的 explorer.exe 即便成功也常返回退出码 1, 故非零退出不算失败 ——
+   * 只有 spawn 抛错才报 open-failed。
+   */
+  async function handleOpen(body) {
+    const base = baseOf(body);
+    if (base === null) return { ok: false, error: 'invalid-root' };
+    const segs = splitEditRel(typeof body.path === 'string' ? body.path : '');
+    if (segs === null) return { ok: false, error: 'invalid-path' };
+    const abs = resolveWithin(base, segs.join('/'));
+    if (abs === null) return { ok: false, error: 'invalid-path' };
+    const st = await lstatOrNull(abs);
+    if (st === null) return { ok: false, error: 'not-found' };
+    const subprocess = ctx.get('subprocess');
+    if (subprocess === undefined) return { ok: false, error: 'subprocess-unavailable' };
+    let handle;
+    try {
+      handle = subprocess.spawn({
+        argv: openTargetArgv(process.platform, abs, st.isDirectory()),
+        cwd: base,
+        stdio: {
+          stdin: 'ignore',
+          stdout: { maxBytes: 4096 },
+          stderr: { maxBytes: 4096 },
+        },
+        graceMs: 5000,
+      });
+    } catch (err) {
+      return {
+        ok: false,
+        error: 'open-failed',
+        detail: String((err && err.message) || err || 'open failed').slice(0, 200),
+      };
+    }
+    await handle.done.catch(() => {}); // 退出码不可信(explorer 常返 1), 只等它结束
+    return { ok: true };
+  }
+
+  /**
    * 文件搜索(按名/相对路径, 大小写不敏感子串): 三区覆盖 + 截断上限。
    * git 仓库: `ls-files -c -o --exclude-standard`(可见+隐藏)与
    * `ls-files -o -i --exclude-standard`(忽略)各扫一遍; 目录命中项由文件路径
@@ -1034,6 +1079,7 @@ export function apply(ctx) {
     create: handleCreate,
     rename: handleRename,
     remove: handleRemove,
+    open: handleOpen,
     shellStart: handleShellStart,
     shellState: handleShellState,
     shellOutput: handleShellOutput,

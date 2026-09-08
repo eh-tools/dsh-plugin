@@ -256,6 +256,21 @@ assert.equal(trav.body.ok, false);
 assert.equal(trav.body.error, 'outside-root');
 ok('防穿越: outside-root 拒绝');
 
+// 9b. open: 只读路由的路径校验(拒绝穿越/.git/不存在/非法 root —— 均在 spawn 之前返回)
+const openTrav = await callAt('POST', base('open'), { path: '../../outside.txt' });
+assert.equal(openTrav.body.ok, false);
+assert.equal(openTrav.body.error, 'invalid-path');
+const openDotGit = await callAt('POST', base('open'), { path: '.git' });
+assert.equal(openDotGit.body.ok, false);
+assert.equal(openDotGit.body.error, 'invalid-path');
+const openMissing = await callAt('POST', base('open'), { path: 'no-such-entry-xyz' });
+assert.equal(openMissing.body.ok, false);
+assert.equal(openMissing.body.error, 'not-found');
+const openBadRoot = await callAt('POST', base('open'), { root: 'relative/path', path: 'x' });
+assert.equal(openBadRoot.body.ok, false);
+assert.equal(openBadRoot.body.error, 'invalid-root');
+ok('open: 穿越/.git/不存在/非法 root 拒绝');
+
 // 10. 信任栅栏: 无 x-dsh-plugin 头 / 非回环 host / 非 POST
 const noHeader = await callAt('POST', base('info'), {}, { 'x-dsh-plugin': undefined });
 assert.equal(noHeader.status, 403);

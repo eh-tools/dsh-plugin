@@ -66,6 +66,7 @@ window.__ModuleLoader__.load({
         '.fge-btn:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);}' +
         '.fge-btn:disabled{opacity:.35;cursor:not-allowed;}' +
         '.fge-btn-active{color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-layer-2);}' +
+        '.fge-btn-copied{color:var(--dsw-alias-state-success-primary);}' +
         '.fge-section{display:flex;flex-direction:column;min-height:0;}' +
         '.fge-section-head{flex:none;padding:3px 8px;font-size:11px;color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));' +
         'border-top:1px solid var(--dsw-alias-border-l1);}' +
@@ -268,6 +269,22 @@ window.__ModuleLoader__.load({
         '.fge-node:hover .fge-rowact{opacity:1;}' +
         '.fge-rowact:hover{color:var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-layer-2);}' +
         '.fge-rowact.fge-danger:hover{color:var(--dsw-alias-state-error-primary);}' +
+        // 复制成功: 该行 ⧉ 就地变绿 ✓(1.2s 还原)
+        '.fge-rowact.fge-ok{color:var(--dsw-alias-state-success-primary);opacity:1;}' +
+        // ⋮ 更多: 固定定位小面板(挂在行节点下, 不在 hover 门控的按钮区里)
+        '.fge-rowmenu{position:fixed;z-index:60;min-width:124px;box-sizing:border-box;padding:4px;' +
+        'display:flex;flex-direction:column;gap:1px;background:var(--dsw-alias-bg-overlay);' +
+        'border:1px solid var(--dsw-alias-border-l2);border-radius:8px;' +
+        'box-shadow:var(--dsw-shadow-lv2,rgba(0,0,0,.25)) 0 8px 28px;}' +
+        '.fge-rowmenu-item{display:flex;align-items:center;gap:6px;width:100%;box-sizing:border-box;' +
+        'padding:4px 8px;border:0;background:transparent;color:var(--dsw-alias-label-secondary);' +
+        'cursor:pointer;border-radius:5px;font-size:12px;line-height:1.4;text-align:left;' +
+        'font-family:inherit;white-space:nowrap;}' +
+        '.fge-rowmenu-item:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);}' +
+        '.fge-rowmenu-item.fge-danger{color:var(--dsw-alias-state-error-primary);}' +
+        '.fge-rowmenu-item.fge-danger:hover{color:var(--dsw-alias-state-error-primary);' +
+        'background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 14%,transparent);}' +
+        '.fge-rowmenu-glyph{flex:none;width:14px;display:inline-flex;justify-content:center;text-align:center;}' +
         '.fge-oprow{display:flex;flex-wrap:wrap;align-items:center;gap:4px;}' +
         '.fge-opinput{flex:1;min-width:80px;background:var(--dsw-alias-bg-layer-2);' +
         'border:1px solid color-mix(in srgb,var(--dsw-alias-brand-primary) 45%,transparent);border-radius:6px;' +
@@ -798,6 +815,16 @@ window.__ModuleLoader__.load({
         var handledReloadRef = React.useRef(-1);
         var handledRootCreateRef = React.useRef(-1);
 
+        // ---- 行操作: 复制绝对路径 / 打开文件夹 / ⋮ 更多 ----
+        var rowMenuState = React.useState(null); // {rel, top, right, anchorTop} | null
+        var rowMenu = rowMenuState[0];
+        var setRowMenu = rowMenuState[1];
+        var rowMenuRef = React.useRef(null);
+        var copiedRelState = React.useState(null); // 最近复制成功的行 rel(⧉ → ✓)
+        var copiedRel = copiedRelState[0];
+        var setCopiedRel = copiedRelState[1];
+        var copiedTimerRef = React.useRef(null);
+
         var loadChildren = function (rel, reveal) {
           setLoading(rel);
           api('tree', { root: root, path: rel, mode: mode, reveal: reveal })
@@ -986,6 +1013,94 @@ window.__ModuleLoader__.load({
           props.ops.remove(row); // 确认与错误提示由 ops 实现(LeftPanel 层)
         };
 
+        // 复制绝对路径: 成功 → 该行 ⧉ 就地变绿 ✓, 1.2s 后还原
+        var copyRowPath = function (row) {
+          var abs = root.replace(/[\\/]+$/, '') + '/' + row.rel;
+          if (!copyText(abs)) return;
+          setCopiedRel(row.rel);
+          if (copiedTimerRef.current !== null) clearTimeout(copiedTimerRef.current);
+          copiedTimerRef.current = setTimeout(function () {
+            copiedTimerRef.current = null;
+            setCopiedRel(null);
+          }, 1200);
+        };
+        React.useEffect(function () {
+          return function () {
+            if (copiedTimerRef.current !== null) clearTimeout(copiedTimerRef.current);
+          };
+        }, []);
+
+        // 在系统资源管理器中打开(目录开自身 / 文件开所在目录; 失败经 ops 弹提示)
+        var openRow = function (row) {
+          if (props.ops && typeof props.ops.open === 'function') props.ops.open(row);
+        };
+
+        // ⋮ 更多: 固定定位小面板, 上缘与行底重叠 2px、右缘对齐按钮; 再点同钮收起。
+        var toggleRowMenu = function (row, ev) {
+          ev.stopPropagation();
+          if (rowMenu !== null && rowMenu.rel === row.rel) {
+            setRowMenu(null);
+            return;
+          }
+          var btn = ev.currentTarget;
+          var node = btn.closest ? btn.closest('.fge-node') : null;
+          var rowRect = (node || btn).getBoundingClientRect();
+          var btnRect = btn.getBoundingClientRect();
+          setRowMenu({
+            rel: row.rel,
+            top: rowRect.bottom - 2,
+            anchorTop: rowRect.top,
+            right: Math.max(4, window.innerWidth - btnRect.right),
+          });
+        };
+        // 底部放不下 → 向上开(把翻上后的 top 写回状态, 避免被后续重渲染打回原位)
+        React.useLayoutEffect(
+          function () {
+            if (rowMenu === null || rowMenuRef.current === null || rowMenu.flipped) return;
+            var h = rowMenuRef.current.offsetHeight;
+            if (rowMenu.top + h > window.innerHeight - 8) {
+              setRowMenu(
+                Object.assign({}, rowMenu, {
+                  top: Math.max(8, rowMenu.anchorTop - h + 2),
+                  flipped: true,
+                }),
+              );
+            }
+          },
+          [rowMenu],
+        );
+        // 收起: 点面板外 / Esc / 滚动 / 窗口缩放
+        React.useEffect(
+          function () {
+            if (rowMenu === null) return undefined;
+            function onDocDown(e) {
+              if (rowMenuRef.current !== null && rowMenuRef.current.contains(e.target)) return;
+              if (e.target && e.target.closest && e.target.closest('.fge-rowmenu-btn')) return;
+              setRowMenu(null);
+            }
+            function onKey(e) {
+              if (e.key === 'Escape') {
+                e.stopPropagation(); // 不波及全局 Esc(关悬浮面板)
+                setRowMenu(null);
+              }
+            }
+            function onDismiss() {
+              setRowMenu(null);
+            }
+            document.addEventListener('mousedown', onDocDown, true);
+            document.addEventListener('keydown', onKey, true);
+            window.addEventListener('scroll', onDismiss, true);
+            window.addEventListener('resize', onDismiss);
+            return function () {
+              document.removeEventListener('mousedown', onDocDown, true);
+              document.removeEventListener('keydown', onKey, true);
+              window.removeEventListener('scroll', onDismiss, true);
+              window.removeEventListener('resize', onDismiss);
+            };
+          },
+          [rowMenu],
+        );
+
         /** ops 失败码 → 行内短文案; cancelled(用户取消确认框)静默。 */
         var opErrorText = function (res) {
           if (res && res.ok) return null;
@@ -1101,40 +1216,99 @@ window.__ModuleLoader__.load({
                       e.stopPropagation(); // 点操作按钮不当成"切换该行"
                     },
                   },
+                  // 1) 复制绝对路径: 成功 → 变绿 ✓, 1.2s 还原
+                  React.createElement(
+                    'button',
+                    {
+                      className: 'fge-rowact' + (copiedRel === row.rel ? ' fge-ok' : ''),
+                      title: '复制绝对路径',
+                      onClick: function (e) {
+                        e.stopPropagation();
+                        copyRowPath(row);
+                      },
+                    },
+                    copiedRel === row.rel ? '✓' : '⧉',
+                  ),
+                  // 2) 在系统资源管理器中打开(目录开自身 / 文件开所在目录)
+                  React.createElement(
+                    'button',
+                    {
+                      className: 'fge-rowact',
+                      title: row.type === 'dir' ? '在系统资源管理器中打开' : '打开所在文件夹',
+                      onClick: function (e) {
+                        e.stopPropagation();
+                        openRow(row);
+                      },
+                    },
+                    React.createElement(OpenFolderIcon, null),
+                  ),
+                  // 3) 更多: + / ✎ / ✕ 收进下拉
+                  React.createElement(
+                    'button',
+                    {
+                      className: 'fge-rowact fge-rowmenu-btn',
+                      title: '更多操作',
+                      onClick: function (e) {
+                        toggleRowMenu(row, e);
+                      },
+                    },
+                    '⋮',
+                  ),
+                )
+              : null,
+            // ⋮ 下拉: 作为行节点的子节点渲染(不在 hover 门控的按钮区里), 固定定位。
+            // 鼠标从按钮移到菜单时 .fge-node:hover 持续成立, 行按钮不会闪没。
+            rowMenu !== null && rowMenu.rel === row.rel
+              ? React.createElement(
+                  'div',
+                  {
+                    className: 'fge-rowmenu',
+                    ref: rowMenuRef,
+                    style: { top: rowMenu.top, right: rowMenu.right },
+                    onClick: function (e) {
+                      e.stopPropagation(); // 点菜单不触发行展开/折叠
+                    },
+                  },
                   row.type === 'dir'
                     ? React.createElement(
                         'button',
                         {
-                          className: 'fge-rowact',
-                          title: '新建子项（名称以 / 结尾建目录）',
-                          onClick: function () {
+                          className: 'fge-rowmenu-item',
+                          onClick: function (e) {
+                            e.stopPropagation();
+                            setRowMenu(null);
                             startCreateIn(row);
                           },
                         },
-                        '+',
+                        React.createElement('span', { className: 'fge-rowmenu-glyph' }, '+'),
+                        '新建',
                       )
                     : null,
                   React.createElement(
                     'button',
                     {
-                      className: 'fge-rowact',
-                      title: '重命名',
-                      onClick: function () {
+                      className: 'fge-rowmenu-item',
+                      onClick: function (e) {
+                        e.stopPropagation();
+                        setRowMenu(null);
                         startRename(row);
                       },
                     },
-                    '✎',
+                    React.createElement('span', { className: 'fge-rowmenu-glyph' }, '✎'),
+                    '重命名',
                   ),
                   React.createElement(
                     'button',
                     {
-                      className: 'fge-rowact fge-danger',
-                      title: row.type === 'dir' ? '删除目录(含全部内容)' : '删除文件',
-                      onClick: function () {
+                      className: 'fge-rowmenu-item fge-danger',
+                      onClick: function (e) {
+                        e.stopPropagation();
+                        setRowMenu(null);
                         askRemove(row);
                       },
                     },
-                    '✕',
+                    React.createElement('span', { className: 'fge-rowmenu-glyph' }, '✕'),
+                    '删除',
                   ),
                 )
               : null,
@@ -1324,6 +1498,28 @@ window.__ModuleLoader__.load({
             style: { display: 'block' },
           },
           React.createElement('path', { d: 'M18 6L6 18M6 6l12 12' }),
+        );
+      }
+
+      // ---- 文件夹(打开)图标: 行操作「在系统资源管理器中打开」 ----
+      function OpenFolderIcon() {
+        return React.createElement(
+          'svg',
+          {
+            width: 13,
+            height: 13,
+            viewBox: '0 0 24 24',
+            fill: 'none',
+            stroke: 'currentColor',
+            strokeWidth: 2,
+            strokeLinecap: 'round',
+            strokeLinejoin: 'round',
+            'aria-hidden': 'true',
+            style: { display: 'block' },
+          },
+          React.createElement('path', {
+            d: 'm6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2',
+          }),
         );
       }
 
@@ -2035,6 +2231,26 @@ window.__ModuleLoader__.load({
                 });
             });
           },
+          open: function (row) {
+            return api('open', { root: props.root, path: row.rel })
+              .then(function (res) {
+                if (res && res.ok) return { ok: true };
+                var code = res && res.error ? String(res.error) : 'failed';
+                showNotice(
+                  '打开失败',
+                  code === 'not-found'
+                    ? '目标不存在（可点头部刷新）'
+                    : code === 'invalid-path' || code === 'invalid-root'
+                      ? '路径不合法'
+                      : '无法在系统资源管理器中打开。',
+                );
+                return res || { ok: false, error: 'failed' };
+              })
+              .catch(function () {
+                showNotice('打开失败', '请求错误');
+                return { ok: false, error: 'rpc-failed' };
+              });
+          },
         };
         /** 分区头"+" → 该分区根的新建待输入行 */
         var rootCreate = function (zone) {
@@ -2632,6 +2848,12 @@ window.__ModuleLoader__.load({
         );
       }
 
+      // ---- 悬浮面板 ctrl+a 作用域 ----
+      // 「最近交互 / 最近打开」的浮层正文: ctrl+a 时把选区限定到它, 而不是整页
+      // (浏览器默认)。由 FloatPanel 在挂载与鼠标交互时登记, document 捕获监听在
+      // FgeRoot 注册一次并消费(焦点在输入框/textarea 时一律放行给原生行为)。
+      var lastFloatBody = null;
+
       // ---- 悬浮面板公共外壳(头部徽标 + 标题 + 关闭 + 内容区) ----
       function FloatPanel(props) {
         // 延迟收起(悬浮栏): 由 FgeRoot 下发的保持区追踪器驱动(region 由调用方指定)
@@ -2641,6 +2863,14 @@ window.__ModuleLoader__.load({
         // 复用共享 useAltWheelHScroll; bodyRef 挂到 .fge-float-body 上(横向溢出在此容器)。
         var bodyRef = React.useRef(null);
         useAltWheelHScroll(bodyRef);
+        // 挂载即成为 ctrl+a 的目标; 卸载时若仍是它则清空。
+        React.useEffect(function () {
+          var el = bodyRef.current;
+          if (el !== null) lastFloatBody = el;
+          return function () {
+            if (lastFloatBody === el) lastFloatBody = null;
+          };
+        }, []);
         return React.createElement(
           'div',
           {
@@ -2648,7 +2878,11 @@ window.__ModuleLoader__.load({
             'data-fge-root': '1',
             style: props.style,
             onMouseEnter: function () {
+              lastFloatBody = bodyRef.current;
               track.enter(region);
+            },
+            onMouseDown: function () {
+              lastFloatBody = bodyRef.current;
             },
             onMouseLeave: function () {
               track.leave(region);
@@ -2716,15 +2950,36 @@ window.__ModuleLoader__.load({
         var reloadSeq = reloadSeqReload[0];
         var setReloadSeq = reloadSeqReload[1];
         var flashTimerRef = React.useRef(null);
+        var copiedState = React.useState(false);
+        var copied = copiedState[0];
+        var setCopied = copiedState[1];
+        var copiedTimerRef = React.useRef(null);
 
         var canEdit = !!data && !data.binary && !data.truncated && typeof data.text === 'string';
         var dirty = editing && canEdit && draft !== data.text;
+        // 复制内容: 编辑态复制草稿(未保存), 只读态复制磁盘正文
+        var copyPayload =
+          editing && canEdit
+            ? draft
+            : data !== null && typeof data.text === 'string'
+              ? data.text
+              : '';
+        var copyable = data !== null && data.binary !== true && data.truncated !== true && copyPayload !== '';
+        var flashCopied = function () {
+          setCopied(true);
+          if (copiedTimerRef.current !== null) clearTimeout(copiedTimerRef.current);
+          copiedTimerRef.current = setTimeout(function () {
+            copiedTimerRef.current = null;
+            setCopied(false);
+          }, 1200);
+        };
 
         // 卸载/换文件时清保存闪现定时器
         React.useEffect(
           function () {
             return function () {
               if (flashTimerRef.current !== null) clearTimeout(flashTimerRef.current);
+              if (copiedTimerRef.current !== null) clearTimeout(copiedTimerRef.current);
             };
           },
           [props.root, props.rel],
@@ -2855,33 +3110,49 @@ window.__ModuleLoader__.load({
           }
         };
 
-        var headExtra = canEdit
-          ? React.createElement(
-              React.Fragment,
-              null,
-              React.createElement(
-                'button',
-                {
-                  className: 'fge-btn' + (editing ? ' fge-btn-active' : ''),
-                  title: editing ? '退出编辑' : '编辑此文件',
-                  onClick: toggleEdit,
-                },
-                editing ? '退出' : '编辑',
-              ),
-              React.createElement(
-                'button',
-                {
-                  className: 'fge-btn',
-                  title: '保存(⌘S；Shift+⌘S 忽略外部修改强制写入)',
-                  onClick: function () {
-                    performSave(false);
+        var headExtra = React.createElement(
+          React.Fragment,
+          null,
+          React.createElement(
+            'button',
+            {
+              className: 'fge-btn' + (copied ? ' fge-btn-copied' : ''),
+              title: editing && canEdit ? '复制当前编辑内容' : '复制文件内容',
+              disabled: !copyable,
+              onClick: function () {
+                if (copyText(copyPayload)) flashCopied();
+              },
+            },
+            copied ? '✓ 已复制' : '复制',
+          ),
+          canEdit
+            ? React.createElement(
+                React.Fragment,
+                null,
+                React.createElement(
+                  'button',
+                  {
+                    className: 'fge-btn' + (editing ? ' fge-btn-active' : ''),
+                    title: editing ? '退出编辑' : '编辑此文件',
+                    onClick: toggleEdit,
                   },
-                  disabled: !dirty || saving,
-                },
-                saving ? '保存中…' : '保存',
-              ),
-            )
-          : null;
+                  editing ? '退出' : '编辑',
+                ),
+                React.createElement(
+                  'button',
+                  {
+                    className: 'fge-btn',
+                    title: '保存(⌘S；Shift+⌘S 忽略外部修改强制写入)',
+                    onClick: function () {
+                      performSave(false);
+                    },
+                    disabled: !dirty || saving,
+                  },
+                  saving ? '保存中…' : '保存',
+                ),
+              )
+            : null,
+        );
 
         var body = null;
         var editBodyStyle =
@@ -3006,6 +3277,10 @@ window.__ModuleLoader__.load({
         var errState = React.useState(null);
         var err = errState[0];
         var setErr = errState[1];
+        var copiedState = React.useState(false);
+        var copied = copiedState[0];
+        var setCopied = copiedState[1];
+        var copiedTimerRef = React.useRef(null);
 
         // commitHash 模式 = 复用本面板展示「某次提交内某文件的 diff」(历史详情点文件行):
         // 走 show 路由取该提交内该路径的 diff; 缺省 = 工作区变更 diff。
@@ -3046,6 +3321,23 @@ window.__ModuleLoader__.load({
           [props.change.path, props.statusVersion, commitHash],
         );
 
+        // 复制当前 diff 原文(untracked 时为文件内容); 二进制/超限无文本可复制。
+        var copyPayload = data !== null && typeof data.text === 'string' ? data.text : '';
+        var copyable = copyPayload !== '';
+        var flashCopied = function () {
+          setCopied(true);
+          if (copiedTimerRef.current !== null) clearTimeout(copiedTimerRef.current);
+          copiedTimerRef.current = setTimeout(function () {
+            copiedTimerRef.current = null;
+            setCopied(false);
+          }, 1200);
+        };
+        React.useEffect(function () {
+          return function () {
+            if (copiedTimerRef.current !== null) clearTimeout(copiedTimerRef.current);
+          };
+        }, []);
+
         var body = null;
         if (err !== null) {
           body = React.createElement('div', { className: 'fge-note' }, '读取失败: ' + err);
@@ -3079,6 +3371,18 @@ window.__ModuleLoader__.load({
         }
 
         var head = null; // 徽标由 FloatPanel 的 badge 提供
+        var headExtra = React.createElement(
+          'button',
+          {
+            className: 'fge-btn' + (copied ? ' fge-btn-copied' : ''),
+            title: '复制 diff 内容',
+            disabled: !copyable,
+            onClick: function () {
+              if (copyText(copyPayload)) flashCopied();
+            },
+          },
+          copied ? '✓ 已复制' : '复制',
+        );
         return React.createElement(
           FloatPanel,
           {
@@ -3087,6 +3391,7 @@ window.__ModuleLoader__.load({
             track: props.track,
             region: props.region || 'df',
             title: props.change.path,
+            headExtra: headExtra,
             onClose: props.onClose,
             onHide: props.onHide,
           },
@@ -3875,6 +4180,40 @@ window.__ModuleLoader__.load({
           window.addEventListener('keydown', onKey);
           return function () {
             window.removeEventListener('keydown', onKey);
+          };
+        }, []);
+
+        // ctrl+a: 有浮层时把选区限定到「最近交互」的浮层正文, 而不是整页。
+        // 焦点在 input / textarea / 可编辑元素时一律放行(编辑态就选中自己那一段)。
+        React.useEffect(function () {
+          function onKey(e) {
+            if (!(e.metaKey || e.ctrlKey) || String(e.key).toLowerCase() !== 'a') return;
+            var ae = document.activeElement;
+            if (ae) {
+              var tag = ae.tagName;
+              if (
+                tag === 'INPUT' ||
+                tag === 'TEXTAREA' ||
+                tag === 'SELECT' ||
+                ae.isContentEditable === true
+              ) {
+                return;
+              }
+            }
+            var el = lastFloatBody;
+            if (!el || !document.contains(el)) return;
+            var sel = window.getSelection ? window.getSelection() : null;
+            if (!sel) return;
+            e.preventDefault();
+            e.stopPropagation();
+            sel.removeAllRanges();
+            var range = document.createRange();
+            range.selectNodeContents(el);
+            sel.addRange(range);
+          }
+          document.addEventListener('keydown', onKey, true);
+          return function () {
+            document.removeEventListener('keydown', onKey, true);
           };
         }, []);
 
