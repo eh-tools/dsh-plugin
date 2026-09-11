@@ -172,6 +172,7 @@ composer 座下方的终端抽屉。**文件树回归官方**,本插件不接管
   文件内容不自己渲染,只是把官方正文页签 `ctx.sidebarRight.float()` 起来,于是 markdown / 代码 / 图片 / html / pdf
   全是官方原版;diff 用官方 `primitives.DiffBlock` 渲染,解析在 host 侧纯函数里。官方文档页签的芯片由本插件
   **影子替换**(顺带加一枚「复制内容」,复制磁盘原文;purpose 里的「复制内容」能力即原 `doc-copy`)。
+  详情**只以浮层出现**:页签条上不闪出详情页签,浮起后右栏也**停在用户原本选中的那一格**(不跳到 git 树)。
 - **终端抽屉**:真 PTY —— `node-pty` ↔ WebSocket ↔ `xterm.js`,vim / htop / 颜色 / 补全 / Ctrl+C 均可用。
   收起态是 composer 下方一枚透明 chevron,点击**向上**展开;抽屉**宽度贯穿、顶部圆角**,配色跟主题 token;
   顶上是 **Windows Terminal 观感的「标题条」**:一枚页签(`>_` 字形 + **尾部省略号**截断的工作区路径 + 悬停出现的 `×`)

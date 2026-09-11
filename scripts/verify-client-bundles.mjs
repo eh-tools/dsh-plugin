@@ -55,14 +55,21 @@ function makeReactStub() {
     return {
         createElement: (type, props, ...children) => ({ type, props: props || {}, children }),
         useState: (init) => [typeof init === 'function' ? init() : init, () => {}],
-        useEffect: () => {},
+        // 记下注册过的 effect: 有的检查要**手动模拟 React 的 flush**(见「详情浮起的两条硬约束」),
+        // 因为桩里的 React 不会自己跑 effect。
+        useEffect: (fn, deps) => {
+            reactStub.__effects.push({ fn, deps });
+        },
         useCallback: (fn) => fn,
         useMemo: (fn) => fn(),
         useRef: (value) => ({ current: value }),
+        __effects: [],
     };
 }
 
-function makeDocumentStub() {
+const reactStub = makeReactStub();
+
+function makeDocumentStub(overrides = {}) {
     const node = () => ({
         style: {},
         setAttribute: () => {},
@@ -84,15 +91,22 @@ function makeDocumentStub() {
         removeEventListener: () => {},
         activeElement: null,
         documentElement: node(),
+        ...overrides,
     };
 }
 
 /**
  * 在 stub 环境里加载一个 client bundle 并执行 apply()。
- * @returns {{id: string, exports: object, slots: Array, tabs: Array, requires: string[]}}
+ * @param {string} relPath bundle 相对仓库根的路径
+ * @param {object} [options] 需要更真的环境时给的覆盖项:
+ *   `sidebarRight`(替掉空对象)、`documentOverrides`、`requireOverrides`、`timers`(收 setTimeout)、
+ *   `listeners`(收 document.addEventListener)、`innerWidth`。
+ * @returns {{id: string, exports: object, slots: Array, tabs: Array, requires: string[], react: object}}
  */
-function loadBundle(relPath) {
+function loadBundle(relPath, options = {}) {
     const source = readFileSync(join(ROOT, relPath), 'utf8');
+    const timers = options.timers === undefined ? [] : options.timers;
+    const listeners = options.listeners === undefined ? [] : options.listeners;
     let registration = null;
     const win = {
         __ModuleLoader__: {
@@ -102,17 +116,34 @@ function loadBundle(relPath) {
         },
         localStorage: { getItem: () => null, setItem: () => {} },
         location: { protocol: 'http:', host: '127.0.0.1' },
-        setTimeout: () => 0,
+        innerWidth: options.innerWidth === undefined ? 1600 : options.innerWidth,
+        setTimeout: (fn, ms) => {
+            timers.push({ fn, ms });
+            return timers.length;
+        },
     };
+    const documentStub = makeDocumentStub({
+        addEventListener: (type, fn, capture) => {
+            listeners.push({ type, fn, capture });
+        },
+        ...(options.documentOverrides || {}),
+    });
     // 顶层唯一的副作用就是这次注册
-    new Function('window', 'document', source)(win, makeDocumentStub());
+    new Function('window', 'document', source)(win, documentStub);
     assert.ok(registration !== null, relPath + ' 顶层应调用 window.__ModuleLoader__.load');
 
     const requires = [];
-    const react = makeReactStub();
+    const react = (options.requireOverrides || {})['react'] || reactStub;
+    react.__effects = [];
     const requireStub = (spec) => {
         requires.push(spec);
         if (spec === 'react') return react;
+        if (
+            options.requireOverrides !== undefined &&
+            options.requireOverrides[spec] !== undefined
+        ) {
+            return options.requireOverrides[spec];
+        }
         if (SEED_MODULES.has(spec)) return {};
         throw new Error('require 了种子表外的模块: ' + spec);
     };
@@ -124,8 +155,8 @@ function loadBundle(relPath) {
     const ctx = {
         slots: {
             inject: (_name, factory) => factory(),
-            register: (options, component) => {
-                slots.push({ options, component });
+            register: (options_, component) => {
+                slots.push({ options: options_, component });
                 return () => {};
             },
         },
@@ -148,9 +179,19 @@ function loadBundle(relPath) {
             };
         },
         get: () => undefined,
+        ...(options.ctx || {}),
     };
     exportsObj.apply(ctx);
-    return { id: registration.id, exports: exportsObj, slots, tabs, requires };
+    return {
+        id: registration.id,
+        exports: exportsObj,
+        slots,
+        tabs,
+        requires,
+        react,
+        timers,
+        listeners,
+    };
 }
 
 const slotOf = (bundle, name) => bundle.slots.filter((s) => s.options.name === name);
@@ -256,6 +297,128 @@ const OFFICIAL_TEXT_ID = '@deepseek-ai/dsh-client-ui-sidebar-documentpreview';
         }
     });
 }
+
+// ---- fge: 详情浮起的两条硬约束(页签条"闪一下" / 右栏自己跳回 git 树) ----
+//
+// 这两条都是**只在真浏览器里才看得见**的时序行为, 但成因离散且可离线复现:
+//   · 新页签挂载的那一次 commit 里调 sidebarRight 必抛「no session surface is mounted」,
+//     官方座位在同一轮 effect flush 的收尾就重绑好 —— 所以**必须用微任务重试**。
+//     退回 setTimeout(60ms) 就会把"详情页签已在页签条上"的中间态画到屏幕上 3–5 帧:
+//     使用者看到的就是"先加一个 tag, 闪一下, 消失"。
+//   · 详情页签追加在来源 pane 末尾, 官方 float 把 activeTabId 改成 `tabs[index-1]`
+//     (dockkit float reducer) —— 从「文件」页签点文件时, 左边那格正是 git 树,
+//     观感就是"右栏自己切回 git 树了"。所以浮起之后要把用户原本那一格 focus 回来。
+async function checkAsync(label, fn) {
+    try {
+        await fn();
+        ok(label);
+    } catch (err) {
+        failures.push(label + ' :: ' + (err && err.message));
+        console.error('not ok - ' + label + ' :: ' + (err && err.message));
+    }
+}
+
+await checkAsync(
+    'fge: 座位空隙的重试走微任务(不走定时器) + 浮起后把用户那一格 focus 回来',
+    async () => {
+        const floatCalls = [];
+        const focusCalls = [];
+        const requireOverrides = {
+            // 芯片要复刻官方外观(FileTypeIcon / classifyFileType 等), 这里给个"什么都能当函数调"的桩。
+            '@deepseek-ai/dsh-client-ui-primitives': new Proxy({}, { get: () => () => null }),
+        };
+        const b = loadBundle('plugins/file-git-explorer/lib/client.js', {
+            requireOverrides,
+            // 右栏面板量得出宽度(否则会走"量不出 rect"那一路, 那是另一条合法分支)。
+            documentOverrides: {
+                querySelector: (sel) => {
+                    if (typeof sel === 'string' && sel.includes('[data-sidebar-right-panel')) {
+                        return {
+                            getBoundingClientRect: () => ({
+                                width: 300,
+                                height: 900,
+                                left: 1300,
+                                top: 0,
+                            }),
+                        };
+                    }
+                    if (typeof sel === 'string' && sel.includes('aria-selected')) {
+                        return {
+                            getAttribute: (name) =>
+                                name === 'data-dockkit-tab' ? 'tab-files' : null,
+                        };
+                    }
+                    return null;
+                },
+            },
+            ctx: {
+                sidebarRight: {
+                    float: (tabId) => {
+                        floatCalls.push(tabId);
+                        // 真浏览器实测: 新页签挂载那一轮里官方座位还没重绑, 第一次必抛这个错。
+                        if (floatCalls.length === 1)
+                            throw new Error('sidebarRight: no session surface is mounted');
+                    },
+                    focus: (tabId) => focusCalls.push(tabId),
+                    close: () => {
+                        throw new Error('sidebarRight: no session surface is mounted');
+                    },
+                    active: () => undefined,
+                },
+            },
+        });
+
+        // 1) 用户点了一下右栏正文(不是页签条) —— 插件应记住"用户原本在看的页签"。
+        const click = b.listeners.find((l) => l.type === 'click' && l.capture === true);
+        assert.ok(click !== undefined, 'apply() 应挂一个捕获阶段的 click 监听记录用户页签');
+        click.fn({ target: { closest: () => null } });
+
+        // 2) 渲染官方文档芯片 —— 文件详情与 diff 详情都走这一条采纳路径。
+        const shadow = b.slots.find(
+            (s) =>
+                s.options.name === 'sidebar.right.pane.tab.title' &&
+                s.options.key === OFFICIAL_TEXT_ID,
+        );
+        assert.ok(shadow !== undefined, '应影子注册官方 text 芯片槽');
+        shadow.component({
+            sessionId: 'session-1',
+            useTabInfo: () => ({
+                tab: {
+                    id: 'tab-doc',
+                    kind: 'text',
+                    title: 'README.md',
+                    visible: true,
+                    navigation: { revision: 1, params: {}, address: '' },
+                },
+            }),
+        });
+
+        // 3) 手动 flush 那次渲染注册的 effect(桩里的 React 不会自己跑)。
+        const effects = b.react.__effects.slice();
+        assert.ok(effects.length > 0, '芯片应注册 useEffect(采纳悬浮详情)');
+        for (const effect of effects) effect.fn();
+        // 微任务重试: 让出几拍, 但不给定时器任何机会(桩里的 setTimeout 只记账、不执行)。
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        assert.deepEqual(
+            floatCalls,
+            ['tab-doc', 'tab-doc'],
+            '第一次抛错后应在同一个 task 内立刻重试',
+        );
+        assert.deepEqual(
+            b.timers.map((t) => t.ms),
+            [],
+            '座位空隙的重试不得走 setTimeout —— 那会把详情页签在页签条上画出来(实测 45–66ms / 3–5 帧)',
+        );
+        assert.deepEqual(
+            focusCalls,
+            ['tab-files'],
+            '浮起后应把用户原本那一格 focus 回来(否则右栏跳回 git 树)',
+        );
+    },
+);
 
 console.log('');
 if (failures.length > 0) {

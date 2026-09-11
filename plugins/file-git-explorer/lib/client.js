@@ -13,6 +13,12 @@
 //      成一个悬浮面板 —— 于是 markdown / 代码 / 图片 / html / pdf 全是官方原版, 本插件零正文
 //      渲染代码。拿 tabId 的路为什么只有这一条, 见 docs/adr/0003。
 //
+// 两条对所有详情都成立的保证(成因与实测见 docs/adr/0004):
+//   · **详情只以浮层出现**: 浮起前那次"座位绑定空隙"用**微任务**重试(定时器会把详情页签在
+//     页签条上画出 3–5 帧 —— 就是使用者说的"先加一个 tag, 闪一下, 消失");
+//   · **右栏不自己跳页签**: 浮起之后把用户原本选中的那一格 `focus()` 回来(dockkit 的 float 会把
+//     活动页签改成"详情左边那一格", 从「文件」点文件就会跳去 git 树)。
+//
 // ⚠ 影子替换的机制(实测 SlotCore.register): keyed 槽**同 key 同 priority 会直接抛错**,
 //   渲染取的是排序后该 key 的**第一条**, 而排序按 priority **升序**(最低者渲染)。
 //   官方 `text` 类型的 title 注册没有 priority(即 0), 所以本插件必须用**负数** priority。
@@ -63,6 +69,11 @@ window.__ModuleLoader__.load({
       /** float() 的重试预算: 座位瞬时缺位(见 floatWithRetry)下一次就够, 这里留足余量。 */
       var FLOAT_ATTEMPTS = 6;
       var FLOAT_RETRY_MS = 60;
+      /**
+       * 座位绑定空隙用微任务重试的次数(见 retryFloat): 空隙在同一次 effect flush 收尾就补好,
+       * 1 次就够, 留 2 次只是容错。之后才退回定时器。
+       */
+      var FLOAT_MICRO_ATTEMPTS = 2;
       /** 右侧栏默认页签的重试预算(等座位绑定 + files 类型到位)。 */
       var SEED_ATTEMPTS = 20;
       var SEED_RETRY_MS = 150;
@@ -204,10 +215,17 @@ window.__ModuleLoader__.load({
           //
           // 1) 右栏宽度上限 = 15vw。官方没有公开的宽度 API: `setRightbar` 只在 layout 内部, 还被钳制到
           //    [300px, 0.7×视口]; 首开宽度更是 45% of frame(`RIGHTBAR_DEFAULT_RATIO`)。所以这里**只改画法**:
-          //    把 frame 的第三轨压成 0、再把面板本身限宽 —— 中栏因此拿回整块宽度(1920 宽实测: 864px → 289px)。
+          //    把 frame 第三轨定成 15vw、再把面板本身也限到同样宽 —— 于是右栏**占真实的一格轨道**,
+          //    打开时把中栏挤窄(而不是浮在它上面), 中栏剩下的宽度 = 总宽 - 左栏 - 15vw。
+          //    ⚠ 第三轨**不能写成 0**: 轨道为 0 时官方面板(`position:absolute; right:0`)会向左挂到中栏上面
+          //    (官方注释原话 "it can hang over the centre when there is no track"), 看起来就是浮层 —— 实测踩过。
+          //    ⚠ 折叠时必须把这一轨**还给中栏**, 所以按官方的 `data-rightbar-collapsed` 分成两条规则。
           //    左栏那一轨交给 `auto`(官方侧栏组件自带宽度), 于是收起成 56px 细条、拖动变宽都照旧。
           //    改 15 就改下面这一个数。
-          'div:has(> [data-rightbar-col]){grid-template-columns:auto minmax(0,1fr) 0px!important}',
+          'div:has(> [data-rightbar-col]):not([data-rightbar-collapsed]){grid-template-columns:auto minmax(0,1fr) ' +
+            String(RIGHTBAR_MAX_VW) +
+            'vw!important}',
+          '[data-rightbar-collapsed]:has(> [data-rightbar-col]){grid-template-columns:auto minmax(0,1fr) 0px!important}',
           '[data-sidebar-right-panel="push"]{max-width:' + String(RIGHTBAR_MAX_VW) + 'vw!important}',
           //    宽度被限死之后, 官方那根右栏拖柄(它写的是 store 宽度, 已经不起作用)留在聊天区中间只会误导, 一并隐藏。
           '[data-side="rightbar"]{display:none}',
@@ -380,6 +398,48 @@ window.__ModuleLoader__.load({
         if (target !== null) tryClose(target.tabId);
       }
 
+      // ---- 浮起之后把「用户原本在看的那一格」focus 回来 ----
+      //
+      // 详情页签总是**追加在来源 pane 的末尾**, 而官方的 float 会把该 pane 的 activeTabId 改成
+      // `tabs[index - 1]`(dockkit 的 float reducer: `W3(tabs, s)` = 去掉被浮起的那格后的
+      // `tabs[max(0, s - 1)]`)。于是浮起「文件详情」之后右栏会跳到详情左边那一格 —— 而那一格
+      // 通常正是先打开的 git 树, 观感就是"右栏自己切回 git 树了"。
+      //
+      // 修法不是猜"左边那格应该是谁", 而是记住用户动手之前页签条上真正选中的那一格:
+      // 详情浮起后 focus 回去, 右栏就停在用户原本看的地方(文件详情 → 停在「文件」, diff → 停在「Git」)。
+      var userTabId = null;
+
+      /**
+       * 记下用户这次动作之前右栏选中的页签。
+       *
+       * 读的是页签条上的 `aria-selected`(而不是问 `sidebarRight.active()`): 捕获阶段拿到的就是
+       * 动作发生前的状态, 而且**每次都重新读**, 不存在"上次读到的是什么时候"的陈旧问题。
+       * 点在页签条本身上时跳过 —— 那是用户在切页签, 记下旧值只会把下次的回落目标指错。
+       */
+      function rememberUserTab(ev) {
+        if (typeof document === 'undefined') return;
+        var target = ev.target;
+        if (target !== null && typeof target.closest === 'function' && target.closest('[data-dockkit-tab]') !== null) {
+          return;
+        }
+        var active = document.querySelector('[data-dockkit-strip] [data-dockkit-tab][aria-selected="true"]');
+        userTabId = active === null ? null : active.getAttribute('data-dockkit-tab');
+      }
+
+      /**
+       * 浮起详情之后把用户那一格 focus 回来; 它已经被关掉(或座位又瞬时缺位)就保持官方落点。
+       * @param {string} detailTabId 刚浮起的那一格, 等于用户那一格时不动
+       */
+      function restoreUserTab(detailTabId) {
+        var id = userTabId;
+        if (id === null || id === undefined || id === detailTabId) return;
+        try {
+          ctx.sidebarRight.focus(id);
+        } catch (err) {
+          // 座位瞬时缺位: 不影响详情已经浮起这件事, 只是右栏停在官方那格上。
+        }
+      }
+
       /**
        * 右栏可视区域的左缘(视口 x)。
        *
@@ -433,13 +493,35 @@ window.__ModuleLoader__.load({
       }
 
       /**
+       * 重试一次的两种时钟。
+       *
+       * ⚠ 座位绑定空隙在同一**次** effect flush 的收尾就补好了: 卸载阶段先跑整棵树,
+       * 装载阶段子先父后, 我们这个芯片的 effect 夹在中间 —— 所以一次微任务足够, 而且微任务
+       * 天然落在 paint 之前。用 `setTimeout(FLOAT_RETRY_MS)` 会把这 60ms 的中间态画到屏幕上
+       * (实测: 页签条上冒出详情页签 45–66ms / 3–5 帧), 那正是"先加一个 tag、闪一下"的来源。
+       * 只有"量不出 rect"(右栏还在展开、没有轨道)那一路才真的需要等下一帧, 仍走定时器。
+       */
+      function retryFloat(tabId, attempt, previous) {
+        if (attempt < FLOAT_MICRO_ATTEMPTS) {
+          Promise.resolve().then(function () {
+            floatWithRetry(tabId, attempt + 1, previous);
+          });
+          return;
+        }
+        window.setTimeout(function () {
+          floatWithRetry(tabId, attempt + 1, previous);
+        }, FLOAT_RETRY_MS);
+      }
+
+      /**
        * 浮起 + 重试。**关掉上一个的动作也放在这个重试循环里** —— 理由见下。
        *
        * ⚠ 实测(真 boot + 真浏览器): **新页签挂载的那一次 commit 里, 直接调 sidebarRight 的
        * 命令会抛 `sidebarRight: no session surface is mounted`**。原因是官方座位的绑定写在
        * `useEffect(() => bindService({...}), [..., surfaces])` 里, 而新页签让 `surfaces` 变了:
        * 那次 flush 先跑**卸载**阶段(座位释放绑定)、再跑**挂载**阶段, 而挂载阶段是子先父后 ——
-       * 我们这个芯片的 effect 正好夹在"座位已释放、尚未重绑"的空隙里。下一次事件循环绑定就回来了。
+       * 我们这个芯片的 effect 正好夹在"座位已释放、尚未重绑"的空隙里。**空隙在同一轮 flush 的收尾
+       * 就补好了**(父的装载 effect 就在后面), 所以重试用微任务而不是定时器 —— 见 retryFloat。
        *
        * 所以 close() 与 float() **都要重试**, 且必须在同一次尝试里按"先关后浮"的顺序做:
        * 只重试 float 的话, 第一次 close 悄悄失败, 结果就是两个悬浮面板并存(实测确实如此)。
@@ -460,18 +542,15 @@ window.__ModuleLoader__.load({
         }
         // 先关旧的。关不掉(座位瞬时缺位)就整体重来, 不能带着两个悬浮面板继续。
         if (previous !== null && !tryClose(previous) && attempt < FLOAT_ATTEMPTS) {
-          window.setTimeout(function () {
-            floatWithRetry(tabId, attempt + 1, previous);
-          }, FLOAT_RETRY_MS);
+          retryFloat(tabId, attempt, previous);
           return;
         }
         try {
           ctx.sidebarRight.float(tabId, rect === null ? undefined : rect);
+          restoreUserTab(tabId);
         } catch (err) {
           if (attempt < FLOAT_ATTEMPTS) {
-            window.setTimeout(function () {
-              floatWithRetry(tabId, attempt + 1, previous);
-            }, FLOAT_RETRY_MS);
+            retryFloat(tabId, attempt, previous);
             return;
           }
           console.warn('[fge] 悬浮详情不可用(右侧栏没有已挂载的会话座位)', err);
@@ -2057,6 +2136,18 @@ window.__ModuleLoader__.load({
           );
         });
       }, 'fge: rightbar default tab');
+
+      // 记「用户动手之前右栏选中的那一格」: 浮起详情之后 focus 回去, 右栏不会自己跳走(见 restoreUserTab)。
+      // 捕获阶段: 要在官方正文里的点击处理之前读到页签条的选中态。
+      ctx.effect(
+        function () {
+          document.addEventListener('click', rememberUserTab, true);
+          return function () {
+            document.removeEventListener('click', rememberUserTab, true);
+          };
+        },
+        'fge: remember the user tab before a detail opens',
+      );
 
       // Esc 关掉本插件浮起的详情。跟终端抽屉共用同一条焦点分流: 焦点在终端里时 Esc 归终端
       // (见 TerminalDock 的 keydown), 不要连带把悬浮面板也关掉。
