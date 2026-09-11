@@ -153,16 +153,22 @@ window.__ModuleLoader__.load({
           '.fge-copy[data-s="failed"]{color:#d9534f}',
           // 终端抽屉: 座位在 composer 之下(conversation.composer.dock), 居中靠对话根元素上的
           // --dsh-chat-content-width, 零 JS 测量。
-          '.fge-term{display:flex;flex-direction:column;width:100%;max-width:var(--dsh-chat-content-width);margin-inline:auto;border-top:1px solid rgba(103,153,254,.5);background:var(--dsw-alias-bg-base,rgba(0,0,0,.18))}',
-          '.fge-term-head{display:flex;align-items:center;gap:6px;padding:2px 8px;font-size:11.5px}',
+          // 终端抽屉: 座位在 composer 之下(conversation.composer.dock), **宽度贯穿整个座位**;
+          // 颜色全走主题 token(--dsw-alias-*), 不写死蓝/黑, 于是明暗主题与自定义主题都跟得上。
+          '.fge-term{display:flex;flex-direction:column;width:100%;border-top:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}',
+          // header 本身也是收起开关(点它 = ✕: 只收抽屉, 不杀进程), 所以给指针 + 悬停反馈。
+          // 底色显式取主题的"抬高表面"色(浅色主题下与 bg-base 同为白, 深色主题下自然分层),
+          // 分隔线跟官方面板 header 同款(见 ui-sidebar-files 的 .header: border-bottom border-l3)。
+          '.fge-term-head{display:flex;align-items:center;gap:6px;padding:3px 10px;font-size:11.5px;cursor:pointer;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);border-bottom:1px solid var(--dsw-alias-border-l3)}',
+          '.fge-term-head:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}',
           '.fge-term-grip{height:5px;cursor:ns-resize;background:transparent}',
-          '.fge-term-grip:hover{background:rgba(103,153,254,.45)}',
-          '.fge-term-body{flex:1 1 auto;min-height:0;padding:2px 4px 4px}',
+          '.fge-term-grip:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+          '.fge-term-body{flex:1 1 auto;min-height:0;padding:2px 4px 4px;background:var(--dsw-alias-bg-base)}',
           '.fge-term-body .xterm{height:100%}',
-          // 抽屉舌: 透明、无边框的一枚 chevron, 居中(旧实现的观感, 见 v0.2 的 .fge-strip)。
-          '.fge-tongue{display:flex;align-items:center;justify-content:center;width:100%;max-width:var(--dsh-chat-content-width);margin-inline:auto;padding:1px 0 3px;background:transparent;border:0;color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));cursor:pointer;user-select:none}',
+          // 抽屉舌: 同样宽度贯穿, 中间一枚透明无边框 chevron(旧实现的观感, 见 v0.2 的 .fge-strip)。
+          '.fge-tongue{display:flex;align-items:center;justify-content:center;width:100%;padding:1px 0 3px;background:transparent;border:0;color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));cursor:pointer;user-select:none}',
           '.fge-tongue:hover{color:var(--dsw-alias-label-primary)}',
-          '.fge-chip{font-size:11px;padding:0 5px;border-radius:999px;background:rgba(128,128,128,.2);white-space:nowrap}',
+          '.fge-chip{font-size:11px;padding:0 5px;border-radius:999px;background:var(--dsw-alias-interactive-bg-hover);white-space:nowrap}',
         ].join('\n');
         document.head.appendChild(el);
       }
@@ -1612,9 +1618,18 @@ window.__ModuleLoader__.load({
             onMouseDown: onGripDown,
             title: '拖动调整高度',
           }),
+          // header 就是收起开关: 点它跟点 ✕ 一样只收抽屉、不杀进程;
+          // ■ / ✕ 上的点击要 stopPropagation, 否则会连带收起。
           h(
             'div',
-            { className: 'fge-term-head' },
+            {
+              className: 'fge-term-head',
+              title: '点击收起(不杀进程)',
+              onClick: function () {
+                setDrawer(false);
+              },
+            },
+            h(primitives.IconChevronDownOutline14, { size: 14 }),
             h('span', { className: 'fge-chip' }, root || '(无工作区)'),
             h('span', { className: 'fge-spacer' }),
             h(
@@ -1622,7 +1637,8 @@ window.__ModuleLoader__.load({
               {
                 className: 'fge-btn',
                 title: '终止整棵终端进程树',
-                onClick: function () {
+                onClick: function (ev) {
+                  ev.stopPropagation();
                   if (root !== '') killTerminal(root);
                 },
               },
@@ -1633,7 +1649,8 @@ window.__ModuleLoader__.load({
               {
                 className: 'fge-btn',
                 title: '收起(不杀进程)',
-                onClick: function () {
+                onClick: function (ev) {
+                  ev.stopPropagation();
                   setDrawer(false);
                 },
               },

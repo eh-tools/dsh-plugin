@@ -10,8 +10,9 @@
   文件内容**不自己渲染**: 本插件只是把官方正文页签 `ctx.sidebarRight.float()` 起来, 于是
   markdown / 代码 / 图片 / html / **pdf 全部是官方原版**; diff 用官方 `primitives.DiffBlock`。
 - **终端抽屉**(kind 无, 座位 `conversation.composer.dock`): **真 PTY** —— `node-pty` ↔ WebSocket ↔
-  `xterm.js`, 所以 vim / htop / 颜色 / 补全 / Ctrl+C 全部可用。收起态是 composer 下方一枚居中的透明
-  chevron, 点击**向上**展开。终端只有这一种形态(没有右栏终端页签)。
+  `xterm.js`, 所以 vim / htop / 颜色 / 补全 / Ctrl+C 全部可用。收起态是 composer 下方一枚透明 chevron,
+  点击**向上**展开;抽屉宽度贯穿座位, 配色全走主题 token, **点 header 即可收起**。
+  终端只有这一种形态(没有右栏终端页签)。
 - 文件树**回归官方**: 本插件既不接管、也不自绘文件树。
 
 静态双半插件(host + client bundle), 随 web profile 启动自动加载。
@@ -80,9 +81,13 @@ pnpm --dir plugins/file-git-explorer install
 
 ### 终端抽屉
 
-- **抽屉舌**: composer 下方一枚居中的透明 chevron(透明、无边框, 只留一枚小三角), 点击**向上**展开。整条与抽屉都用
-  `max-width: var(--dsh-chat-content-width); margin-inline: auto` 居中 —— 该变量定义在**对话根元素**上,
-  座位在它的子树内, 所以**零 JS 测量**。
+- **抽屉舌**: composer 下方一枚透明 chevron(无边框, 只留一枚小三角), 点击**向上**展开。**抽屉舌与抽屉都宽度贯穿
+  座位**(填满 `conversation.composer.dock` 的内容盒, 与上方的 composer 同宽), 不做居中收窄 —— 所以不需要任何尺寸测量。
+- **header 即收起开关**: 点 header(含左侧那枚 chevron-down)跟点 `✕` 一样只收抽屉、**不杀进程**; header 上的
+  `■` / `✕` 自己 `stopPropagation`, 不会连带收起。
+- **配色跟主题**: 抽屉 / header / 拖柄 / chip 全部用主题 token(`--dsw-alias-bg-layer-2`、`-bg-base`、
+  `-border-l2/l3`、`-label-primary/secondary/tertiary`、`-interactive-bg-hover`), 不写死颜色, 明暗与自定义主题
+  都跟得上。
 - **高度**: 上缘拖柄可调 **20%~70%**, 按工作区记忆在 `localStorage`(默认 40%)。
 - **`■`** 终止该工作区终端整棵进程树(Windows 下走 ConPTY 终止整树)。**`✕`** 只是收起抽屉, **不杀进程** ——
   抽屉关闭 / 切换会话 / 刷新页面都不影响它。
@@ -225,8 +230,9 @@ hunk 的范围由 `@@` 头声明的增删数**界定**, 所以 hunk 内一行内
   面板靠 CSS `transform` 滑入滑出, 展开动画期间量它只会拿到中间值, 而列本身不动。列宽为 0(`data-rightbar-collapsed`)时无轨道。
 - **右栏折叠必须显式关掉悬浮面板**: 悬浮面板在 `document.body` 上的一个 `fixed` portal 里(`z-index: 60`), 不随右栏滑走。
   本插件用一个只监听 `data-rightbar-collapsed` 的 `MutationObserver` 来关。
-- **居中用变量, 不用测量**: `--dsh-chat-content-width` 定义在**对话根元素**上, `conversation.composer.dock`
-  在其子树内, 所以 `max-width: var(--dsh-chat-content-width); margin-inline: auto` 即可, 零 JS。
+- **终端抽屉不参与这套几何**: 它在 `conversation.composer.dock` 里**宽度贯穿**整个座位, 既不用量也不用
+  `--dsh-chat-content-width`。(该变量仍定义在对话根元素上, 座位在它的子树内 —— 以后要做居中的座位元素可以
+  直接 `max-width: var(--dsh-chat-content-width); margin-inline: auto`, 零 JS。)
 
 ### 7. `DiffBlock` 的契约
 
@@ -267,7 +273,8 @@ eslint .                     # 仓库统一 lint(client bundle 按惯例忽略)
 5. 悬浮面板头部:文件名前有文件类型图标,后随一枚**复制图标**;点它 → 图标变「已复制」,剪贴板是磁盘原文
    (只有带扩展名的文件有;`html`/`pdf`/图片与无扩展名文件没有这枚图标)。
 6. 收起右栏 / 切换会话 / 切换工作区 → 面板消失。
-7. composer 下方有居中的抽屉舌;点它**向上**展开终端(能跑 `vim` / 颜色 / 补全);`✕` 只收起、`■` 才杀进程;
+7. composer 下方有**宽度贯穿**的抽屉舌;点它**向上**展开终端(能跑 `vim` / 颜色 / 补全);抽屉与 header 的颜色
+   跟当前主题一致(切明/暗主题看一眼);**点 header 能收起**、`✕` 只收起、`■` 才杀进程;
    刷新页面后重开抽屉应看到历史输出;Esc(焦点在终端外)收起。
 8. 全程 DevTools 控制台**零 pageerror**、零插件 `console.error`。
 
