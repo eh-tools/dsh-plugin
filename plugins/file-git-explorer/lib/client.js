@@ -168,13 +168,26 @@ window.__ModuleLoader__.load({
           // 终端抽屉: 座位在 composer 之下(conversation.composer.dock), **宽度贯穿整个座位**,
           // 顶部两角圆角; 颜色全走主题 token(--dsw-alias-*), 不写死蓝/黑, 于是明暗主题都跟得上。
           '.fge-term{display:flex;flex-direction:column;width:100%;border-top:1px solid var(--dsw-alias-border-l2);border-radius:12px 12px 0 0;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}',
-          // header 本身也是收起开关(点它 = 点 `-`: 只收抽屉, 不杀进程), 所以给指针 + 悬停反馈。
-          // 底色显式取主题的"抬高表面"色(浅色主题下与 bg-base 同为白, 深色主题下自然分层),
+          // 标题条(terminal title bar): 长得像 Windows Terminal 的页签栏, 但**不是多页签容器**
+          // —— 每工作区仍只有一个终端(见 CONTEXT.md「工作区终端」), 所以条里恒定一枚页签。
+          // 条本身仍是收起开关(点空白处 = 点页签上的 `×`: 只收抽屉, 不杀进程)。
+          // 底色取主题的"抬高表面"色(浅色主题下与 bg-base 同为白, 深色主题下自然分层),
           // 分隔线跟官方面板 header 同款(见 ui-sidebar-files 的 .header: border-bottom border-l3)。
-          '.fge-term-head{display:flex;align-items:center;gap:6px;padding:3px 10px;font-size:11.5px;cursor:pointer;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);border-bottom:1px solid var(--dsw-alias-border-l3)}',
-          '.fge-term-head:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}',
-          // 两个字形按钮: `-` 在左(收起), `■` 在右(终止整树, 危险色)。
-          '.fge-term-glyph{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:18px;padding:0 4px;font-size:14px;line-height:1}',
+          '.fge-term-strip{display:flex;align-items:flex-end;gap:2px;padding:3px 8px 0;font-size:11.5px;cursor:pointer;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);border-bottom:1px solid var(--dsw-alias-border-l3)}',
+          // 页签: 只有当前工作区这一枚, 恒为活动态 —— 底色与终端体同色, 两角圆角, 再用 1px 实心
+          // 投影**盖掉条的底边**, 做出"页签与终端相连"的观感(只靠圆角出不来页签形)。
+          '.fge-term-tab{display:flex;align-items:center;gap:5px;min-width:0;max-width:42%;padding:3px 6px 3px 8px;border-radius:6px 6px 0 0;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);box-shadow:0 1px 0 0 var(--dsw-alias-bg-base);cursor:pointer}',
+          // 页签字形: primitives 里没有终端图标(75 枚图标全表最接近的只有 IconCodeOutline16),
+          // 所以自绘 `>_` —— 与 `■` 同款做法, 不引依赖。
+          '.fge-term-tab-glyph{flex:0 0 auto;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;opacity:.7}',
+          // 标题 = 工作区路径: 单行, 尾部省略号(截断成 `E:\\dev-tools\\Pc…`, 与 Windows Terminal 同款)。
+          '.fge-term-tab-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+          // 页签上的 `×`: 平时不占位, hover / 键盘聚焦才出现(WT 同款); 语义是**收起抽屉, 不杀进程**。
+          '.fge-term-tab-close{flex:0 0 auto;display:none;align-items:center;justify-content:center;width:14px;height:14px;padding:0;border:0;border-radius:3px;background:transparent;color:inherit;font-size:11px;line-height:1;cursor:pointer}',
+          '.fge-term-tab:hover .fge-term-tab-close,.fge-term-tab-close:focus-visible{display:inline-flex}',
+          '.fge-term-tab-close:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+          // 条右端的 `■`: 终止整棵终端进程树(危险色) —— 人停止终端的唯一入口, 与 `×`(收起)分开。
+          '.fge-term-glyph{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:18px;padding:0 4px;margin-bottom:3px;font-size:14px;line-height:1}',
           '.fge-term-kill{color:var(--dsw-alias-state-error-primary)}',
           '.fge-term-kill:hover{color:var(--dsw-alias-state-error-primary);background:var(--dsw-alias-interactive-bg-hover-danger)}',
           '.fge-term-grip{height:5px;cursor:ns-resize;background:transparent}',
@@ -1069,12 +1082,21 @@ window.__ModuleLoader__.load({
         }
       }
 
+      /** 按会话缓存的 git 页签视图状态(见 GitTabBody 顶部注释)。 */
+      var gitViews = new Map();
+
       /**
        * 本插件的常驻 git 页签。
        *
        * 页签内是**两份列表**(变更列表 + 提交历史), 点提交**就地展开**它的文件, 所以
        * 页签内没有「返回上一层」这件事。点任一文件(变更行的、或提交展开出来的)都把
        * diff 送进悬浮面板 —— git 本体不开悬浮面板。
+       *
+       * ⚠ 本组件**会被卸载重挂**: dockkit 只渲染活动页签的页签体, 而点文件打开的 diff 页签会成为
+       * 活动页签, 于是 git 页签体被卸载; diff 页签浮起后离开页签条, git 页签又成为活动页签、重新挂载。
+       * 状态若只放组件里, 就会出现"点一下文件, 历史列表闪一下、刚展开的提交被收起来"(实测复现)。
+       * 所以 info / status / 查看分支 / 历史 / 展开表都按会话 + 工作区缓存在模块级 Map 里, 重挂时恢复,
+       * 并且**同一工作区的重挂不重新拉取**(不闪)。
        */
       function GitTabBody(props) {
         var useTabInfo = props.useTabInfo;
@@ -1087,10 +1109,16 @@ window.__ModuleLoader__.load({
         var sessionCwd = useSessionCwd(useSessions, sessionId);
         var running = useSessionRunning(useSessions, sessionId);
 
-        var infoPair = React.useState(null);
+        // 只有"同一个工作区"的缓存可以直接复用; 换工作区必须重来。
+        var viewKey = sessionId || '(no-session)';
+        var cachedView = gitViews.get(viewKey);
+        var restored =
+          cachedView !== undefined && cachedView.cwd === sessionCwd ? cachedView : null;
+
+        var infoPair = React.useState(restored === null ? null : restored.info);
         var info = infoPair[0];
         var setInfo = infoPair[1];
-        var statusPair = React.useState(null);
+        var statusPair = React.useState(restored === null ? null : restored.status);
         var status = statusPair[0];
         var setStatus = statusPair[1];
         var errorPair = React.useState(null);
@@ -1099,13 +1127,13 @@ window.__ModuleLoader__.load({
         var busyPair = React.useState(false);
         var busy = busyPair[0];
         var setBusy = busyPair[1];
-        var refPair = React.useState('');
+        var refPair = React.useState(restored === null ? '' : restored.viewedRef);
         var viewedRef = refPair[0];
         var setViewedRef = refPair[1];
-        var histPair = React.useState(null);
+        var histPair = React.useState(restored === null ? null : restored.history);
         var history = histPair[0];
         var setHistory = histPair[1];
-        var expPair = React.useState({});
+        var expPair = React.useState(restored === null ? {} : restored.expanded);
         var expanded = expPair[0];
         var setExpanded = expPair[1];
         var menuPair = React.useState(false);
@@ -1146,8 +1174,14 @@ window.__ModuleLoader__.load({
           [menuOpen],
         );
 
-        /** 最近一次 info/status 得到的根, 供各次 git 调用复用(避免把 status 塞进所有依赖)。 */
-        var repoRef = React.useRef({ root: null, repoRoot: null });
+        /**
+         * 最近一次 info/status 得到的根, 供各次 git 调用复用(避免把 status 塞进所有依赖)。
+         * 重挂时直接从缓存里恢复 —— 否则刚挂载就点文件会带着空的 repoRoot 去请求。
+         */
+        var repoRef = React.useRef({
+          root: restored !== null && restored.info !== null ? restored.info.cwd : null,
+          repoRoot: restored !== null && restored.status !== null ? restored.status.repoRoot : null,
+        });
         var handlers = React.useRef({});
 
         var root = sessionCwd || (info ? info.cwd : null);
@@ -1235,8 +1269,22 @@ window.__ModuleLoader__.load({
         // 每次渲染都把最新闭包放进 ref, 供 effect / 延时回调取用(避免依赖数组抖动)。
         handlers.current = { reload: reload, loadHistory: loadHistory };
 
+        // 视图状态回写缓存(每次渲染后都写)。重挂时就是靠它恢复的。
+        React.useEffect(function () {
+          gitViews.set(viewKey, {
+            cwd: sessionCwd,
+            info: info,
+            status: status,
+            viewedRef: viewedRef,
+            history: history,
+            expanded: expanded,
+          });
+        });
+
         React.useEffect(
           function () {
+            // 同一工作区的重挂(例如点文件开了 diff 页签又回来): 从缓存恢复, 既不清状态也不重新拉取。
+            if (restored !== null) return;
             setViewedRef('');
             setExpanded({});
             setHistory(null);
@@ -1832,31 +1880,40 @@ window.__ModuleLoader__.load({
             onMouseDown: onGripDown,
             title: '拖动调整高度',
           }),
-          // header 就是收起开关: 点它跟点左边的 `-` 一样只收抽屉、不杀进程;
-          // 两个字形按钮上的点击要 stopPropagation, 否则会连带收起。
+          // 条 = Windows Terminal 观感的「标题条」: 点条空白处收起(不杀进程), 与点页签上的 `×` 等价;
+          // 页签里**恒定只有当前工作区这一枚**(外观档, 不引入多终端, 见 CONTEXT.md「终端标题条」)。
+          // 条内按钮上的点击要 stopPropagation, 否则会连带收起。
           h(
             'div',
             {
-              className: 'fge-term-head',
+              className: 'fge-term-strip',
               title: '点击收起(不杀进程)',
               onClick: function () {
                 setDrawer(false);
               },
             },
             h(
-              'button',
+              'div',
               {
-                className: 'fge-btn fge-term-glyph',
-                title: '收起(不杀进程)',
-                'aria-label': '收起终端抽屉',
-                onClick: function (ev) {
-                  ev.stopPropagation();
-                  setDrawer(false);
-                },
+                className: 'fge-term-tab',
+                title: root || '(无工作区)',
               },
-              '-',
+              h('span', { className: 'fge-term-tab-glyph' }, '>_'),
+              h('span', { className: 'fge-term-tab-title' }, root || '(无工作区)'),
+              h(
+                'button',
+                {
+                  className: 'fge-term-tab-close',
+                  title: '收起(不杀进程)',
+                  'aria-label': '收起终端抽屉',
+                  onClick: function (ev) {
+                    ev.stopPropagation();
+                    setDrawer(false);
+                  },
+                },
+                '×',
+              ),
             ),
-            h('span', { className: 'fge-chip' }, root || '(无工作区)'),
             h('span', { className: 'fge-spacer' }),
             h(
               'button',
@@ -2023,12 +2080,14 @@ window.__ModuleLoader__.load({
         'fge: close float when rightbar collapses',
       );
 
-      // 插件卸载: 撤掉本插件浮起的详情, 不留孤儿页签。
+      // 插件卸载: 撤掉本插件浮起的详情, 不留孤儿页签与缓存。
       ctx.effect(
         function () {
           return function () {
             closeOwnedFloat();
             diffs.clear();
+            gitViews.clear();
+            seededSessions.clear();
           };
         },
         'fge: dispose float state',
