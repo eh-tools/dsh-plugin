@@ -14,6 +14,7 @@ DSH 的插件生态还在早期,本仓库把几个日常高频缺口做成了独
 | ------------------------ | ------ | ---------------------------------------- | ------------------------------------------------------------------------------------------------------ |
 | `ds-balance`             | 维护中 | 官方状态栏看不到余额和用量               | stats 行下方加第二行:余额 + 今日/本月 token,每 5 分钟刷新                                              |
 | `file-git-explorer`      | 维护中 | 看不到 git 状态、GUI 里没有终端          | 官方右侧栏「Git 树」页签(分支/变更/diff/提交历史) + 终端页签与抽屉(真 PTY, xterm.js)                   |
+| `files-lite`             | 维护中 | 官方文件树不能按需显示隐藏文件           | 接管官方右侧栏文件树:逐级懒加载 + 「显示隐藏文件」眼睛开关(`.git` 永不显示)                            |
 | `db-console`             | 维护中 | GUI 里没有数据库客户端                   | 会话头部「数据库」页签:PG 完整链接登录(按项目保存)、schema 树、SQL 补全高亮、结果网格                  |
 | `deepseek-harness`       | 维护中 | 想要粒子鲸鱼背景                         | 蓝色粒子鲸鱼(DeepSeek 品牌蓝)默认开启,沿用官方明/暗/系统主题;`?dshtest=1` 隐藏式诊断面板               |
 | `stylevault-localchrome` | 维护中 | 想用本机 Chrome 配色当 DSH 主题          | 读本机 Chrome 用户色, 解码成 `#RRGGBB` 生成 StyleVault 1.0 预设; 授权后自动应用(需先装上游 StyleVault) |
@@ -163,6 +164,19 @@ agent 会自动调用;支持 PNG / JPEG / WebP / BMP / GIF。
 - 已砍掉 v0.2 的自带文件树 / 搜索 / 编辑保存 / `.http` / shell 行 —— 文件树交给 `files-lite`,只读浏览用 agent 的 glob/grep/edit 工具更强。
 
 详见 `plugins/file-git-explorer/README.md`(HTTP/WS 接口、帧协议、porcelain v2 字段数陷阱、插件依赖解析锚点)。
+
+### files-lite —— 官方文件树的轻量接管
+
+官方右侧栏文件树的接管版,只做「看」:
+
+- 树根 = 当前会话工作区,点目录行展开 / 折叠,**首次展开才拉取**(逐级懒加载)。
+- 头部眼睛按钮切换**显示隐藏文件**:关(默认)隐藏所有 `.` 开头的条目,开则显示 dotfile —— 但 **`.git` 在任何情况下都不显示**。开关按浏览器持久化。
+- 排序:目录优先,同级按 `zh-CN` 名称序。
+- 没有搜索 / 编辑 / 保存 / 新建 / 删除 / 行操作 —— 需要这些时用 agent 的 glob / grep / read / edit 工具。
+
+**接管机制**:官方以 `priority: 'builtin'` 注册 `kind: 'files'`,本插件以 `priority: 'extension'` 注册**同一个 kind** 顶上去(注册表规定 extension 档可接管 builtin 档),卸载即自动复位;数据复用官方已有的 `remote.workspaceFiles`,不新增任何 host 路由。
+
+详见 `plugins/files-lite/README.md`。
 
 ### db-console —— 数据库控制台
 

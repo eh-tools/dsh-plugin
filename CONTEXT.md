@@ -55,6 +55,20 @@ _Avoid_: 日志、scrollback(xterm 自身的滚动区是另一回事)
 本插件的 cwd —— 当前会话的工作区目录(经 `useSessions` 的 `byId[].cwd` 感知),会话没有 cwd 时回退 DSH 进程的当前工作目录。它是 Git 状态与工作区终端的**唯一**根。
 _Avoid_: 项目根、仓库根(仓库根是它向上找到的第一个 `.git`,是另一个概念)
 
+## files-lite(官方文件树接管插件)
+
+**文件树页签(files tab)**:
+本插件以 `priority: 'extension'` 接管官方 `kind: 'files'` 后渲染的页签体;树根 = 当前会话工作区,逐级懒加载,只做「看」。两侧都以 keyed 槽 `sidebar.right.pane.tab` 的 `key` = 类型 `id` 注册页签体,故接管只需换一个 `id`。
+_Avoid_: 侧边栏、目录面板
+
+**显示隐藏文件(show hidden files)**:
+文件树头部的眼睛开关。关(默认)隐藏所有 `.` 开头的条目;开则显示 dotfile —— 但 **`.git` 在任何情况下都不显示**: 它不是「隐藏文件」的普通成员,而是仓库内部结构。开关按浏览器持久化,不分工作区。
+_Avoid_: dotfiles 开关(那是实现细节)、忽略文件(那是 .gitignore 的概念)
+
+**接管(takeover)**:
+右侧栏注册表的档次语义 —— `extension(3) > builtin(2) > fallback(1)`;同 kind 的 extension 与 builtin 可以配对,由高档次者接管,低档次者被压住并在接管方卸载时自动复位。本插件靠它顶替官方文件树,而不是另建一个 kind。
+_Avoid_: 覆盖、替换(都没说到"卸载即复位"这一半)
+
 ## db-console(数据库控制台插件)
 
 **数据库页签(database view)**:
