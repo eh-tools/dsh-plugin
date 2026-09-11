@@ -14,6 +14,7 @@ test:
     node plugins/obsolete/tool-vision/tests/smoke.mjs
     node plugins/obsolete/paste-image/tests/save.test.mjs
     node scripts/verify-ds-balance.mjs
+    node scripts/verify-client-bundles.mjs
     node plugins/file-git-explorer/tests/git.test.mjs
     node plugins/file-git-explorer/tests/pty.test.mjs
     node plugins/file-git-explorer/tests/verify.mjs
