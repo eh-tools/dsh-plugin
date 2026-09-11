@@ -121,12 +121,23 @@ window.__ModuleLoader__.load({
           '.fge-btn{border:0;background:transparent;cursor:pointer;padding:2px 5px;border-radius:4px;color:inherit;font-size:12px;line-height:1.4}',
           '.fge-btn:hover{background:rgba(128,128,128,.18)}',
           '.fge-btn[disabled]{opacity:.45;cursor:default}',
-          '.fge-branch{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:11em}',
+          '.fge-branch{display:flex;align-items:center;gap:4px;padding:2px 6px;max-width:11em;border:0;border-radius:4px;background:transparent;color:inherit;font:inherit;font-weight:600;cursor:pointer}',
+          '.fge-branch:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+          '.fge-branch-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+          '.fge-branch-caret{flex:0 0 auto;color:var(--dsw-alias-label-tertiary)}',
+          // 头部那颗分支按钮的小浮窗: 位置由官方 useAnchoredPosition 算(视口坐标), 所以 position:fixed
+          // —— 这样既不被右栏面板的 overflow 裁掉, 也不受面板 transform 影响(展开态 transform:none)。
+          '.fge-branch-menu{position:fixed;z-index:70;width:280px;max-width:70vw;max-height:min(60vh,420px);overflow:auto;padding:4px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-2);box-shadow:var(--dsw-elevation-prominent);font-size:12px}',
+          '.fge-branch-group{padding:5px 6px 2px;font-size:10px;color:var(--dsw-alias-label-tertiary)}',
+          '.fge-branch-item{display:flex;align-items:center;gap:4px;padding:3px 6px;border-radius:4px;color:var(--dsw-alias-label-secondary);white-space:nowrap;cursor:pointer}',
+          '.fge-branch-item:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
+          '.fge-branch-item[data-viewed="1"]{color:var(--dsw-alias-brand-primary);font-weight:600}',
+          '.fge-branch-sub{padding-left:16px}',
+          '.fge-branch-mark{margin-left:auto;font-size:10px;color:var(--dsw-alias-label-tertiary)}',
           '.fge-ab{display:inline-flex;gap:4px;font-variant-numeric:tabular-nums;opacity:.85}',
           '.fge-spacer{flex:1 1 auto}',
           '.fge-body{flex:1 1 auto;min-height:0;overflow:auto;padding:0 0 6px}',
           '.fge-section{display:flex;align-items:center;gap:6px;position:sticky;top:0;z-index:1;padding:4px 9px;font-size:11px;font-weight:600;letter-spacing:.02em;opacity:.72;background:var(--dsw-alias-bg-base,rgba(0,0,0,.18));border-bottom:1px solid rgba(128,128,128,.16)}',
-          '.fge-select{flex:0 1 auto;min-width:0;max-width:11em;font-size:11px;padding:1px 2px;border-radius:4px;border:1px solid rgba(128,128,128,.3);background:transparent;color:inherit}',
           '.fge-row{display:flex;align-items:center;gap:6px;padding:3px 9px;cursor:pointer;white-space:nowrap}',
           '.fge-row:hover{background:rgba(128,128,128,.16)}',
           '.fge-indent{padding-left:22px}',
@@ -1027,6 +1038,43 @@ window.__ModuleLoader__.load({
         var expPair = React.useState({});
         var expanded = expPair[0];
         var setExpanded = expPair[1];
+        var menuPair = React.useState(false);
+        var menuOpen = menuPair[0];
+        var setMenuOpen = menuPair[1];
+
+        // 分支小浮窗的锚点(头部那颗分支按钮)与面板; 定位与"点外面关掉"都用官方原语:
+        // useAnchoredPosition 给视口坐标 + 视口内钳制, useDismissOnOutsidePointer 管外部 pointerdown。
+        var branchAnchorRef = React.useRef(null);
+        var branchMenuRef = React.useRef(null);
+        var branchMenuPos = primitives.useAnchoredPosition({
+          open: menuOpen,
+          anchorRef: branchAnchorRef,
+          panelRef: branchMenuRef,
+          side: 'bottom',
+          gap: 4,
+          margin: 8,
+        });
+        primitives.useDismissOnOutsidePointer(
+          branchAnchorRef,
+          menuOpen,
+          setMenuOpen,
+          branchMenuRef,
+        );
+
+        // Esc 关小浮窗(焦点分流与终端一致: 终端里的 Esc 归终端)。
+        React.useEffect(
+          function () {
+            if (!menuOpen) return undefined;
+            function onKey(ev) {
+              if (ev.key === 'Escape') setMenuOpen(false);
+            }
+            document.addEventListener('keydown', onKey, true);
+            return function () {
+              document.removeEventListener('keydown', onKey, true);
+            };
+          },
+          [menuOpen],
+        );
 
         /** 最近一次 info/status 得到的根, 供各次 git 调用复用(避免把 status 塞进所有依赖)。 */
         var repoRef = React.useRef({ root: null, repoRoot: null });
@@ -1279,11 +1327,11 @@ window.__ModuleLoader__.load({
         }
 
         /** 切「查看分支」: 只决定看哪个分支的历史, 不动工作区的实际分支。 */
-        function onPickRef(ev) {
-          var next = ev.target.value;
-          setViewedRef(next);
+        function pickBranch(name) {
+          setMenuOpen(false);
+          setViewedRef(name);
           setHistory(null);
-          loadHistory(next || null, 0);
+          loadHistory(name, 0);
         }
 
         // ---- 头部 ----
@@ -1295,7 +1343,27 @@ window.__ModuleLoader__.load({
         var head = h(
           'div',
           { className: 'fge-head' },
-          h('span', { className: 'fge-branch', title: branchLabel }, branchLabel),
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'fge-branch',
+              ref: branchAnchorRef,
+              title: '本地 / 远程分支: 点一个查看它的提交历史与 diff(不改工作区的实际分支)',
+              'aria-expanded': menuOpen ? 'true' : 'false',
+              onClick: function () {
+                setMenuOpen(function (open) {
+                  return !open;
+                });
+              },
+            },
+            h(primitives.IconBranchOutline16, { size: 14 }),
+            h('span', { className: 'fge-branch-name' }, branchLabel),
+            h(primitives.IconChevronDownOutline14, {
+              size: 12,
+              className: 'fge-branch-caret',
+            }),
+          ),
           status && (status.ahead > 0 || status.behind > 0)
             ? h(
                 'span',
@@ -1364,13 +1432,88 @@ window.__ModuleLoader__.load({
 
         // ---- 提交历史 ----
         var branches = status && Array.isArray(status.branches) ? status.branches : [];
-        var refOptions = [
-          h('option', { key: '', value: '' }, '查看分支: 当前' + (current ? '(' + current + ')' : '')),
-        ];
+        /** 本地 / 远程两组; 远程再按 remote 名分成子树(展示用"树", 点击看该分支的历史)。 */
+        var branchTree = { local: [], remotes: [] };
+        var remoteIndexOf = {};
         for (var bi = 0; bi < branches.length; bi += 1) {
-          var name = branches[bi].name;
-          refOptions.push(
-            h('option', { key: name, value: name }, (branches[bi].remote ? '远程 ' : '') + name),
+          var branch = branches[bi];
+          if (!branch.remote) {
+            branchTree.local.push({ full: branch.name, short: branch.name, remote: null });
+            continue;
+          }
+          var slash = branch.name.indexOf('/');
+          var remoteName = slash === -1 ? branch.name : branch.name.slice(0, slash);
+          var shortName = slash === -1 ? branch.name : branch.name.slice(slash + 1);
+          if (remoteIndexOf[remoteName] === undefined) {
+            remoteIndexOf[remoteName] = { remote: remoteName, branches: [] };
+            branchTree.remotes.push(remoteIndexOf[remoteName]);
+          }
+          remoteIndexOf[remoteName].branches.push({
+            full: branch.name,
+            short: shortName,
+            remote: remoteName,
+          });
+        }
+
+        /** 小浮窗里的一行分支。 */
+        function branchRow(item) {
+          var isCurrent = current !== null && item.full === current;
+          var isViewed = viewedRef !== '' && viewedRef === item.full;
+          var mark = isCurrent ? '当前' : isViewed ? '查看中' : '';
+          return h(
+            'div',
+            {
+              key: 'br:' + item.full,
+              className: 'fge-branch-item' + (item.remote === null ? '' : ' fge-branch-sub'),
+              'data-viewed': isViewed ? '1' : undefined,
+              title: item.full,
+              onClick: function () {
+                pickBranch(item.full);
+              },
+            },
+            h('span', { className: 'fge-branch-name' }, item.short),
+            h('span', { className: 'fge-branch-mark' }, mark),
+          );
+        }
+
+        var branchMenu = null;
+        if (menuOpen) {
+          var menuRows = [];
+          menuRows.push(h('div', { key: 'g:local', className: 'fge-branch-group' }, '本地分支'));
+          if (branchTree.local.length === 0) {
+            menuRows.push(h('div', { key: 'g:local:none', className: 'fge-branch-item' }, '(无)'));
+          }
+          for (var li = 0; li < branchTree.local.length; li += 1) {
+            menuRows.push(branchRow(branchTree.local[li]));
+          }
+          menuRows.push(h('div', { key: 'g:remote', className: 'fge-branch-group' }, '远程分支'));
+          if (branchTree.remotes.length === 0) {
+            menuRows.push(h('div', { key: 'g:remote:none', className: 'fge-branch-item' }, '(无)'));
+          }
+          for (var ri = 0; ri < branchTree.remotes.length; ri += 1) {
+            var group = branchTree.remotes[ri];
+            menuRows.push(
+              h('div', { key: 'g:r:' + group.remote, className: 'fge-branch-group' }, group.remote),
+            );
+            for (var gi = 0; gi < group.branches.length; gi += 1) {
+              menuRows.push(branchRow(group.branches[gi]));
+            }
+          }
+          branchMenu = h(
+            'div',
+            {
+              className: 'fge-branch-menu',
+              ref: branchMenuRef,
+              role: 'listbox',
+              // 面板先渲染才能被量到(useAnchoredPosition 量的是面板自己的 offsetWidth):
+              // 位置未算出时先藏起来, 布局 effect 跑完就可见 —— 中间不会有闪动。
+              style: {
+                left: branchMenuPos === null ? 0 : branchMenuPos.left,
+                top: branchMenuPos === null ? 0 : branchMenuPos.top,
+                visibility: branchMenuPos === null ? 'hidden' : 'visible',
+              },
+            },
+            menuRows,
           );
         }
 
@@ -1501,9 +1644,9 @@ window.__ModuleLoader__.load({
             { className: 'fge-section' },
             '提交历史',
             h(
-              'select',
-              { className: 'fge-select', value: viewedRef, onChange: onPickRef, title: '查看分支' },
-              refOptions,
+              'span',
+              { className: 'fge-chip', title: '正在查看哪个分支的历史(点头部的分支按钮可换)' },
+              '查看 ' + (viewedRef || current || '当前分支'),
             ),
           ),
           h('div', null, historyRows),
@@ -1513,6 +1656,7 @@ window.__ModuleLoader__.load({
           'div',
           { className: 'fge-root' },
           head,
+          branchMenu,
           h('div', { className: 'fge-body' }, changesSection, historySection),
         );
       }
@@ -1753,6 +1897,26 @@ window.__ModuleLoader__.load({
           );
         });
       }, 'fge: terminal dock');
+
+      // Esc 关掉本插件浮起的详情。跟终端抽屉共用同一条焦点分流: 焦点在终端里时 Esc 归终端
+      // (见 TerminalDock 的 keydown), 不要连带把悬浮面板也关掉。
+      ctx.effect(
+        function () {
+          function onKey(ev) {
+            if (ev.key !== 'Escape') return;
+            if (floatTarget === null) return;
+            var host = typeof document === 'undefined' ? null : document.getElementById('fge-term-host');
+            var active = typeof document === 'undefined' ? null : document.activeElement;
+            if (host !== null && active !== null && host.contains(active)) return;
+            closeOwnedFloat();
+          }
+          document.addEventListener('keydown', onKey, true);
+          return function () {
+            document.removeEventListener('keydown', onKey, true);
+          };
+        },
+        'fge: close float on Escape',
+      );
 
       // 右栏折叠 → 关掉本插件浮起的详情: 悬浮面板在 document.body 上的一个 fixed portal 里
       // (z-index 60), 不随右栏一起滑走, 所以必须显式关。

@@ -69,12 +69,21 @@ function makeDocumentStub() {
         appendChild: () => {},
         remove: () => {},
         removeChild: () => {},
+        contains: () => false,
     });
     return {
         getElementById: () => null,
+        querySelector: () => null,
+        querySelectorAll: () => [],
         createElement: node,
         head: { appendChild: () => {} },
         body: { appendChild: () => {}, removeChild: () => {} },
+        // apply() 里也可能直接挂**全局**监听(例如 Esc 关掉浮层): 这是浏览器必备 API,
+        // stub 必须给出来, 否则测得的是"stub 不全"而不是"装配不对"。
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        activeElement: null,
+        documentElement: node(),
     };
 }
 
