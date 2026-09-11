@@ -12,7 +12,8 @@
   markdown / 代码 / 图片 / html / **pdf 全部是官方原版**; diff 用官方 `primitives.DiffBlock`。
 - **终端抽屉**(kind 无, 座位 `conversation.composer.dock`): **真 PTY** —— `node-pty` ↔ WebSocket ↔
   `xterm.js`, 所以 vim / htop / 颜色 / 补全 / Ctrl+C 全部可用。收起态是 composer 下方一枚透明 chevron,
-  点击**向上**展开;抽屉宽度贯穿座位, 配色全走主题 token, **点 header 即可收起**。
+  点击**向上**展开;抽屉宽度贯穿座位, 配色全走主题 token, 顶上是 Windows Terminal 观感的**终端标题条**
+  (页签上的 `×` / 点条空白处收起, 右端 `■` 才杀进程)。
   终端只有这一种形态(没有右栏终端页签)。
 - 文件树**回归官方**: 本插件既不接管、也不自绘文件树。
 
@@ -94,15 +95,22 @@ pnpm --dir plugins/file-git-explorer install
 - **抽屉舌**: composer 下方一枚透明 chevron(无边框, 只留一枚小三角), 点击**向上**展开。**抽屉舌与抽屉都宽度贯穿
   座位**(填满 `conversation.composer.dock` 的内容盒, 与上方的 composer 同宽), 不做居中收窄 —— 所以不需要任何尺寸测量。
   抽屉**顶部两角圆角**(`border-radius:12px 12px 0 0`), 底部不圆。
-- **header 两个字形按钮**: 左端 `-` = **收起**(与点 header 同义, **不杀进程**); 右端 `■` = **终止整棵终端进程树**
-  (Windows 下走 ConPTY 终止整树), 取主题的危险色 `--dsw-alias-state-error-primary`, 悬停用
-  `--dsw-alias-interactive-bg-hover-danger`。两个按钮自己 `stopPropagation`, 点它们不会连带收起。
-  中间那枚 chip 显示当前工作区(cwd)。
-- **配色跟主题**: 抽屉 / header / 拖柄 / chip / 按钮全部用主题 token(`--dsw-alias-bg-layer-2`、`-bg-base`、
+- **终端标题条**(terminal title bar): 顶上一条 Windows Terminal 观感的标题区 —— 一枚页签(`>_` 字形 +
+  **尾部省略号**截断的工作区路径 + **悬停才出现**的 `×`)加右端一枚 `■`。页签**恒定只有当前工作区这一枚**:
+  它长得像页签, 但**不是多页签容器**(每工作区仍是一个终端, 见 `CONTEXT.md`「工作区终端」)—— 外观档,
+  没有 `+`、没有多终端、没有重命名与排序。
+- **`×` = 收起, `■` = 杀进程**: 页签上的 `×` 与点条空白处等价(**收起抽屉, 不杀进程**); `■` = **终止整棵
+  终端进程树**(Windows 下走 ConPTY 终止整树), 取主题的危险色 `--dsw-alias-state-error-primary`, 悬停用
+  `--dsw-alias-interactive-bg-hover-danger`。条内按钮自己 `stopPropagation`, 点它们不会连带收起。
+  primitives 的图标全表里**没有终端图标**(最接近的只有 `IconCodeOutline16`), 所以 `>_` 是自绘字形, 不引依赖。
+- **页签样式**: 活动态页签底色取 `--dsw-alias-bg-base`(与终端体同色)+ 两角 `6px 6px 0 0` + 一条 1px 实心投影
+  **盖掉条的底边**, 做出"页签连着终端"的观感(只靠圆角出不来页签形); `max-width:42%` 配 `text-overflow:ellipsis`
+  在**尾部**截断长路径, 与 Windows Terminal 同款。
+- **配色跟主题**: 抽屉 / 标题条 / 页签 / 拖柄 / 按钮全部用主题 token(`--dsw-alias-bg-layer-2`、`-bg-base`、
   `-border-l2/l3`、`-label-primary/secondary/tertiary`、`-interactive-bg-hover`、`-state-error-primary`),
   不写死颜色, 明暗与自定义主题都跟得上。
 - **高度**: 上缘拖柄可调 **20%~70%**, 按工作区记忆在 `localStorage`(默认 40%)。
-- **`■`** 终止该工作区终端整棵进程树;**`-` / 点 header** 只是收起抽屉, **不杀进程** ——
+- **`■`** 终止该工作区终端整棵进程树;**页签上的 `×` / 点标题条空白处** 只是收起抽屉, **不杀进程** ——
   抽屉关闭 / 切换会话 / 刷新页面都不影响它。
 - **每工作区一个终端**(键 = 归一化 + 大小写折叠的 cwd): 切工作区就是切换终端; 同工作区多会话**共享同一终端**
   (输出广播, 任意一端都可输入)。全局上限 **16 个**, 超出按 LRU 淘汰最久未用的。
@@ -335,8 +343,9 @@ eslint .                     # 仓库统一 lint(client bundle 按惯例忽略)
    (只有带扩展名的文件有;`html`/`pdf`/图片与无扩展名文件没有这枚图标)。
 8. 收起右栏 / 切换会话 / 切换工作区 / **按 Esc** → 面板消失。
 9. composer 下方有**宽度贯穿**的抽屉舌;点它**向上**展开终端(能跑 `vim` / 颜色 / 补全);抽屉**顶部两角圆角**、
-   配色跟当前主题一致(切明/暗主题看一眼);header 左端 `-` 收起、右端 `■` 是**红色**且只杀进程、
-   **点 header 也能收起**;刷新页面后重开抽屉应看到历史输出;Esc(焦点在终端外)收起。
+   配色跟当前主题一致(切明/暗主题看一眼);顶上**终端标题条**里恰好**一枚页签**(`>_` 字形 + 尾部省略号的
+   工作区路径, **没有 `+`**),悬停页签才出现 `×` 且点它只收起、右端 `■` 是**红色**且只杀进程、
+   **点条空白处也能收起**;刷新页面后重开抽屉应看到历史输出;Esc(焦点在终端外)收起。
 10. 全程 DevTools 控制台**零 pageerror**、零插件 `console.error`。
 
 ## 已知限制(接受, 不是 bug)
@@ -351,4 +360,4 @@ eslint .                     # 仓库统一 lint(client bundle 按惯例忽略)
 ## 术语
 
 「右侧栏页签」「git 页签」「变更列表」「diff 范围」「提交历史」「查看分支」「刷新」「悬浮面板」「详情」
-「composer 座」「抽屉舌」「终端抽屉」「工作区终端」「回放缓冲」「工作区」的定义见仓库根 `CONTEXT.md`。
+「composer 座」「抽屉舌」「终端抽屉」「终端标题条」「工作区终端」「回放缓冲」「工作区」的定义见仓库根 `CONTEXT.md`。

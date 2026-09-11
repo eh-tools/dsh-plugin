@@ -180,7 +180,7 @@ window.__ModuleLoader__.load({
           // 页签字形: primitives 里没有终端图标(75 枚图标全表最接近的只有 IconCodeOutline16),
           // 所以自绘 `>_` —— 与 `■` 同款做法, 不引依赖。
           '.fge-term-tab-glyph{flex:0 0 auto;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;opacity:.7}',
-          // 标题 = 工作区路径: 单行, 尾部省略号(截断成 `E:\\dev-tools\\Pc…`, 与 Windows Terminal 同款)。
+          // 标题 = 工作区路径: 单行, 尾部省略号(与 Windows Terminal 的页签标题同款)。
           '.fge-term-tab-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
           // 页签上的 `×`: 平时不占位, hover / 键盘聚焦才出现(WT 同款); 语义是**收起抽屉, 不杀进程**。
           '.fge-term-tab-close{flex:0 0 auto;display:none;align-items:center;justify-content:center;width:14px;height:14px;padding:0;border:0;border-radius:3px;background:transparent;color:inherit;font-size:11px;line-height:1;cursor:pointer}',
