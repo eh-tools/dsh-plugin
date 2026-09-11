@@ -18,6 +18,7 @@ test:
     node plugins/file-git-explorer/tests/pty.test.mjs
     node plugins/file-git-explorer/tests/verify.mjs
     node plugins/files-lite/tests/zones.test.mjs
+    node plugins/doc-copy/tests/address.test.mjs
     node plugins/db-console/tests/pg.test.mjs
     node plugins/db-console/tests/smoke.mjs
     node plugins/db-console/tests/editor-metrics.mjs

@@ -15,6 +15,7 @@ DSH 的插件生态还在早期,本仓库把几个日常高频缺口做成了独
 | `ds-balance`             | 维护中 | 官方状态栏看不到余额和用量               | stats 行下方加第二行:余额 + 今日/本月 token,每 5 分钟刷新                                              |
 | `file-git-explorer`      | 维护中 | 看不到 git 状态、GUI 里没有终端          | 官方右侧栏「Git 树」页签(分支/变更/diff/提交历史) + 终端页签与抽屉(真 PTY, xterm.js)                   |
 | `files-lite`             | 维护中 | 官方文件树不能按需显示隐藏文件           | 接管官方右侧栏文件树:逐级懒加载 + 「显示隐藏文件」眼睛开关(`.git` 永不显示)                            |
+| `doc-copy`               | 维护中 | 文档预览里没法直接复制原始 markdown      | 文档页签 ⋯ 菜单加「复制内容」:一键复制磁盘原文(渲染型文件不出现)                                       |
 | `db-console`             | 维护中 | GUI 里没有数据库客户端                   | 会话头部「数据库」页签:PG 完整链接登录(按项目保存)、schema 树、SQL 补全高亮、结果网格                  |
 | `deepseek-harness`       | 维护中 | 想要粒子鲸鱼背景                         | 蓝色粒子鲸鱼(DeepSeek 品牌蓝)默认开启,沿用官方明/暗/系统主题;`?dshtest=1` 隐藏式诊断面板               |
 | `stylevault-localchrome` | 维护中 | 想用本机 Chrome 配色当 DSH 主题          | 读本机 Chrome 用户色, 解码成 `#RRGGBB` 生成 StyleVault 1.0 预设; 授权后自动应用(需先装上游 StyleVault) |
@@ -177,6 +178,18 @@ agent 会自动调用;支持 PNG / JPEG / WebP / BMP / GIF。
 **接管机制**:官方以 `priority: 'builtin'` 注册 `kind: 'files'`,本插件以 `priority: 'extension'` 注册**同一个 kind** 顶上去(注册表规定 extension 档可接管 builtin 档),卸载即自动复位;数据复用官方已有的 `remote.workspaceFiles`,不新增任何 host 路由。
 
 详见 `plugins/files-lite/README.md`。
+
+### doc-copy —— 文档预览的「复制内容」
+
+在文档页签的 **⋯ 菜单**末尾加一项,一键把该文件**磁盘上的原始文本**(如 markdown 源码)复制到剪贴板:
+
+- 只对**有源码**的文件出现:markdown / 纯文本 / 代码预览都有;`html` / `pdf` / 图片等**渲染型**文件不出现。
+- 复制的是**磁盘原件**(经官方 `remote.workspaceFiles.readAll`),与预览是否渲染完无关 —— 所以不需要「流式未读完时禁用」。
+- 不替换任何正文组件、**不碰** `documentPreviews` 注册表 → 「打开方式」菜单不会出现重复项,卸载即还原。
+
+> 官方文档正文所在的 `sidebar.right.tab.document` 是 **keyed** 槽,注册项**只有 `key`**、没有 `priority`,语义是「注册已占用的 key 会**替换**该占用者」。想往正文上叠按钮就得整块顶掉官方正文组件(官方组件未导出,只能自渲染 markdown,富文本预览会退化),所以本插件选了非破坏性的菜单入口。详见插件 README。
+
+详见 `plugins/doc-copy/README.md`。
 
 ### db-console —— 数据库控制台
 
