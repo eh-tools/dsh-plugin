@@ -61,6 +61,9 @@ window.__ModuleLoader__.load({
       /** float() 的重试预算: 座位瞬时缺位(见 floatWithRetry)下一次就够, 这里留足余量。 */
       var FLOAT_ATTEMPTS = 6;
       var FLOAT_RETRY_MS = 60;
+      /** 右侧栏默认页签的重试预算(等座位绑定 + files 类型到位)。 */
+      var SEED_ATTEMPTS = 20;
+      var SEED_RETRY_MS = 150;
 
       // ---- host 调用 ----
 
@@ -119,7 +122,7 @@ window.__ModuleLoader__.load({
           '.fge-root{display:flex;flex-direction:column;height:100%;min-height:0;font-size:12px;color:var(--dsw-alias-text-base,inherit)}',
           '.fge-head{display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid var(--dsw-alias-border-subtle,rgba(128,128,128,.22));flex:0 0 auto}',
           '.fge-btn{border:0;background:transparent;cursor:pointer;padding:2px 5px;border-radius:4px;color:inherit;font-size:12px;line-height:1.4}',
-          '.fge-btn:hover{background:rgba(128,128,128,.18)}',
+          '.fge-btn:hover{background:var(--dsw-alias-interactive-bg-hover)}',
           '.fge-btn[disabled]{opacity:.45;cursor:default}',
           '.fge-branch{display:flex;align-items:center;gap:4px;padding:2px 6px;max-width:11em;border:0;border-radius:4px;background:transparent;color:inherit;font:inherit;font-weight:600;cursor:pointer}',
           '.fge-branch:hover{background:var(--dsw-alias-interactive-bg-hover)}',
@@ -162,16 +165,18 @@ window.__ModuleLoader__.load({
           '.fge-copy:hover{color:var(--dsw-alias-label-primary);background:rgba(128,128,128,.18)}',
           '.fge-copy[data-s="done"]{color:#3fa34d}',
           '.fge-copy[data-s="failed"]{color:#d9534f}',
-          // 终端抽屉: 座位在 composer 之下(conversation.composer.dock), 居中靠对话根元素上的
-          // --dsh-chat-content-width, 零 JS 测量。
-          // 终端抽屉: 座位在 composer 之下(conversation.composer.dock), **宽度贯穿整个座位**;
-          // 颜色全走主题 token(--dsw-alias-*), 不写死蓝/黑, 于是明暗主题与自定义主题都跟得上。
-          '.fge-term{display:flex;flex-direction:column;width:100%;border-top:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}',
-          // header 本身也是收起开关(点它 = ✕: 只收抽屉, 不杀进程), 所以给指针 + 悬停反馈。
+          // 终端抽屉: 座位在 composer 之下(conversation.composer.dock), **宽度贯穿整个座位**,
+          // 顶部两角圆角; 颜色全走主题 token(--dsw-alias-*), 不写死蓝/黑, 于是明暗主题都跟得上。
+          '.fge-term{display:flex;flex-direction:column;width:100%;border-top:1px solid var(--dsw-alias-border-l2);border-radius:12px 12px 0 0;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}',
+          // header 本身也是收起开关(点它 = 点 `-`: 只收抽屉, 不杀进程), 所以给指针 + 悬停反馈。
           // 底色显式取主题的"抬高表面"色(浅色主题下与 bg-base 同为白, 深色主题下自然分层),
           // 分隔线跟官方面板 header 同款(见 ui-sidebar-files 的 .header: border-bottom border-l3)。
           '.fge-term-head{display:flex;align-items:center;gap:6px;padding:3px 10px;font-size:11.5px;cursor:pointer;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);border-bottom:1px solid var(--dsw-alias-border-l3)}',
           '.fge-term-head:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}',
+          // 两个字形按钮: `-` 在左(收起), `■` 在右(终止整树, 危险色)。
+          '.fge-term-glyph{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:18px;padding:0 4px;font-size:14px;line-height:1}',
+          '.fge-term-kill{color:var(--dsw-alias-state-error-primary)}',
+          '.fge-term-kill:hover{color:var(--dsw-alias-state-error-primary);background:var(--dsw-alias-interactive-bg-hover-danger)}',
           '.fge-term-grip{height:5px;cursor:ns-resize;background:transparent}',
           '.fge-term-grip:hover{background:var(--dsw-alias-interactive-bg-hover)}',
           '.fge-term-body{flex:1 1 auto;min-height:0;padding:2px 4px 4px;background:var(--dsw-alias-bg-base)}',
@@ -697,6 +702,71 @@ window.__ModuleLoader__.load({
           { className: 'fge-diff' },
           h(primitives.DiffBlock, { diffs: detail.hunks, labels: DIFF_LABELS }),
         );
+      }
+
+      /** 官方「工作区文件」页签的 kind(ui-sidebar-files 注册; 它是 page 类型, 用 openTab 开)。 */
+      var FILES_KIND = 'files';
+      /** 官方 guide 页签的 kind(sidebar-right 自带, `canCloseTab` 也按这个字面量判断)。 */
+      var GUIDE_KIND = 'guide';
+      /** 已经铺过默认页签的会话: 每个会话只做一次, 免得跟用户手动关掉的动作打架。 */
+      var seededSessions = new Set();
+
+      /**
+       * 右侧栏的默认页签。
+       *
+       * 官方 `defaultSeed` 的规则是: **guide 里恰好只有一条时**, 默认页签就是那一条; 有两条及以上
+       * 就落回 guide 列表页。本插件自己也带一条 guide 条目(少了它 git 页签就没有入口), 于是默认
+       * 变成列表页 —— 这里补一步, 把它还原成「默认就是工作区文件」:
+       * 右栏还是空的 / 只有 guide 时, 打开「工作区文件」, 顺手把 guide 占位页收掉(此时它不是
+       * 唯一页签, `canCloseTab` 允许关)。
+       *
+       * 不抢用户已经打开的页签: 每次尝试前都看一眼当前活动页签的 kind。失败(座位还没挂上 /
+       * 没有 files 类型)按次数退避重试, 用尽就静默放弃 —— 这只是锦上添花, 不该影响别的功能。
+       */
+      function seedRightbar(sessionId) {
+        if (seededSessions.has(sessionId)) return;
+        seededSessions.add(sessionId);
+        openFilesDefault(0);
+      }
+
+      function openFilesDefault(attempt) {
+        var active;
+        try {
+          active = ctx.sidebarRight.active();
+        } catch (err) {
+          active = undefined;
+        }
+        if (active !== undefined && active.kind !== GUIDE_KIND) return; // 用户已经开了别的页签
+        try {
+          ctx.sidebarRight.openTab(FILES_KIND);
+        } catch (err) {
+          if (attempt < SEED_ATTEMPTS) {
+            window.setTimeout(function () {
+              openFilesDefault(attempt + 1);
+            }, SEED_RETRY_MS);
+          }
+          return;
+        }
+        if (active !== undefined) {
+          try {
+            ctx.sidebarRight.close(active.id);
+          } catch (err) {
+            // 已被关掉: 不是错误
+          }
+        }
+      }
+
+      /** 只跑副作用、不渲染任何东西: 给每个会话铺一次右侧栏默认页签。 */
+      function SessionSeed(props) {
+        var sessionId = props.sessionId;
+        React.useEffect(
+          function () {
+            if (typeof sessionId !== 'string' || sessionId === '') return;
+            seedRightbar(sessionId);
+          },
+          [sessionId],
+        );
+        return null;
       }
 
       // ---- vendor 资产: xterm 走静态资源路由 ----
@@ -1762,8 +1832,8 @@ window.__ModuleLoader__.load({
             onMouseDown: onGripDown,
             title: '拖动调整高度',
           }),
-          // header 就是收起开关: 点它跟点 ✕ 一样只收抽屉、不杀进程;
-          // ■ / ✕ 上的点击要 stopPropagation, 否则会连带收起。
+          // header 就是收起开关: 点它跟点左边的 `-` 一样只收抽屉、不杀进程;
+          // 两个字形按钮上的点击要 stopPropagation, 否则会连带收起。
           h(
             'div',
             {
@@ -1773,32 +1843,33 @@ window.__ModuleLoader__.load({
                 setDrawer(false);
               },
             },
-            h(primitives.IconChevronDownOutline14, { size: 14 }),
+            h(
+              'button',
+              {
+                className: 'fge-btn fge-term-glyph',
+                title: '收起(不杀进程)',
+                'aria-label': '收起终端抽屉',
+                onClick: function (ev) {
+                  ev.stopPropagation();
+                  setDrawer(false);
+                },
+              },
+              '-',
+            ),
             h('span', { className: 'fge-chip' }, root || '(无工作区)'),
             h('span', { className: 'fge-spacer' }),
             h(
               'button',
               {
-                className: 'fge-btn',
+                className: 'fge-btn fge-term-glyph fge-term-kill',
                 title: '终止整棵终端进程树',
+                'aria-label': '终止终端进程树',
                 onClick: function (ev) {
                   ev.stopPropagation();
                   if (root !== '') killTerminal(root);
                 },
               },
               '■',
-            ),
-            h(
-              'button',
-              {
-                className: 'fge-btn',
-                title: '收起(不杀进程)',
-                onClick: function (ev) {
-                  ev.stopPropagation();
-                  setDrawer(false);
-                },
-              },
-              '✕',
             ),
           ),
           h(
@@ -1897,6 +1968,16 @@ window.__ModuleLoader__.load({
           );
         });
       }, 'fge: terminal dock');
+
+      // 空渲染的座位, 只用来给每个会话铺一次右侧栏默认页签(见 seedRightbar)。
+      ctx.effect(function () {
+        return slots.inject('conversation.composer.dock', function () {
+          return slots.register(
+            { name: 'conversation.composer.dock', id: 'fge-session-seed', order: 40 },
+            SessionSeed,
+          );
+        });
+      }, 'fge: rightbar default tab');
 
       // Esc 关掉本插件浮起的详情。跟终端抽屉共用同一条焦点分流: 焦点在终端里时 Esc 归终端
       // (见 TerminalDock 的 keydown), 不要连带把悬浮面板也关掉。

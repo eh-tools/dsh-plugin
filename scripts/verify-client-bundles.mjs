@@ -219,10 +219,12 @@ const OFFICIAL_TEXT_ID = '@deepseek-ai/dsh-client-ui-sidebar-documentpreview';
         assert.ok(shadows[0].options.priority < 0, '影子注册的 priority 必须小于官方的 0');
     });
 
-    check('fge: 终端抽屉注册进 conversation.composer.dock', () => {
+    check('fge: 终端抽屉 + 会话铺底都注册进 conversation.composer.dock', () => {
         const dock = slotOf(b, 'conversation.composer.dock');
-        assert.equal(dock.length, 1);
-        assert.equal(dock[0].options.id, 'fge-terminal');
+        assert.deepEqual(dock.map((s) => s.options.id).sort(), [
+            'fge-session-seed',
+            'fge-terminal',
+        ]);
     });
 
     check('fge: 自身无重复注册(tab id / kind+档位 / keyed key / list id)', () => {

@@ -91,13 +91,16 @@ pnpm --dir plugins/file-git-explorer install
 
 - **抽屉舌**: composer 下方一枚透明 chevron(无边框, 只留一枚小三角), 点击**向上**展开。**抽屉舌与抽屉都宽度贯穿
   座位**(填满 `conversation.composer.dock` 的内容盒, 与上方的 composer 同宽), 不做居中收窄 —— 所以不需要任何尺寸测量。
-- **header 即收起开关**: 点 header(含左侧那枚 chevron-down)跟点 `✕` 一样只收抽屉、**不杀进程**; header 上的
-  `■` / `✕` 自己 `stopPropagation`, 不会连带收起。
-- **配色跟主题**: 抽屉 / header / 拖柄 / chip 全部用主题 token(`--dsw-alias-bg-layer-2`、`-bg-base`、
-  `-border-l2/l3`、`-label-primary/secondary/tertiary`、`-interactive-bg-hover`), 不写死颜色, 明暗与自定义主题
-  都跟得上。
+  抽屉**顶部两角圆角**(`border-radius:12px 12px 0 0`), 底部不圆。
+- **header 两个字形按钮**: 左端 `-` = **收起**(与点 header 同义, **不杀进程**); 右端 `■` = **终止整棵终端进程树**
+  (Windows 下走 ConPTY 终止整树), 取主题的危险色 `--dsw-alias-state-error-primary`, 悬停用
+  `--dsw-alias-interactive-bg-hover-danger`。两个按钮自己 `stopPropagation`, 点它们不会连带收起。
+  中间那枚 chip 显示当前工作区(cwd)。
+- **配色跟主题**: 抽屉 / header / 拖柄 / chip / 按钮全部用主题 token(`--dsw-alias-bg-layer-2`、`-bg-base`、
+  `-border-l2/l3`、`-label-primary/secondary/tertiary`、`-interactive-bg-hover`、`-state-error-primary`),
+  不写死颜色, 明暗与自定义主题都跟得上。
 - **高度**: 上缘拖柄可调 **20%~70%**, 按工作区记忆在 `localStorage`(默认 40%)。
-- **`■`** 终止该工作区终端整棵进程树(Windows 下走 ConPTY 终止整树)。**`✕`** 只是收起抽屉, **不杀进程** ——
+- **`■`** 终止该工作区终端整棵进程树;**`-` / 点 header** 只是收起抽屉, **不杀进程** ——
   抽屉关闭 / 切换会话 / 刷新页面都不影响它。
 - **每工作区一个终端**(键 = 归一化 + 大小写折叠的 cwd): 切工作区就是切换终端; 同工作区多会话**共享同一终端**
   (输出广播, 任意一端都可输入)。全局上限 **16 个**, 超出按 LRU 淘汰最久未用的。
@@ -263,6 +266,29 @@ panelRef, side, gap, margin})` 返回的是**视口坐标**(`{left, top}`), 且�
 markdown → `primitives.MarkdownText`、代码 → `primitives.CodeBlock`(**可用**); `text` / `image` / `html` / `pdf`
 → **不可复用**(组件未导出)。这正是 v0.7 改用「官方页签浮起来」而不是自绘悬浮面板的原因 —— 见 `docs/adr/0002`。
 
+### 9. 右侧栏的默认页签: 官方 `defaultSeed` 的「恰好一条」规则
+
+官方 `sidebar-right` 决定右栏首次展开时放哪个页签:
+
+```js
+const [only, ...others] = tabs.guide();
+const kind = only !== undefined && others.length === 0 ? only.kind : GUIDE_KIND;
+```
+
+也就是 **guide 条目恰好只有一条时, 默认页签就是那一条; 两条及以上就落回 guide 列表页**。
+(这也是 v0.6 时 `files-lite` 能让右栏默认显示文件树的原因: 那时 guide 里只有官方 files 的「工作区文件」一条。)
+
+v0.7 保留了本插件的 guide 条目 —— 不然 git 页签**没有任何入口**(页签只能由 `openTab` 或 guide 胶囊打开,
+而 guide 只列 `guide` 条目)。多出的一条把默认顶回了列表页, 所以本插件补一步把它拉回来:
+
+- `conversation.composer.dock` 里另注册一个**空渲染**的座位(`fge-session-seed`), 每个会话只跑一次:
+  右栏还是空的 / 只有 guide 时, `ctx.sidebarRight.openTab('files')` 打开官方「工作区文件」,
+  再 `close()` 掉 guide 占位页(此时它不是唯一页签, 官方 `canCloseTab` 允许关)。
+- **不抢用户已经开的页签**: 每次尝试前先看 `ctx.sidebarRight.active()`, kind 不是 `guide` 就直接放手。
+- 座位还没绑定时 `openTab` 会抛错, 按 20×150ms 退避重试; 用尽就静默放弃(这只是锦上添花)。
+- 依赖两个官方内部字面量: 页签 kind `'files'`(ui-sidebar-files)与 `'guide'`(sidebar-right 的 `canCloseTab`
+  也按这个字面量判断)。两边改名时这里要跟着改 —— 失败是静默的, 只退化回官方默认行为。
+
 ## 测试与静态检查
 
 ```bash
@@ -281,20 +307,22 @@ eslint .                     # 仓库统一 lint(client bundle 按惯例忽略)
 在**隔离 `DSH_HOME` + 独立端口**起一个实例(先 `dsh plugin --profile <名> add link:<repo-abs-path>/plugins/file-git-explorer`,
 再 `dsh --profile <名> --port <端口> --no-open`),在真浏览器里逐条走一遍:
 
-1. 右栏 guide 里有「Git」胶囊;点它打开页签 → 头部是**分支按钮** + `↑/↓` + `⟳`,正文是**变更列表**与**提交历史**两段。
-2. 点头部那颗分支按钮 → 弹出**分支小浮窗**(`本地分支` / `远程分支`, 远程下面按 remote 名分层缩进);
+1. **开一个全新会话**并把右栏展开 → 默认页签就是官方的「**文件**」工作区文件树(列表有行、路径是会话 cwd),
+   页签条上**没有 guide 占位页**;`+` 仍能回到 guide 列表, 从那里点「Git」进本插件页签。
+2. 右栏 guide 里有「Git」胶囊;点它打开页签 → 头部是**分支按钮** + `↑/↓` + `⟳`,正文是**变更列表**与**提交历史**两段。
+3. 点头部那颗分支按钮 → 弹出**分支小浮窗**(`本地分支` / `远程分支`, 远程下面按 remote 名分层缩进);
    点一条远程分支 → 浮窗收起、提交历史换成该分支的历史,**头部那颗按钮仍显示当前检出的分支**;
    再点一条本地分支、按 Esc、点浮窗外面 → 浮窗都能收起。
-3. 点一条提交 → **就地展开**说明 + 文件 ±行数(merge 提交只出说明);再点收起;「加载更多…」能翻页。
-4. 点展开出来的文件 → **悬浮面板**出现在右栏左侧:视口 1/2 宽、满高、右缘贴右栏左缘;正文是官方 `DiffBlock`(带复制按钮)。
-5. 官方文件树点一个文件 → 用**同一个**悬浮面板位显示官方正文;再点另一个文件 → 仍是**一个**面板、内容就地更换。
-6. 悬浮面板头部:文件名前有文件类型图标,后随一枚**复制图标**;点它 → 图标变「已复制」,剪贴板是磁盘原文
+4. 点一条提交 → **就地展开**说明 + 文件 ±行数(merge 提交只出说明);再点收起;「加载更多…」能翻页。
+5. 点展开出来的文件 → **悬浮面板**出现在右栏左侧:视口 1/2 宽、满高、右缘贴右栏左栏;正文是官方 `DiffBlock`(带复制按钮)。
+6. 官方文件树点一个文件 → 用**同一个**悬浮面板位显示官方正文;再点另一个文件 → 仍是**一个**面板、内容就地更换。
+7. 悬浮面板头部:文件名前有文件类型图标,后随一枚**复制图标**;点它 → 图标变「已复制」,剪贴板是磁盘原文
    (只有带扩展名的文件有;`html`/`pdf`/图片与无扩展名文件没有这枚图标)。
-7. 收起右栏 / 切换会话 / 切换工作区 / **按 Esc** → 面板消失。
-8. composer 下方有**宽度贯穿**的抽屉舌;点它**向上**展开终端(能跑 `vim` / 颜色 / 补全);抽屉与 header 的颜色
-   跟当前主题一致(切明/暗主题看一眼);**点 header 能收起**、`✕` 只收起、`■` 才杀进程;
-   刷新页面后重开抽屉应看到历史输出;Esc(焦点在终端外)收起。
-9. 全程 DevTools 控制台**零 pageerror**、零插件 `console.error`。
+8. 收起右栏 / 切换会话 / 切换工作区 / **按 Esc** → 面板消失。
+9. composer 下方有**宽度贯穿**的抽屉舌;点它**向上**展开终端(能跑 `vim` / 颜色 / 补全);抽屉**顶部两角圆角**、
+   配色跟当前主题一致(切明/暗主题看一眼);header 左端 `-` 收起、右端 `■` 是**红色**且只杀进程、
+   **点 header 也能收起**;刷新页面后重开抽屉应看到历史输出;Esc(焦点在终端外)收起。
+10. 全程 DevTools 控制台**零 pageerror**、零插件 `console.error`。
 
 ## 已知限制(接受, 不是 bug)
 
