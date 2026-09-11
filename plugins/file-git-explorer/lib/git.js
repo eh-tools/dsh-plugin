@@ -2,11 +2,40 @@
  * dsh-file-git-explorer — 纯函数层(可单测, 不依赖 ctx / 进程)
  *
  * 这里只放"给定输入字符串/条目数组就能算出结果"的解析与划分逻辑:
- *   - parseStatusZ:     解析 `git status --porcelain=v1 -z` 输出
+ *   - parseStatusV2:    解析 `git status --porcelain=v2 -z --branch` 输出
+ *   - normalizeXY:      v2 的 `.` 占位符归一为 v1 的空格形态
  *   - statusBadge:      XY 状态码 → 单字母徽标
- *   - resolveWithin:    相对路径 → 基目录内绝对路径(防目录穿越)
- *   - partitionChildren:把 readdir 条目按 可见/隐藏/忽略 三区分组
+ *   - sortChanges:      变更列表排序(未跟踪沉底)
  *   - diffArgs:         按变更条目构造单文件 diff 的 git 参数
+ *   - resolveWithin:    相对路径 → 基目录内绝对路径(防目录穿越)
+ *   - logArgs/parseLogOut:       提交列表
+ *   - parseNumStatZ:            单提交文件级增删统计
+ *   - parentsFromRevList:       父提交数(merge 判定)
+ *
+ * ======================== porcelain v2 实测事实 ========================
+ * (Windows git 2.53.0; tests/git.test.mjs 以当时的真实输出为夹具)
+ *
+ * 命令: git status --porcelain=v2 -z --branch --untracked-files=all
+ *   - 全 token 以 NUL 分隔, header 行也是独立 token。
+ *   - header: `# branch.oid <hash>` 或 `(initial)`;
+ *             `# branch.head <name>` 或 `(detached)`;
+ *             `# branch.upstream <name>` 与 `# branch.ab +n -m` 只在有上游时出现。
+ *
+ * ⚠ 最大的坑(单测抓出, 改解析器前必读): **路径可能含空格**。
+ *   三种记录都形如 `<固定字段...> <path>`, 且末尾的 path 自身可含空格
+ *   (实测 `sub dir/nested file.txt` / `new name.txt`)。因此**绝不能**用
+ *   `split(' ').pop()` 或"总字段数"取路径 —— 那样只会拿到最后一段
+ *   (`file.txt`)。唯一正确做法是: 去掉 `1 `/`2 `/`u ` 两个字符的前缀后,
+ *   **切掉固定数量的前导字段, 再把剩余部分用空格重新拼回**:
+ *       1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>            → 7 个固定字段
+ *       2 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <X><score> <path> → 8 个固定字段
+ *       u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>  → 9 个固定字段
+ *   (官方文档把记录类型也算作一个字段, 按文档字段数直接数会差一。)
+ *
+ *   - rename/copy (`2` 行): 新路径在行内, **旧路径是紧随其后的一个裸 token**
+ *     (自身也含空格); 输出被截断时该 token 会孤悬, 解析器必须防御。
+ *   - 未跟踪 `? <path>`; 被忽略 `! <path>`(本图标不展示, 解析时跳过)。
+ *   - XY 未变更的一侧是 `.`(实测 `.M` / `A.` / `.D`), 本层归一为空格。
  */
 
 import {
@@ -15,11 +44,12 @@ import {
   isAbsolute as pathIsAbsolute,
 } from 'node:path';
 
-/** 条目是否以 `.` 开头(dotfile); `.` / `..` 不算。 */
-export function isDotName(name) {
-  if (typeof name !== 'string' || name.length < 2 || name === '..') return false;
-  return name.startsWith('.');
-}
+/** `1` 行: 路径之前固定 7 个字段。 */
+const ORDINARY_FIXED_FIELDS = 7;
+/** `2` 行: 路径之前固定 8 个字段(多出的一个是 `<X><score>`)。 */
+const RENAMED_FIXED_FIELDS = 8;
+/** `u` 行: 路径之前固定 9 个字段。 */
+const UNMERGED_FIXED_FIELDS = 9;
 
 /**
  * 把以 `/` 分隔的相对路径解析到 base 之下, 返回绝对路径;
@@ -33,77 +63,20 @@ export function resolveWithin(base, rel) {
   return abs;
 }
 
-/**
- * 单个路径段是否可作 新建/重命名 目标名:
- * 非 '.'/'..'/'.git'(大小写不敏感,.Git 也挡 —— Windows 上同名)、
- * 不含 '/' '\' NUL 与 Windows 保留字符(:*?"<>|)、长度 ≤255、
- * 不能与去掉首尾空格后的自己不同(拒绝用首尾空格伪装的名字)。
- */
-export function validSegmentName(name) {
-  if (typeof name !== 'string') return false;
-  if (name.length === 0 || name.length > 255) return false;
-  if (name !== name.trim()) return false; // 首尾空格一律视为非法输入
-  if (/[\0/\\:*?"<>|]/.test(name)) return false;
-  const lower = name.toLowerCase();
-  if (lower === '.' || lower === '..' || lower === '.git') return false;
-  return true;
-}
-
-/**
- * 编辑类接口的 rel 路径整体校验(新建/保存可用多段):
- * 以 '/' 分隔后每一段都必须通过 validSegmentName;
- * 空串、空段('a//b')、越名即非法。返回段数组或 null。
- */
-export function splitEditRel(rel) {
-  if (typeof rel !== 'string' || rel === '') return null;
-  const segs = rel.split('/');
-  for (const seg of segs) {
-    if (!validSegmentName(seg)) return null;
-  }
-  return segs;
-}
-
-/** 与 localeCompare('zh-CN') 一致的名称比较, 供目录/变更排序复用。 */
+/** 与 localeCompare('zh-CN') 一致的名称比较, 供变更排序复用。 */
 export function compareZh(a, b) {
   return String(a).localeCompare(String(b), 'zh-CN');
 }
 
 /**
- * 解析 `git status --porcelain=v1 -z` 输出。
- *
- * 事实(已在 Windows git 2.53 实测):
- *   - 条目 NUL 分隔; 普通条目形如 `XY <path>`。
- *   - rename/copy 在 -z 下是两条: 先是 `R  <新路径>`, 紧接着一个裸 `<旧路径>`。
- *     (状态 token 带的是新路径, 旧路径是下一个裸 token。)
- *   - 未跟踪: `?? <path>`。
- *
- * @returns {Array<{xy: string, path: string, from?: string}>}
+ * v2 的 XY 归一为 v1 的空格形态: 未变更一侧的 `.` 换成空格。
+ * 归一后 `xy[0] !== ' '` 表示已暂存, `xy[1] !== ' '` 表示工作区未暂存。
  */
-export function parseStatusZ(text) {
-  const tokens = String(text).split('\0');
-  const entries = [];
-  for (let i = 0; i < tokens.length; i++) {
-    const token = tokens[i];
-    if (token === '') continue;
-    const m = /^([ MADRCU?!])([ MADRCU?!]) (.*)$/.exec(token);
-    if (m === null) {
-      // 孤立裸 token: 通常是上个 rename 的旧路径已在上一轮被消费;
-      // 若出现说明输入异常, 保守地作为未跟踪条目处理。
-      entries.push({ xy: '??', path: token });
-      continue;
-    }
-    const xy = m[1] + m[2];
-    const entry = { xy, path: m[3] };
-    if (xy.indexOf('R') !== -1 || xy.indexOf('C') !== -1) {
-      const next = tokens[i + 1];
-      if (next !== undefined && next !== '') {
-        entry.from = next;
-        i++;
-      }
-    }
-    entries.push(entry);
-  }
-  return entries;
+export function normalizeXY(xy) {
+  const s = typeof xy === 'string' ? xy : '';
+  const x = s[0] === undefined || s[0] === '.' ? ' ' : s[0];
+  const y = s[1] === undefined || s[1] === '.' ? ' ' : s[1];
+  return x + y;
 }
 
 /** XY 状态码 → 单字母徽标(R > C > A > D > M > U)。 */
@@ -119,111 +92,164 @@ export function statusBadge(xy) {
 }
 
 /**
- * 把 readdir 条目按三区分组, 并返回当前树(visible/hidden/ignored)
- * 在该目录应该展示的列表。
- *
- * 条目已由调用方标注: `dot`(以 `.` 开头)、`ignored`(git 忽略)与
- * `subIgnored`(自身未忽略但子树含忽略项的桥接目录, 仅影响忽略区列表,
- * 不改变三区分桶 —— 桥接目录在可见区仍是普通成员)。
- * `.git` 由调用方在 readdir 阶段剔除。
- *
- * @param entries [{name, type, dot, ignored, subIgnored?}]
- * @param mode 'visible' | 'hidden' | 'ignored'
- * @param reveal boolean — 进入"归属区内部"时(true)展示全部子项
- *   (hidden 模式展开 dot 目录、ignored 模式展开被忽略目录),
- *   否则只展示本区成员(hidden 只展示 dot 项,
- *   ignored 展示忽略项 + 桥接目录 —— 否则深层忽略路径如 src/__pycache__
- *   因父级 src 未被忽略而永远无法从忽略区走到)。
- * @returns {{list: Array, visible: Array, hidden: Array, ignored: Array}}
+ * 切出「前 fixed 个字段 + 路径」: 路径 = 剩余部分用空格拼回。
+ * 字段不足(输出被截断)返回 null, 由调用方跳过该行。
  */
-export function partitionChildren(entries, mode, reveal) {
-  const visible = [];
-  const hidden = [];
-  const ignored = [];
-  for (const e of entries) {
-    if (e.ignored) ignored.push(e);
-    else if (e.dot) hidden.push(e);
-    else visible.push(e);
+function splitFixedAndPath(rest, fixed) {
+  const parts = rest.split(' ');
+  if (parts.length < fixed + 1) return null;
+  return { head: parts.slice(0, fixed), path: parts.slice(fixed).join(' ') };
+}
+
+/** 解析一条 header token(已去掉 `# `)，把结果写进 branch。 */
+function applyHeader(branch, line) {
+  if (line.startsWith('branch.oid ')) {
+    const value = line.slice('branch.oid '.length).trim();
+    if (value === '(initial)') branch.initial = true;
+    else branch.oid = value;
+    return;
   }
-  const sorted = (arr) =>
-    arr.slice().sort((a, b) => {
-      const ad = a.type === 'dir' ? 0 : 1;
-      const bd = b.type === 'dir' ? 0 : 1;
-      if (ad !== bd) return ad - bd;
-      return compareZh(a.name, b.name);
-    });
-  let list;
-  if (mode === 'visible') list = visible;
-  else if (mode === 'hidden') list = reveal ? entries : hidden;
-  else if (mode === 'ignored') {
-    // reveal=true 是"已进入真正被忽略目录内部", 全量展示;
-    // 非 reveal 时含桥接目录, 但 dot 桥接除外(隐藏区已可达, 不重复列出)。
-    list = reveal ? entries : entries.filter((e) => e.ignored || (e.subIgnored && !e.dot));
-  } else list = [];
-  return { list: sorted(list), visible, hidden, ignored };
+  if (line.startsWith('branch.head ')) {
+    const value = line.slice('branch.head '.length).trim();
+    if (value === '(detached)') branch.detached = true;
+    else branch.head = value;
+    return;
+  }
+  if (line.startsWith('branch.upstream ')) {
+    branch.upstream = line.slice('branch.upstream '.length).trim();
+    return;
+  }
+  if (line.startsWith('branch.ab ')) {
+    const m = /\+(\d+)[ \t]+-(\d+)/.exec(line);
+    if (m !== null) {
+      branch.ahead = Number(m[1]);
+      branch.behind = Number(m[2]);
+    }
+  }
+}
+
+/**
+ * 解析 `git status --porcelain=v2 -z --branch --untracked-files=all` 输出。
+ *
+ * 不做排序 —— 这是忠实的反序列化层, 展示顺序由调用方(sortChanges)决定。
+ *
+ * @returns {{branch: {oid: string|null, head: string|null, upstream: string|null,
+ *   ahead: number, behind: number, initial: boolean, detached: boolean},
+ *   changes: Array<{xy: string, badge: string, path: string, origPath: string|null,
+ *     kind: 'ordinary'|'renamed'|'unmerged'|'untracked', score?: string}>}}
+ */
+export function parseStatusV2(text) {
+  const branch = {
+    oid: null,
+    head: null,
+    upstream: null,
+    ahead: 0,
+    behind: 0,
+    initial: false,
+    detached: false,
+  };
+  const changes = [];
+  const tokens = String(text).split('\0');
+
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (token === '') continue;
+
+    if (token.startsWith('# ')) {
+      applyHeader(branch, token.slice(2));
+      continue;
+    }
+
+    const kind = token[0];
+
+    if (kind === '1') {
+      const parsed = splitFixedAndPath(token.slice(2), ORDINARY_FIXED_FIELDS);
+      if (parsed === null) continue;
+      const xy = normalizeXY(parsed.head[0]);
+      changes.push({
+        xy,
+        badge: statusBadge(xy),
+        path: parsed.path,
+        origPath: null,
+        kind: 'ordinary',
+      });
+      continue;
+    }
+
+    if (kind === '2') {
+      const parsed = splitFixedAndPath(token.slice(2), RENAMED_FIXED_FIELDS);
+      if (parsed === null) continue;
+      // 旧路径是紧随的裸 token; 截断时缺失 → 留 null, 不当成下一条记录。
+      const next = tokens[i + 1];
+      let origPath = null;
+      if (next !== undefined && next !== '') {
+        origPath = next;
+        i += 1;
+      }
+      const xy = normalizeXY(parsed.head[0]);
+      changes.push({
+        xy,
+        badge: statusBadge(xy),
+        path: parsed.path,
+        origPath,
+        kind: 'renamed',
+        score: parsed.head[RENAMED_FIXED_FIELDS - 1],
+      });
+      continue;
+    }
+
+    if (kind === 'u') {
+      const parsed = splitFixedAndPath(token.slice(2), UNMERGED_FIXED_FIELDS);
+      if (parsed === null) continue;
+      const xy = normalizeXY(parsed.head[0]);
+      changes.push({
+        xy,
+        badge: statusBadge(xy),
+        path: parsed.path,
+        origPath: null,
+        kind: 'unmerged',
+      });
+      continue;
+    }
+
+    if (kind === '?') {
+      changes.push({
+        xy: '??',
+        badge: '?',
+        path: token.slice(2),
+        origPath: null,
+        kind: 'untracked',
+      });
+      continue;
+    }
+
+    // '!' (被忽略) 与未知记录类型: 本图标不展示, 跳过。
+  }
+
+  return { branch, changes };
+}
+
+/** 变更列表排序: 未跟踪沉底, 其余按 zh-CN 名称比较。 */
+export function sortChanges(changes) {
+  return changes.slice().sort((a, b) => {
+    const au = a.kind === 'untracked';
+    const bu = b.kind === 'untracked';
+    if (au !== bu) return au ? 1 : -1;
+    return compareZh(a.path, b.path);
+  });
 }
 
 /**
  * 按变更条目构造"单文件相对 HEAD 的 diff"git 参数。
  * rename/copy 需要同时给新、旧两个路径, 否则只给新路径时 git 会当 new file。
+ * `from` 是条目不携带旧路径时的兜底来源。
  */
-export function diffArgs(entry, badge) {
-  const base = ['-c', 'core.quotepath=false', 'diff', 'HEAD'];
-  if (badge === 'R' || badge === 'C') {
-    return [...base, '-M', '--', entry.path, ...(entry.from !== undefined ? [entry.from] : [])];
-  }
-  return [...base, '--', entry.path];
-}
-
-// ---- 文件搜索(name search) ----
-
-/**
- * 命中项的三区归属: 被忽略 > 任一路径段以点开头(隐藏) > 其余(可见)。
- * 与树面板的逐条目分类口径一致(partitionChildren 的单条目视角)。
- */
-export function searchZone(rel, ignored) {
-  if (ignored) return 'ignored';
-  const segs = String(rel).split('/');
-  for (const seg of segs) {
-    if (isDotName(seg)) return 'hidden';
-  }
-  return 'visible';
-}
-
-/**
- * 从文件路径列表推导其全部祖先目录(去重、按名称排序)。
- * git ls-files 只列文件; 目录命中项由此派生, 供搜索结果点目录 → 树内 reveal。
- * 搜索命中项统一为 {rel, type, zone, nameHit} 形状(matchEntries 产出)。
- */
-export function dirsFromPaths(paths) {
-  const seen = new Set();
-  for (const p of paths) {
-    const segs = String(p).split('/');
-    for (let i = 1; i < segs.length; i++) {
-      seen.add(segs.slice(0, i).join('/'));
-    }
-  }
-  return [...seen].sort(compareZh);
-}
-
-/** 大小写不敏感子串匹配 + 排序: 名字命中 > 仅路径命中 → 短路径优先 → 名称。 */
-export function matchEntries(entries, query) {
-  const q = String(query).trim().toLowerCase();
-  if (q === '') return [];
-  const hits = [];
-  for (const e of entries) {
-    const rel = String(e.rel);
-    const lower = rel.toLowerCase();
-    if (!lower.includes(q)) continue;
-    const base = rel.slice(rel.lastIndexOf('/') + 1);
-    hits.push({ ...e, nameHit: base.toLowerCase().includes(q) });
-  }
-  return hits.sort((a, b) => {
-    if (a.nameHit !== b.nameHit) return a.nameHit ? -1 : 1;
-    const dl = a.rel.length - b.rel.length;
-    if (dl !== 0) return dl;
-    return compareZh(a.rel, b.rel);
-  });
+export function diffArgs(entry, from) {
+  const args = ['-c', 'core.quotepath=false', 'diff', 'HEAD', '-M', '--'];
+  const paths = [entry.path];
+  const orig = entry.origPath ?? from;
+  if (typeof orig === 'string' && orig !== '') paths.push(orig);
+  return args.concat(paths);
 }
 
 // ---- 提交历史(commit history) ----
@@ -276,7 +302,7 @@ export function parseLogOut(text) {
 }
 
 /**
- * 解析 `diff-tree --numstat -z` 输出(实测钉死, 见 README「实现事实」):
+ * 解析 `diff-tree --numstat -z` 输出(实测钉死):
  *   首个 token 是提交 hash; 普通条目 = "A\tD\t<path>\0";
  *   rename/copy 条目 = "A\tD\t\0<from>\0<to>\0"(计数 token 内路径位为空,
  *   紧跟旧、新两个裸路径 token)。二进制行 A/D 为 "-" → 归一为 null。
