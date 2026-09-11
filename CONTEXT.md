@@ -2,7 +2,7 @@
 
 本仓库承载 DSH 的静态双半插件(Host 半 `lib/index.js` + Client bundle `lib/client.js`),每个插件是 `plugins/` 下的独立 npm 包,经 `dsh plugin --profile web add link:<abs-path>` 挂载进 web profile。插件共享同一套挂载契约:`package.json` + `manifest.json` + `cordis.patch.yml`。
 
-## file-git-explorer(右侧栏 git 页签 + 详情浮层 + 终端抽屉)
+## file-git-explorer(右侧栏 git 页签 + 悬浮面板 + 终端抽屉)
 
 > **v0.7 重构**:文件树**回归官方** —— 本插件既不接管、也不自绘文件树。详情不再开成右栏页签,而是浮到右栏**左侧**。
 > 随之移除的概念:自带文件树(可见 / 隐藏 / 忽略三区)、文件搜索、编辑保存、`.http` 运行、shell 行 / 单槽 / 尾部输出窗、细条、图钉、终端页签,以及 `files-lite`、`doc-copy` 两个插件。

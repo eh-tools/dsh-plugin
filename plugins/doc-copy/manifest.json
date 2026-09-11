@@ -1,7 +1,0 @@
-{
-  "kind": "static",
-  "name": "dsh-doc-copy",
-  "purpose": "文档预览的「复制内容」: 在文档页签的 ⋯ 菜单末尾加一项, 一键把该文件在磁盘上的原始文本(如 markdown 源码)复制到剪贴板。只注册菜单项, 不替换任何正文组件、不碰 documentPreviews 注册表 —— 因此 markdown 富文本预览不受影响, 卸载即还原。",
-  "files": ["package.json", "cordis.patch.yml", "lib/index.js", "lib/client.js", "lib/address.js"],
-  "install": "dsh plugin --profile web add link:<repo-abs-path>/plugins/doc-copy"
-}

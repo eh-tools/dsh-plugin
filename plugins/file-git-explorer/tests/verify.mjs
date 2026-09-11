@@ -21,7 +21,8 @@
  *   · status  : current=main、repoRoot、branches, 以及 porcelain v2 五类记录齐全 ——
  *               暂存 M / 未暂存 M / 未暂存 D / 重命名 R(origPath 存活) / 未跟踪 ?;
  *               被 .gitignore 忽略的文件不进 changes
- *   · diff    : 已跟踪文件回 kind:'diff' 且含 -/+ 对; 未跟踪文件回 kind:'untracked'
+ *   · diff    : 已跟踪文件回 kind:'diff' 且含 -/+ 对, 且 hunks 已把两侧拆成行块;
+ *               未跟踪文件回 kind:'untracked' 且 hunks 为空
  *   · log/show: 提交列表契约(hash/short/author/subject + head)与提交详情(message/files)
  *   · 信任栅栏: 缺 x-dsh-plugin → 403、GET → 405、非回环 Host → 403、未知方法 → 404
  *   · vendor  : 白名单命中 200 + content-type/javascript, 未知名与 ../ 穿越 → 404
@@ -723,7 +724,13 @@ async function runAll() {
     );
     assert.ok(diff.body.text.includes('-base staged'), 'diff 应含旧内容');
     assert.ok(diff.body.text.includes('+changed staged'), 'diff 应含新内容');
-    ok('diff: 已跟踪文件回 kind:diff 且含 -/+ 对');
+    // hunks 是官方 DiffBlock 的 diffs 形状: 两侧已是拆好的行块(前缀已剥掉)。
+    assert.ok(Array.isArray(diff.body.hunks) && diff.body.hunks.length >= 1, 'hunks 应非空数组');
+    const stagedHunk = diff.body.hunks[0];
+    assert.equal(stagedHunk.path, 'staged.txt');
+    assert.equal(stagedHunk.oldText, 'base staged\n', 'oldText 应是剥掉前缀的旧侧行块');
+    assert.equal(stagedHunk.newText, 'changed staged\n', 'newText 应是剥掉前缀的新侧行块');
+    ok('diff: 已跟踪文件回 kind:diff 且含 -/+ 对 + hunks 行块');
 
     const diffUntracked = await apiCall('POST', api + '/diff', {
         repoRoot: repo,
@@ -733,7 +740,39 @@ async function runAll() {
     assert.equal(diffUntracked.body?.ok, true);
     assert.equal(diffUntracked.body.kind, 'untracked');
     assert.equal(diffUntracked.body.text, '', '未跟踪文件不读盘, text 应为空串');
-    ok("diff: 未跟踪文件只回 kind:'untracked'");
+    assert.deepEqual(diffUntracked.body.hunks, [], '未跟踪文件的 hunks 应为空数组(形状稳定)');
+    ok("diff: 未跟踪文件只回 kind:'untracked' 且 hunks 为空");
+
+    // 未暂存删除的一侧是 /dev/null: 路径必须回落到 a/ 侧, 新侧为空串。
+    const diffDeleted = await apiCall('POST', api + '/diff', {
+        repoRoot: repo,
+        path: 'gone.txt',
+        status: 'D',
+    });
+    assert.equal(diffDeleted.body?.ok, true);
+    assert.equal(diffDeleted.body.kind, 'diff');
+    assert.equal(diffDeleted.body.hunks.length, 1, '删除文件应有 1 个 hunk');
+    assert.equal(diffDeleted.body.hunks[0].path, 'gone.txt', '路径应从 a/ 侧回落');
+    assert.equal(diffDeleted.body.hunks[0].oldText, 'base gone\n');
+    assert.equal(diffDeleted.body.hunks[0].newText, '');
+    ok('diff: 删除文件的 hunk 取 a/ 侧路径且新侧为空串');
+
+    // rename 必须走 -M 双路径, 否则 git 只会当成 new file(见 README 实现事实)。
+    const diffRenamed = await apiCall('POST', api + '/diff', {
+        repoRoot: repo,
+        path: 'new-name.txt',
+        status: 'R',
+        from: 'old-name.txt',
+    });
+    assert.equal(diffRenamed.body?.ok, true);
+    assert.equal(diffRenamed.body.kind, 'diff');
+    assert.equal(diffRenamed.body.hunks.length, 0, '100% rename 没有内容差异 → 没有 hunk');
+    assert.ok(
+        diffRenamed.body.text.includes('rename from') ||
+            diffRenamed.body.text.includes('similarity index'),
+        'rename 的原文 text 仍应保留(备用)',
+    );
+    ok('diff: rename 无内容差异时 hunks 为空, text 原文保留');
 
     // ---- 4. log ----
     const log = await apiCall('POST', api + '/log', { repoRoot: repo });
@@ -772,7 +811,10 @@ async function runAll() {
     assert.equal(showFile.body?.ok, true);
     assert.equal(showFile.body.kind, 'diff', '带 path 的 show 应回单文件 diff');
     assert.ok(showFile.body.text.includes('+base staged'), '该 diff 应含 base commit 里的内容');
-    ok('show: 提交详情(message/files)+ 单文件 diff');
+    assert.equal(showFile.body.hunks.length, 1, '带 path 的 show 应同时给结构化 hunk');
+    assert.equal(showFile.body.hunks[0].path, 'staged.txt');
+    assert.equal(showFile.body.hunks[0].newText, 'base staged\n');
+    ok('show: 提交详情(message/files)+ 单文件 diff + hunks');
 
     // ---- 6. 信任栅栏 ----
     const noHeader = await apiCall('POST', api + '/info', undefined, { omitPluginHeader: true });

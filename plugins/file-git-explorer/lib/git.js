@@ -7,6 +7,7 @@
  *   - statusBadge:      XY 状态码 → 单字母徽标
  *   - sortChanges:      变更列表排序(未跟踪沉底)
  *   - diffArgs:         按变更条目构造单文件 diff 的 git 参数
+ *   - parseDiffHunks:   统一 diff → 官方 DiffBlock 的 diffs 形状(一个 hunk 一条)
  *   - resolveWithin:    相对路径 → 基目录内绝对路径(防目录穿越)
  *   - logArgs/parseLogOut:       提交列表
  *   - parseNumStatZ:            单提交文件级增删统计
@@ -250,6 +251,174 @@ export function diffArgs(entry, from) {
   const orig = entry.origPath ?? from;
   if (typeof orig === 'string' && orig !== '') paths.push(orig);
   return args.concat(paths);
+}
+
+// ---- 统一 diff → hunk(官方 DiffBlock 的 diffs 形状) ----
+//
+// ======================== 实测事实(真实 git 输出) ========================
+//   · `\ No newline at end of file` 是**内容行之后的标记行**, 不是内容 —— 必须丢;
+//   · 路径含空格 / 非 ASCII 时 `--- a/<路径>` 后面会补一个 **TAB** 作分隔
+//     (`--- a/ren old.txt\t`), 所以要先在第一个 TAB 处截断再去引号;
+//   · `core.quotepath=true` 时路径被 C 风格引号包住、非 ASCII 走**八进制字节**
+//     转义(`"a/uni \344\270\255..."`)。本插件 host 一直传 `-c core.quotepath=false`,
+//     但解析器不假设它永不出现 —— 且八进制是 UTF-8 **字节**, 必须按字节解码。
+//   · 纯 mode 变化 / 二进制 / 100% rename 都没有 `@@`, 于是没有 hunk。
+
+/** 一个 hunk 的 `@@ -o[,s] +n[,t] @@` 头(单行 hunk 省略 `,s`, 默认 1)。 */
+const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
+
+/**
+ * 去掉 git 的 C 风格引号(仅当整段确实被 `"` 包住)。转义按 UTF-8 **字节**还原,
+ * 否则 `\344\270\255`(即 `中`)会被解成三个拉丁字符。
+ */
+function unquoteGitPath(value) {
+  const s = String(value);
+  if (s.length < 2 || s[0] !== '"' || s[s.length - 1] !== '"') return s;
+  const body = s.slice(1, -1);
+  const bytes = [];
+  const pushText = (str) => {
+    for (const byte of new TextEncoder().encode(str)) bytes.push(byte);
+  };
+  for (let i = 0; i < body.length; i += 1) {
+    const ch = body[i];
+    if (ch !== '\\') {
+      pushText(ch);
+      continue;
+    }
+    i += 1;
+    const esc = body[i];
+    if (esc === undefined) {
+      pushText('\\');
+      break;
+    }
+    const oct = body.slice(i, i + 3);
+    if (/^[0-7]{3}$/.test(oct)) {
+      bytes.push(parseInt(oct, 8) & 0xff);
+      i += 2;
+      continue;
+    }
+    const named = { n: 10, t: 9, r: 13, a: 7, b: 8, f: 12, v: 11 };
+    if (Object.prototype.hasOwnProperty.call(named, esc)) bytes.push(named[esc]);
+    else pushText(esc);
+  }
+  return new TextDecoder().decode(Uint8Array.from(bytes));
+}
+
+/**
+ * `--- a/<路径>` / `+++ b/<路径>` 行 → 相对路径。
+ * `/dev/null`(新增 / 删除的一侧)返回 null; 路径前没有 `a/` `b/` 前缀时原样返回。
+ */
+function diffSidePath(line) {
+  const tab = line.indexOf('\t');
+  const value = unquoteGitPath(tab === -1 ? line : line.slice(0, tab));
+  if (value === '/dev/null') return null;
+  if (value.startsWith('a/') || value.startsWith('b/')) return value.slice(2);
+  return value;
+}
+
+/** 若干内容行拼回 DiffBlock 期望的块: 行间 `\n`, 非空时带尾随 `\n`。 */
+function joinDiffLines(lines) {
+  return lines.length === 0 ? '' : lines.join('\n') + '\n';
+}
+
+/**
+ * 统一 diff → 官方 `DiffBlock` 的 `diffs` 形状: **一个 hunk 一条**
+ * `{path, oldText, newText}`, 两侧都已是拆好的行块(上下文两边各一份)。
+ *
+ * 为什么放在 host 侧: DiffBlock **不做 diff 比对** —— 它把 `oldText` 整块当删除行、
+ * `newText` 整块当新增行, 所以「统一 diff → 两侧行块」这一步必须有人做对; 落在纯函数层
+ * 就同时拿到了单测(tests/git.test.mjs 用真实 git 输出当夹具)。
+ *
+ * hunk 的范围由 `@@` 头声明的增删数**界定**, 而不是靠"下一行像不像内容":
+ *   - 于是一行内容本身以 `--` 开头的 `--- foo` 不会被误当成文件头;
+ *   - 于是被 TEXT_CAP 截断的最后一个 hunk 也能在输入耗尽时按已收到的内容收尾。
+ *
+ * @param {string} text `git diff` / `git show --format=` 的输出
+ * @returns {Array<{path: string, oldText: string, newText: string}>}
+ */
+export function parseDiffHunks(text) {
+  const hunks = [];
+  const lines = String(text).split('\n');
+  let sideOld = null; // 当前文件的 a/ 侧(删除文件时为 null)
+  let sideNew = null; // 当前文件的 b/ 侧(新增文件时为 null)
+  let renameTo = null;
+  let renameFrom = null;
+  let current = null;
+
+  const flush = () => {
+    if (current === null) return;
+    const path = sideNew ?? sideOld ?? renameTo ?? renameFrom ?? '';
+    hunks.push({
+      path,
+      oldText: joinDiffLines(current.old),
+      newText: joinDiffLines(current.new),
+    });
+    current = null;
+  };
+
+  for (const line of lines) {
+    if (line.startsWith('diff --git ')) {
+      flush();
+      sideOld = null;
+      sideNew = null;
+      renameTo = null;
+      renameFrom = null;
+      continue;
+    }
+
+    if (current === null) {
+      if (line.startsWith('--- ')) {
+        sideOld = diffSidePath(line.slice(4));
+        continue;
+      }
+      if (line.startsWith('+++ ')) {
+        sideNew = diffSidePath(line.slice(4));
+        continue;
+      }
+      if (line.startsWith('rename to ')) {
+        renameTo = line.slice('rename to '.length);
+        continue;
+      }
+      if (line.startsWith('rename from ')) {
+        renameFrom = line.slice('rename from '.length);
+        continue;
+      }
+      const head = HUNK_HEADER.exec(line);
+      if (head !== null) {
+        current = {
+          old: [],
+          new: [],
+          needOld: head[2] === undefined ? 1 : Number(head[2]),
+          needNew: head[4] === undefined ? 1 : Number(head[4]),
+        };
+        if (current.needOld === 0 && current.needNew === 0) flush();
+      }
+      // 其余(index / mode / similarity / Binary files 等元信息)不进 hunk, 跳过。
+      continue;
+    }
+
+    // 已在 hunk 内: 只认三种内容前缀 + 换行标记。
+    if (line.startsWith('\\')) continue; // `\ No newline at end of file` 不是内容
+    const marker = line[0];
+    if (marker === '+') {
+      current.new.push(line.slice(1));
+      current.needNew -= 1;
+    } else if (marker === '-') {
+      current.old.push(line.slice(1));
+      current.needOld -= 1;
+    } else if (marker === ' ' || line === '') {
+      // 空字符串只可能来自截断/收尾, 但上下文行本身也常是 " "(一个空格)。
+      const content = marker === ' ' ? line.slice(1) : '';
+      current.old.push(content);
+      current.new.push(content);
+      current.needOld -= 1;
+      current.needNew -= 1;
+    }
+    if (current.needOld <= 0 && current.needNew <= 0) flush();
+  }
+
+  flush();
+  return hunks;
 }
 
 // ---- 提交历史(commit history) ----

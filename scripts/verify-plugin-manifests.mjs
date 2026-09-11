@@ -27,7 +27,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 /** 本仓库里所有「静态双半包」插件目录名(= 插件 id)。 */
-const PLUGIN_IDS = ['file-git-explorer', 'files-lite', 'doc-copy'];
+const PLUGIN_IDS = ['file-git-explorer'];
 
 let passed = 0;
 const failures = [];

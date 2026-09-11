@@ -27,6 +27,7 @@ import {
     parseLogOut,
     parseNumStatZ,
     parentsFromRevList,
+    parseDiffHunks,
 } from '../lib/git.js';
 
 // ---- 夹具: 与真实输出逐字节一致(以 NUL 连接, 末尾保留 git 的收尾 NUL) ----
@@ -339,4 +340,243 @@ test('parentsFromRevList: 父提交数(首个 token 是自身)', () => {
     assert.equal(parentsFromRevList('abc p1'), 1);
     assert.equal(parentsFromRevList('abc p1 p2'), 2);
     assert.equal(parentsFromRevList(''), null);
+});
+
+// ---- 统一 diff → hunk(官方 DiffBlock 的 diffs 形状) ----
+//
+// 夹具同样是 Windows git 2.53.0 的真实输出。三个只有真输出才暴露的坑:
+//   · `\ No newline at end of file` 是**行后的标记行**, 不是内容 —— 必须丢掉;
+//   · 路径含空格/非 ASCII 时 `--- a/<路径>` 后面会**补一个 TAB** 作分隔;
+//   · `core.quotepath=true` 时路径会被 C 风格引号包起来(本插件 host 一直传
+//     `-c core.quotepath=false`, 但解析器不能因此就假设永不出现引号)。
+
+const DIFF_MOD_TWO_HUNKS = [
+    'diff --git a/mod.txt b/mod.txt',
+    'index 0cd7b95..fc72b6d 100644',
+    '--- a/mod.txt',
+    '+++ b/mod.txt',
+    '@@ -1,5 +1,5 @@',
+    ' line 1',
+    '-line 2',
+    '+line 2 changed',
+    ' line 3',
+    ' line 4',
+    ' line 5',
+    '@@ -16,5 +16,5 @@ line 15',
+    ' line 16',
+    ' line 17',
+    ' line 18',
+    '-line 19',
+    '+line 19 changed',
+    ' line 20',
+    '',
+].join('\n');
+
+const DIFF_NEW_FILE = [
+    'diff --git a/new.txt b/new.txt',
+    'new file mode 100644',
+    'index 0000000..824f3ce',
+    '--- /dev/null',
+    '+++ b/new.txt',
+    '@@ -0,0 +1,2 @@',
+    '+n1',
+    '+n2',
+    '',
+].join('\n');
+
+const DIFF_DELETED = [
+    'diff --git a/gone.txt b/gone.txt',
+    'deleted file mode 100644',
+    'index b5eff57..0000000',
+    '--- a/gone.txt',
+    '+++ /dev/null',
+    '@@ -1,3 +0,0 @@',
+    '-a',
+    '-b',
+    '-c',
+    '',
+].join('\n');
+
+// rename 且内容有变、两侧路径都带空格: 注意 `--- a/ren old.txt\t` 的尾随 TAB。
+const DIFF_RENAME_SPACED = [
+    'diff --git a/ren old.txt b/ren new.txt',
+    'similarity index 50%',
+    'rename from ren old.txt',
+    'rename to ren new.txt',
+    'index 415a78b..29f1ccd 100644',
+    '--- a/ren old.txt\t',
+    '+++ b/ren new.txt\t',
+    '@@ -1,3 +1,4 @@',
+    ' x',
+    ' y',
+    ' z',
+    '+w',
+    '',
+].join('\n');
+
+const DIFF_MODE_ONLY = [
+    'diff --git a/mode.txt b/mode.txt',
+    'old mode 100644',
+    'new mode 100755',
+    '',
+].join('\n');
+
+const DIFF_BINARY = [
+    'diff --git a/bin.dat b/bin.dat',
+    'index a18d99c..8d4219a 100644',
+    'Binary files a/bin.dat and b/bin.dat differ',
+    '',
+].join('\n');
+
+const DIFF_NO_NEWLINE_EOF = [
+    'diff --git a/nonl.txt b/nonl.txt',
+    'index 1c943a9..36ef1ba 100644',
+    '--- a/nonl.txt',
+    '+++ b/nonl.txt',
+    '@@ -1,3 +1,3 @@',
+    ' a',
+    '-b',
+    '+B',
+    ' c',
+    '\\ No newline at end of file',
+    '',
+].join('\n');
+
+const DIFF_UNICODE_SPACED = [
+    'diff --git a/uni 中文.txt b/uni 中文.txt',
+    'index 7a754f4..5f5fbe7 100644',
+    '--- a/uni 中文.txt\t',
+    '+++ b/uni 中文.txt\t',
+    '@@ -1,2 +1,3 @@',
+    ' 1',
+    '-2',
+    '\\ No newline at end of file',
+    '+2',
+    '+3',
+    '\\ No newline at end of file',
+    '',
+].join('\n');
+
+// core.quotepath=true 的形态: 路径被引号包住且非 ASCII 走八进制转义。
+const DIFF_QUOTED_PATH = [
+    'diff --git "a/uni \\344\\270\\255\\346\\226\\207.txt" "b/uni \\344\\270\\255\\346\\226\\207.txt"',
+    'index 7a754f4..5f5fbe7 100644',
+    '--- "a/uni \\344\\270\\255\\346\\226\\207.txt"\t',
+    '+++ "b/uni \\344\\270\\255\\346\\226\\207.txt"\t',
+    '@@ -1,2 +1,3 @@',
+    ' 1',
+    '-2',
+    '\\ No newline at end of file',
+    '+2',
+    '+3',
+    '\\ No newline at end of file',
+    '',
+].join('\n');
+
+test('parseDiffHunks: 同一文件的两个 hunk 各自成一条, 路径取 b/ 侧', () => {
+    const hunks = parseDiffHunks(DIFF_MOD_TWO_HUNKS);
+    assert.equal(hunks.length, 2);
+    assert.deepEqual(hunks[0], {
+        path: 'mod.txt',
+        oldText: 'line 1\nline 2\nline 3\nline 4\nline 5\n',
+        newText: 'line 1\nline 2 changed\nline 3\nline 4\nline 5\n',
+    });
+    assert.deepEqual(hunks[1], {
+        path: 'mod.txt',
+        oldText: 'line 16\nline 17\nline 18\nline 19\nline 20\n',
+        newText: 'line 16\nline 17\nline 18\nline 19 changed\nline 20\n',
+    });
+});
+
+test('parseDiffHunks: 新增文件的旧侧为空串(不是 null, 也不是一行空内容)', () => {
+    const hunks = parseDiffHunks(DIFF_NEW_FILE);
+    assert.deepEqual(hunks, [{ path: 'new.txt', oldText: '', newText: 'n1\nn2\n' }]);
+});
+
+test('parseDiffHunks: 删除文件的新侧为空串, 路径回落到 a/ 侧', () => {
+    const hunks = parseDiffHunks(DIFF_DELETED);
+    assert.deepEqual(hunks, [{ path: 'gone.txt', oldText: 'a\nb\nc\n', newText: '' }]);
+});
+
+test('parseDiffHunks: rename+改动取新路径, 且去掉路径尾随的 TAB', () => {
+    const hunks = parseDiffHunks(DIFF_RENAME_SPACED);
+    assert.deepEqual(hunks, [
+        { path: 'ren new.txt', oldText: 'x\ny\nz\n', newText: 'x\ny\nz\nw\n' },
+    ]);
+});
+
+test('parseDiffHunks: 只有 mode 变化或二进制 → 没有任何 hunk', () => {
+    assert.deepEqual(parseDiffHunks(DIFF_MODE_ONLY), []);
+    assert.deepEqual(parseDiffHunks(DIFF_BINARY), []);
+});
+
+test('parseDiffHunks: 丢掉 "\\ No newline at end of file" 标记行', () => {
+    assert.deepEqual(parseDiffHunks(DIFF_NO_NEWLINE_EOF), [
+        { path: 'nonl.txt', oldText: 'a\nb\nc\n', newText: 'a\nB\nc\n' },
+    ]);
+});
+
+test('parseDiffHunks: 非 ASCII + 空格的未加引号路径', () => {
+    assert.deepEqual(parseDiffHunks(DIFF_UNICODE_SPACED), [
+        { path: 'uni 中文.txt', oldText: '1\n2\n', newText: '1\n2\n3\n' },
+    ]);
+});
+
+test('parseDiffHunks: C 风格引号路径解回原样(防御 quotepath 未关时)', () => {
+    assert.deepEqual(parseDiffHunks(DIFF_QUOTED_PATH), [
+        { path: 'uni 中文.txt', oldText: '1\n2\n', newText: '1\n2\n3\n' },
+    ]);
+});
+
+test('parseDiffHunks: 整份多文件 diff 按文件顺序铺开, 无 hunk 的文件不占位', () => {
+    const all = [
+        DIFF_BINARY,
+        DIFF_DELETED,
+        DIFF_MOD_TWO_HUNKS,
+        DIFF_MODE_ONLY,
+        DIFF_NEW_FILE,
+        DIFF_RENAME_SPACED,
+    ].join('');
+    const hunks = parseDiffHunks(all);
+    assert.deepEqual(
+        hunks.map((h) => h.path),
+        ['gone.txt', 'mod.txt', 'mod.txt', 'new.txt', 'ren new.txt'],
+    );
+});
+
+test('parseDiffHunks: 空输入 / 纯噪声输入', () => {
+    assert.deepEqual(parseDiffHunks(''), []);
+    assert.deepEqual(parseDiffHunks('not a diff at all\n'), []);
+});
+
+test('parseDiffHunks: 每个 hunk 的行数与 @@ 头声明的增删数一致', () => {
+    // 不变量: oldText 的行数 = 该 hunk 的 old 侧行数, newText 同理。
+    const count = (text) => (text === '' ? 0 : text.split('\n').length - 1);
+    for (const fixture of [
+        DIFF_MOD_TWO_HUNKS,
+        DIFF_NEW_FILE,
+        DIFF_DELETED,
+        DIFF_RENAME_SPACED,
+        DIFF_NO_NEWLINE_EOF,
+        DIFF_UNICODE_SPACED,
+        DIFF_QUOTED_PATH,
+    ]) {
+        const declared = [...fixture.matchAll(/^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/gm)].map(
+            (m) => [m[1] === undefined ? 1 : Number(m[1]), m[2] === undefined ? 1 : Number(m[2])],
+        );
+        const hunks = parseDiffHunks(fixture);
+        assert.equal(hunks.length, declared.length, 'hunk 数应与 @@ 头数一致');
+        hunks.forEach((hunk, i) => {
+            assert.equal(
+                count(hunk.oldText),
+                declared[i][0],
+                '第 ' + String(i) + ' 个 hunk 的旧侧行数',
+            );
+            assert.equal(
+                count(hunk.newText),
+                declared[i][1],
+                '第 ' + String(i) + ' 个 hunk 的新侧行数',
+            );
+        });
+    }
 });

@@ -13,9 +13,7 @@ DSH 的插件生态还在早期,本仓库把几个日常高频缺口做成了独
 | 插件                     | 状态   | 解决什么问题                             | 一句话说明                                                                                             |
 | ------------------------ | ------ | ---------------------------------------- | ------------------------------------------------------------------------------------------------------ |
 | `ds-balance`             | 维护中 | 官方状态栏看不到余额和用量               | stats 行下方加第二行:余额 + 今日/本月 token,每 5 分钟刷新                                              |
-| `file-git-explorer`      | 维护中 | 看不到 git 状态、GUI 里没有终端          | 官方右侧栏「Git 树」页签(分支/变更/diff/提交历史) + 终端页签与抽屉(真 PTY, xterm.js)                   |
-| `files-lite`             | 维护中 | 官方文件树不能按需显示隐藏文件           | 接管官方右侧栏文件树:逐级懒加载 + 「显示隐藏文件」眼睛开关(`.git` 永不显示)                            |
-| `doc-copy`               | 维护中 | 文档预览里没法直接复制原始 markdown      | 文档页签 ⋯ 菜单加「复制内容」:一键复制磁盘原文(渲染型文件不出现)                                       |
+| `file-git-explorer`      | 维护中 | 看不到 git 状态、GUI 里没有终端          | 官方右侧栏「git 页签」(变更列表 + 提交历史)+ 详情悬浮面板(官方正文 / diff)+ 终端抽屉(真 PTY)           |
 | `db-console`             | 维护中 | GUI 里没有数据库客户端                   | 会话头部「数据库」页签:PG 完整链接登录(按项目保存)、schema 树、SQL 补全高亮、结果网格                  |
 | `deepseek-harness`       | 维护中 | 想要粒子鲸鱼背景                         | 蓝色粒子鲸鱼(DeepSeek 品牌蓝)默认开启,沿用官方明/暗/系统主题;`?dshtest=1` 隐藏式诊断面板               |
 | `stylevault-localchrome` | 维护中 | 想用本机 Chrome 配色当 DSH 主题          | 读本机 Chrome 用户色, 解码成 `#RRGGBB` 生成 StyleVault 1.0 预设; 授权后自动应用(需先装上游 StyleVault) |
@@ -155,41 +153,30 @@ agent 会自动调用;支持 PNG / JPEG / WebP / BMP / GIF。
 (DeepSeek)不支持图片的检查。限制:PNG / JPEG / WebP / GIF,单张 ≤ 30MB;
 文本粘贴不受影响。
 
-### file-git-explorer —— 官方右侧栏的 Git 树 + 终端
+### file-git-explorer —— 官方右侧栏的 git 页签 + 详情悬浮面板 + 终端抽屉
 
-占用官方右侧栏两个**新 kind**(不与任何 builtin 争位),外加 composer 下的终端抽屉:
+只占官方右侧栏一个**自建 kind**(`fge-git`,不与任何 builtin 争位),其余两个落点是详情悬浮面板与
+composer 座下方的终端抽屉。**文件树回归官方**,本插件不接管、不自绘。
 
-- **Git 树页签**:当前分支 + 上游 `↑ahead ↓behind` 徽标;变更列表(相对 `HEAD`,已暂存 / 未暂存 / 未跟踪,`M/A/D/R/U/?` 徽标);点变更行看单文件 diff(rename 用 `-M` 双路径);`⏱` 提交历史(50 条/页,可切「查看分支」,点提交看说明 + 文件 ±行数,再点文件看该次 diff)。
-- **终端页签 / 终端抽屉**:真 PTY —— `node-pty` ↔ WebSocket ↔ `xterm.js`,vim / htop / 颜色 / 补全 / Ctrl+C 均可用。抽屉收起态只在 composer 下留一条细舌,展开**在流内推挤会话列**;每工作区一个终端,跨抽屉关闭 / 切会话 / 页面刷新存活(重连回放 256KB),全局上限 16 个 LRU。
-- **刷新**:agent turn 结束时自动重取 status(页签不可见则挂起,可见时补刷);`⟳` 手动刷新会先 `git fetch --all --prune`(限时 8s,失败放行)。
-- 已砍掉 v0.2 的自带文件树 / 搜索 / 编辑保存 / `.http` / shell 行 —— 文件树交给 `files-lite`,只读浏览用 agent 的 glob/grep/edit 工具更强。
+- **Git 页签**:当前分支 + 上游 `↑ahead ↓behind` 徽标;**变更列表**(相对 `HEAD`,已暂存 / 未暂存 / 未跟踪,
+  `M/A/D/R/U/?` 徽标);**提交历史**(下拉切「查看分支」、每页 50 条、加载更多)。点一条提交**就地展开**它的文件
+  (带 ±行数),再点收起 —— 页签内没有「返回」。点任一文件(diff 范围:工作区相对 HEAD;从提交展开的则是该提交对其父提交)
+  即把 diff 送进悬浮面板。
+- **详情悬浮面板**:视口 1/2 宽、满高、紧贴右栏左缘,**同一时间只有一个**。承载官方**文档正文**与**diff**两类东西 ——
+  文件内容不自己渲染,只是把官方正文页签 `ctx.sidebarRight.float()` 起来,于是 markdown / 代码 / 图片 / html / pdf
+  全是官方原版;diff 用官方 `primitives.DiffBlock` 渲染,解析在 host 侧纯函数里。官方文档页签的芯片由本插件
+  **影子替换**(顺带加一枚「复制内容」,复制磁盘原文;purpose 里的「复制内容」能力即原 `doc-copy`)。
+- **终端抽屉**:真 PTY —— `node-pty` ↔ WebSocket ↔ `xterm.js`,vim / htop / 颜色 / 补全 / Ctrl+C 均可用。
+  收起态是 composer 下方一枚**居中的透明 chevron**,点击**向上**展开;上缘拖柄调高度(20%~70%,按工作区记忆)。
+  每工作区一个终端,跨抽屉关闭 / 切会话 / 页面刷新存活(重连回放 256KB),全局上限 16 个 LRU。
+  `■` 终止整棵进程树,`✕` 只收起不杀进程。
+- **刷新**:agent turn 结束时自动重取变更列表与历史首页(页签不可见则不刷,且**不 fetch**);
+  `⟳` 手动刷新会先 `git fetch --all --prune`(限时 8s,失败放行)。
+- 已砍掉 v0.2 的自带文件树 / 搜索 / 编辑保存 / `.http` / shell 行,以及 v0.6 的右栏终端页签 ——
+  只读浏览用 agent 的 glob/grep/read/edit 工具更强,终端只有抽屉一种形态。
 
-详见 `plugins/file-git-explorer/README.md`(HTTP/WS 接口、帧协议、porcelain v2 字段数陷阱、插件依赖解析锚点)。
-
-### files-lite —— 官方文件树的轻量接管
-
-官方右侧栏文件树的接管版,只做「看」:
-
-- 树根 = 当前会话工作区,点目录行展开 / 折叠,**首次展开才拉取**(逐级懒加载)。
-- 头部眼睛按钮切换**显示隐藏文件**:关(默认)隐藏所有 `.` 开头的条目,开则显示 dotfile —— 但 **`.git` 在任何情况下都不显示**。开关按浏览器持久化。
-- 排序:目录优先,同级按 `zh-CN` 名称序。
-- 没有搜索 / 编辑 / 保存 / 新建 / 删除 / 行操作 —— 需要这些时用 agent 的 glob / grep / read / edit 工具。
-
-**接管机制**:官方以 `priority: 'builtin'` 注册 `kind: 'files'`,本插件以 `priority: 'extension'` 注册**同一个 kind** 顶上去(注册表规定 extension 档可接管 builtin 档),卸载即自动复位;数据复用官方已有的 `remote.workspaceFiles`,不新增任何 host 路由。
-
-详见 `plugins/files-lite/README.md`。
-
-### doc-copy —— 文档预览的「复制内容」
-
-在文档页签的 **⋯ 菜单**末尾加一项,一键把该文件**磁盘上的原始文本**(如 markdown 源码)复制到剪贴板:
-
-- 只对**有源码**的文件出现:markdown / 纯文本 / 代码预览都有;`html` / `pdf` / 图片等**渲染型**文件不出现。
-- 复制的是**磁盘原件**(经官方 `remote.workspaceFiles.readAll`),与预览是否渲染完无关 —— 所以不需要「流式未读完时禁用」。
-- 不替换任何正文组件、**不碰** `documentPreviews` 注册表 → 「打开方式」菜单不会出现重复项,卸载即还原。
-
-> 官方文档正文所在的 `sidebar.right.tab.document` 是 **keyed** 槽,注册项**只有 `key`**、没有 `priority`,语义是「注册已占用的 key 会**替换**该占用者」。想往正文上叠按钮就得整块顶掉官方正文组件(官方组件未导出,只能自渲染 markdown,富文本预览会退化),所以本插件选了非破坏性的菜单入口。详见插件 README。
-
-详见 `plugins/doc-copy/README.md`。
+详见 `plugins/file-git-explorer/README.md`(HTTP/WS 接口、帧协议、porcelain v2 字段数陷阱、统一 diff→hunk 的三个坑、
+影子替换官方芯片为什么必须用负数 priority、悬浮面板几何、插件依赖解析锚点)。
 
 ### db-console —— 数据库控制台
 

@@ -1,7 +1,7 @@
 /**
  * dsh-file-git-explorer — host half(静态双半插件)
  *
- * 职责: 为右侧栏「Git 树」页签与终端抽屉提供 git 数据与**真 PTY**。
+ * 职责: 为右侧栏「git 页签」与终端抽屉提供 git 数据与**真 PTY**。
  *
  * 静态插件的 client→host 通信不走动态插件的 harness 私有 RPC, 而是注册
  * HTTP JSON 路由(与 dsh-ds-balance 同款信任栅栏):
@@ -9,9 +9,9 @@
  *   POST /fge/api/info    { root? }                        → { cwd, repoRoot }       纯 stat, 零 git 子进程
  *   POST /fge/api/status  { root?, repoRoot }              → { current, head, upstream, ahead, behind, branches, changes }
  *   POST /fge/api/sync    { root? }                         → { ok }                  fetch --prune; 成功则作废分支缓存
- *   POST /fge/api/diff    { repoRoot, path, status, from? } → { kind:'diff'|'untracked', text }
+ *   POST /fge/api/diff    { repoRoot, path, status, from? } → { kind:'diff'|'untracked', hunks, text }
  *   POST /fge/api/log     { repoRoot, ref?, skip?, limit? } → { ref, head, commits }   翻页零 rev-parse
- *   POST /fge/api/show    { repoRoot, hash, path? }         → { kind:'commit'|'merge'|'diff', message, files, text }
+ *   POST /fge/api/show    { repoRoot, hash, path? }         → { kind:'commit'|'merge'|'diff', message, files, hunks, text }
  *   GET  /fge/vendor/…    xterm.js | xterm.css | addon-fit.js   白名单静态资产(见下方栅栏说明)
  *   GET  /fge/ws/terminal WebSocket 升级 → PTY 字节流(帧协议见 lib/pty.js 顶部)
  *
@@ -40,6 +40,7 @@ import {
   parseNumStatZ,
   parentsFromRevList,
   diffArgs,
+  parseDiffHunks,
 } from './git.js';
 import {
   resolveShellExecutable,
@@ -223,7 +224,7 @@ export function apply(ctx) {
    * 刻意**不缓存**: 仓库根会随 .git 的新建/删除/移动而变化, 任何固定键缓存都可能
    * 在首次查询(工作区尚未成为仓库)后永久失效 —— 历史 bug 正是如此(s3 首次打开时
    * 还没有 .git, 向上命中父仓库并记进缓存, 之后 s3 建了自己的 .git, 缓存仍返回父仓库,
-   * 右侧 git 树于是渲染成父仓库的变更)。向上遍历只做 O(深度) 次 stat,
+   * 右侧 git 页签于是渲染成父仓库的变更)。向上遍历只做 O(深度) 次 stat,
    * 重算成本远小于一次 git 子进程, 却能彻底消除这类失效。
    */
   async function repoRootFor(base) {
@@ -383,14 +384,15 @@ export function apply(ctx) {
     const status = typeof body.status === 'string' ? body.status : '';
     if (status === '?' || body.untracked === true) {
       // 未跟踪文件没有 diff 可言; 刻意不在 host 侧读盘(客户端自己决定怎么展示)。
-      return { ok: true, kind: 'untracked', text: '' };
+      return { ok: true, kind: 'untracked', hunks: [], text: '' };
     }
     const entry = { path: filePath, origPath: null };
     const from = typeof body.from === 'string' ? body.from : '';
     if (from !== '') entry.origPath = from;
     const r = await runGit(diffArgs(entry), { cwd: repo.dir });
     if (r.exitCode !== 0) return { ok: false, error: 'git-failed' };
-    return { ok: true, kind: 'diff', text: capText(r.stdout) };
+    const text = capText(r.stdout);
+    return { ok: true, kind: 'diff', hunks: parseDiffHunks(text), text };
   }
 
   /** log: 分页提交列表; 仅第一页附带 HEAD, 翻页零 rev-parse。 */
@@ -440,7 +442,8 @@ export function apply(ctx) {
         { cwd: repo.dir },
       );
       if (r.exitCode !== 0) return { ok: false, error: 'git-failed' };
-      return { ok: true, kind: 'diff', text: capText(r.stdout) };
+      const text = capText(r.stdout);
+      return { ok: true, kind: 'diff', hunks: parseDiffHunks(text), text };
     }
 
     // `rev-list` 与 `show -s` 并行: 两者互不依赖。

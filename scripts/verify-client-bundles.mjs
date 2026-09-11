@@ -8,9 +8,10 @@
  *   · bundle 能否在 stub 的浏览器环境下加载(顶层 window.__ModuleLoader__.load);
  *   · factory 是否**只** require 平台种子模块(浏览器模块表是一份封闭名单,
  *     require 到名单外的模块会在真实浏览器里抛错, 而这里能提前抓到);
- *   · apply() 注册的槽位名 / key / id / kind / priority 是否与声明一致。
+ *   · apply() 注册的槽位名 / key / id / kind / priority 是否与声明一致 ——
+ *     含「影子替换官方文档芯片必须用负数 priority」这条 boot 期会抛错的硬约束。
  *
- * 它**不**渲染任何 UI: 真实渲染仍需要浏览器(见各插件 README 的验收清单)。
+ * 它**不**渲染任何 UI: 真实渲染仍需要浏览器(见插件 README 的验收清单)。
  */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -145,29 +146,47 @@ function loadBundle(relPath) {
 
 const slotOf = (bundle, name) => bundle.slots.filter((s) => s.options.name === name);
 
-// ---- fge: 双 kind + 终端抽屉 ----
+/** 官方 text 正文类型的实现 id —— 影子芯片必须用这个 key。 */
+const OFFICIAL_TEXT_ID = '@deepseek-ai/dsh-client-ui-sidebar-documentpreview';
+
+// ---- fge: git 页签 + diff 页签 + 文档芯片影子 + 终端抽屉 ----
 {
     const b = loadBundle('plugins/file-git-explorer/lib/client.js');
+
     check('fge: bundle id 与 inject', () => {
         assert.equal(b.id, 'dsh-file-git-explorer');
         assert.ok(b.exports.inject.includes('slots'), 'inject 应含 slots');
         assert.ok(b.exports.inject.includes('sidebarRightTabs'), 'inject 应含 sidebarRightTabs');
+        assert.ok(
+            b.exports.inject.includes('sidebarRight'),
+            'inject 应含 sidebarRight(float/close)',
+        );
     });
-    check('fge: 只 require 了种子模块', () => {
-        assert.deepEqual([...new Set(b.requires)], ['react']);
+
+    check('fge: 只 require 了种子模块(含 primitives)', () => {
+        assert.deepEqual([...new Set(b.requires)].sort(), [
+            '@deepseek-ai/dsh-client-ui-primitives',
+            'react',
+        ]);
     });
-    check('fge: 注册两个 extension 档 kind', () => {
+
+    check('fge: 两个 extension 档 kind(git / diff), 且没有外壳页签残留', () => {
         const kinds = b.tabs.map((t) => t.kind).sort();
-        assert.deepEqual(kinds, ['fge-git', 'fge-shell']);
+        assert.deepEqual(kinds, ['fge-diff', 'fge-git']);
         for (const t of b.tabs) {
             assert.equal(t.priority, 'extension', t.kind + ' 应为 extension 档');
             assert.equal(typeof t.title, 'function', t.kind + ' 的 title 应为 thunk');
         }
+        assert.ok(
+            !kinds.includes('fge-shell'),
+            '终端只有抽屉一种形态, 不应再有 fge-shell 页签类型',
+        );
     });
+
     check('fge: 两个 kind 的 body / title 都按 key 注册', () => {
         const bodyKeys = slotOf(b, 'sidebar.right.pane.tab').map((s) => s.options.key);
         const titleKeys = slotOf(b, 'sidebar.right.pane.tab.title').map((s) => s.options.key);
-        for (const key of ['dsh-file-git-explorer/git', 'dsh-file-git-explorer/shell']) {
+        for (const key of ['dsh-file-git-explorer/git', 'dsh-file-git-explorer/diff']) {
             assert.ok(bodyKeys.includes(key), '缺 pane.tab body: ' + key);
             assert.ok(titleKeys.includes(key), '缺 pane.tab title: ' + key);
         }
@@ -175,153 +194,53 @@ const slotOf = (bundle, name) => bundle.slots.filter((s) => s.options.name === n
             assert.equal(typeof s.component, 'function', s.options.name + ' 的组件应为函数');
         }
     });
+
+    check('fge: 影子注册官方 text 芯片槽, 且 priority 必须为负', () => {
+        const shadows = slotOf(b, 'sidebar.right.pane.tab.title').filter(
+            (s) => s.options.key === OFFICIAL_TEXT_ID,
+        );
+        assert.equal(shadows.length, 1, '应恰好影子注册一次官方 text 类型的芯片槽');
+        // 关键: keyed 槽**同 key 同 priority 会直接抛错**, 而渲染取 priority 最低者。
+        // 官方注册没有 priority(即 0), 所以这里必须是负数 —— 写成 0 会在 boot 期抛错。
+        assert.equal(
+            typeof shadows[0].options.priority,
+            'number',
+            '影子注册必须显式给 priority(否则与官方同为 0 → 注册抛错)',
+        );
+        assert.ok(shadows[0].options.priority < 0, '影子注册的 priority 必须小于官方的 0');
+    });
+
     check('fge: 终端抽屉注册进 conversation.composer.dock', () => {
         const dock = slotOf(b, 'conversation.composer.dock');
         assert.equal(dock.length, 1);
         assert.equal(dock[0].options.id, 'fge-terminal');
     });
-}
 
-// ---- files-lite: 接管官方 files kind ----
-{
-    const b = loadBundle('plugins/files-lite/lib/client.js');
-    check('files-lite: bundle id 与 inject', () => {
-        assert.equal(b.id, 'dsh-files-lite');
-        assert.ok(b.exports.inject.includes('slots'), 'inject 应含 slots');
-        assert.ok(b.exports.inject.includes('sidebarRightTabs'), 'inject 应含 sidebarRightTabs');
-    });
-    check('files-lite: 以 extension 档接管 kind files', () => {
-        assert.equal(b.tabs.length, 1);
-        assert.equal(b.tabs[0].kind, 'files', '必须接管官方 kind, 而不是新建 kind');
-        assert.equal(b.tabs[0].priority, 'extension', 'extension 档才能压过官方 builtin');
-        assert.notEqual(
-            b.tabs[0].id,
-            '@deepseek-ai/dsh-client-ui-sidebar-files',
-            'id 不能与官方重名',
-        );
-    });
-    check('files-lite: body / title 按自己的 id 注册', () => {
-        assert.deepEqual(
-            slotOf(b, 'sidebar.right.pane.tab').map((s) => s.options.key),
-            ['dsh-files-lite'],
-        );
-        assert.deepEqual(
-            slotOf(b, 'sidebar.right.pane.tab.title').map((s) => s.options.key),
-            ['dsh-files-lite'],
-        );
-    });
-}
-
-// ---- doc-copy: 文档页签菜单项 ----
-{
-    const b = loadBundle('plugins/doc-copy/lib/client.js');
-    check('doc-copy: bundle id 与 inject', () => {
-        assert.equal(b.id, 'dsh-doc-copy');
-        assert.ok(b.exports.inject.includes('slots'), 'inject 应含 slots');
-    });
-    check('doc-copy: 只加菜单项, 不注册任何替换型槽', () => {
-        const names = [...new Set(b.slots.map((s) => s.options.name))];
-        assert.deepEqual(names, ['sidebar.right.tab.menu.item']);
-        assert.equal(b.slots[0].options.id, 'doc-copy');
-        // 关键回归护栏: 不得触碰 keyed 的正文槽(那会顶掉官方正文组件)
-        assert.ok(
-            !names.includes('sidebar.right.tab.document'),
-            '不得注册 sidebar.right.tab.document(会替换官方正文)',
-        );
-    });
-    check('doc-copy: 不注册任何 tab kind(只挂菜单, 不占 kind)', () => {
-        assert.deepEqual(b.tabs, []);
-    });
-}
-
-// ---- 跨插件冲突: 三类「boot 期直接抛错」的重复 ----
-{
-    const all = [
-        ['file-git-explorer', loadBundle('plugins/file-git-explorer/lib/client.js')],
-        ['files-lite', loadBundle('plugins/files-lite/lib/client.js')],
-        ['doc-copy', loadBundle('plugins/doc-copy/lib/client.js')],
-    ];
-
-    check('跨插件: tab 类型 id 不重复(注册表对重名 id 抛错)', () => {
-        const seen = new Map();
-        for (const [name, bundle] of all) {
-            for (const type of bundle.tabs) {
-                assert.ok(
-                    !seen.has(type.id),
-                    'id "' + type.id + '" 被 ' + name + ' 与 ' + seen.get(type.id) + ' 同时注册',
-                );
-                seen.set(type.id, name);
-            }
+    check('fge: 自身无重复注册(tab id / kind+档位 / keyed key / list id)', () => {
+        // 注册表对这几类重复都是**boot 期直接抛错**, 所以离线就能护栏。
+        const tabIds = new Set();
+        const kindBands = new Set();
+        for (const type of b.tabs) {
+            assert.ok(!tabIds.has(type.id), 'tab 类型 id 重复: ' + type.id);
+            tabIds.add(type.id);
+            const band = type.priority === undefined ? 'extension' : type.priority;
+            const key = type.kind + '\u0000' + band;
+            assert.ok(!kindBands.has(key), '同档位重复声明 kind: ' + type.kind);
+            kindBands.add(key);
         }
-    });
-
-    check('跨插件: 同一档位内不重复声明同一个 kind', () => {
-        // coexists(): 同 kind 的两档可以配对(extension 接管 builtin), 但**同档重复**
-        // 是接线错误, 注册表直接抛错。
-        const seen = new Map();
-        for (const [name, bundle] of all) {
-            for (const type of bundle.tabs) {
-                const band = type.priority === undefined ? 'extension' : type.priority;
-                const key = type.kind + '\u0000' + band;
-                assert.ok(
-                    !seen.has(key),
-                    'kind "' +
-                        type.kind +
-                        '" 在 ' +
-                        band +
-                        ' 档被 ' +
-                        name +
-                        ' 与 ' +
-                        seen.get(key) +
-                        ' 重复注册',
-                );
-                seen.set(key, name);
-            }
-        }
-    });
-
-    check('跨插件: keyed 槽的 key 不重复(同槽同 key 会互相顶掉)', () => {
-        const seen = new Map();
-        for (const [name, bundle] of all) {
-            for (const slot of bundle.slots) {
-                if (typeof slot.options.key !== 'string') continue;
+        const keyed = new Set();
+        const listed = new Set();
+        for (const slot of b.slots) {
+            if (typeof slot.options.key === 'string') {
                 const key = slot.options.name + '\u0000' + slot.options.key;
-                assert.ok(
-                    !seen.has(key),
-                    '槽 ' +
-                        slot.options.name +
-                        ' 的 key "' +
-                        slot.options.key +
-                        '" 被 ' +
-                        name +
-                        ' 与 ' +
-                        seen.get(key) +
-                        ' 重复占用',
-                );
-                seen.set(key, name);
+                // 影子芯片与官方同 key 是有意的, 但它不能与**本插件自己**的另一条冲突。
+                assert.ok(!keyed.has(key), 'keyed 槽同 key 重复: ' + key);
+                keyed.add(key);
             }
-        }
-    });
-
-    check('跨插件: list 槽的 id 不重复', () => {
-        const seen = new Map();
-        for (const [name, bundle] of all) {
-            for (const slot of bundle.slots) {
-                if (typeof slot.options.id !== 'string') continue;
+            if (typeof slot.options.id === 'string') {
                 const key = slot.options.name + '\u0000' + slot.options.id;
-                assert.ok(
-                    !seen.has(key),
-                    '槽 ' +
-                        slot.options.name +
-                        ' 的 id "' +
-                        slot.options.id +
-                        '" 被 ' +
-                        name +
-                        ' 与 ' +
-                        seen.get(key) +
-                        ' 重复占用',
-                );
-                seen.set(key, name);
+                assert.ok(!listed.has(key), 'list 槽同 id 重复: ' + key);
+                listed.add(key);
             }
         }
     });

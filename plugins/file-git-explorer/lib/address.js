@@ -1,17 +1,21 @@
 /**
- * dsh-doc-copy — 纯函数层(可单测; 不依赖 ctx / DOM / React)
+ * dsh-file-git-explorer — 文件地址纯函数层(可单测; 不依赖 ctx / DOM / React)
  *
+ * 「复制内容」那枚芯片要按选项卡地址去读磁盘原文, 所以这里放地址与读回的纯逻辑:
  *   - parseFileAddress:   解析 `dsh-resource://file/…` 选项卡地址 → {scope, sessionId?, path}
  *   - extensionOf:        取小写扩展名(不带点)
  *   - isCopyableSource:   该路径是否是「可复制原文」的类型(排除 html/pdf/图片等渲染型)
  *   - extractDocumentText: 把 Remote 读取结果归一成文本(兼容多种返回形状)
+ *
+ * 本模块原在独立插件 `doc-copy` 里; v0.7 把详情改成「官方正文页签浮起来」之后, 页签芯片
+ * 只能由本插件自己渲染(见 docs/adr/0003), 「复制内容」于是并入芯片, 这份纯逻辑随之搬进来。
  *
  * client bundle 无法 import host 的 ESM, 所以浏览器侧用的是本文件逻辑的**内联副本**;
  * 本文件的价值是给这份逻辑一份可执行规约(tests/address.test.mjs), 两边必须同步改。
  *
  * ⚠ `parseFileAddress` 是对官方 `util/workspace-path/file-address.ts` 的**逐语义复刻**
  * (dsh-client-ui-sidebar-documentpreview 内联了同一份实现)。地址格式变了就必须同步,
- * 否则菜单项会静默地不出现或复制到错的路径。
+ * 否则芯片会静默地不出现或复制到错的路径。
  */
 
 /** 每个文件地址的开头。 */
@@ -78,7 +82,7 @@ export function extensionOf(path) {
 }
 
 /**
- * 渲染型(非源码)扩展名 —— 这些视图没有「原始文本」可复制, 菜单项对它们不出现:
+ * 渲染型(非源码)扩展名 —— 这些视图没有「原始文本」可复制, 芯片上不出现复制图标:
  * HTML/PDF 由浏览器渲染, 图片是二进制。
  */
 const RENDERED_EXTENSIONS = new Set([
@@ -117,10 +121,29 @@ function bytesToText(candidate) {
 }
 
 /**
+ * base64 → 文本。按**字节**解码, 所以 UTF-8 原文能原样回来。
+ * 不是合法 base64 时返回 null(调用方退回"把它当普通字符串")。
+ */
+function base64ToText(value) {
+  try {
+    const binary = atob(value);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    return new TextDecoder().decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * 把 Remote 的读取结果归一成文本。
  *
  * 兼容形状: 直接给字符串 / 裸 Uint8Array / number[]; `{ok:true, value:{bytes|data}}`;
  * `{ok:true, value:{text}}`; `{value:...}`。失败(`ok:false`)或无法识别 → null。
+ *
+ * ⚠ `remote.workspaceFiles.readAll` 的 `value.data` 是 **base64**(见 dsh-api-remotes 的
+ * result schema, 与官方 documentpreview 的 `documentFileBytes` 用 `atob` 解码), 不是明文 ——
+ * 不按字节解出来的会是乱码, 甚至把 base64 串本身复制到剪贴板。
  */
 export function extractDocumentText(result) {
   if (result === null || result === undefined) return null;
@@ -143,6 +166,13 @@ export function extractDocumentText(result) {
   if (typeof value !== 'object') return null;
   if (typeof value.text === 'string') return value.text;
 
-  const bytes = value.bytes !== undefined ? value.bytes : value.data;
-  return bytesToText(bytes);
+  if (value.data !== undefined) {
+    const fromData =
+      typeof value.data === 'string'
+        ? (base64ToText(value.data) ?? value.data)
+        : bytesToText(value.data);
+    if (fromData !== null) return fromData;
+  }
+
+  return bytesToText(value.bytes);
 }

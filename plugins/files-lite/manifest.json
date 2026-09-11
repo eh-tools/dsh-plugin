@@ -1,7 +1,0 @@
-{
-  "kind": "static",
-  "name": "dsh-files-lite",
-  "purpose": "以 extension 档接管官方右侧栏文件树(kind 'files'): 逐级懒加载目录、目录优先排序, 外加「显示隐藏文件」眼睛开关(dotfile 开关按工作区记忆)。只做「看」——不含搜索、编辑、保存与行操作。卸载即还原官方文件树。",
-  "files": ["package.json", "cordis.patch.yml", "lib/index.js", "lib/client.js", "lib/zones.js"],
-  "install": "dsh plugin --profile web add link:<repo-abs-path>/plugins/files-lite"
-}
