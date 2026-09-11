@@ -23,6 +23,7 @@ git clone https://github.com/eh-tools/dsh-plugin.git
 cd dsh-plugin
 pnpm install
 pre-commit install        # 安装 pre-commit / pre-push / commit-msg 三个钩子
+git config commit.template .gitmessage   # 提交时加载 .gitmessage 提示
 just --list               # 查看全部任务
 ```
 
@@ -56,10 +57,24 @@ type: feat | fix | docs | style | refactor | perf | test | build | ci | chore | 
 ```
 
 - subject 不超过 72 字符,不以句号结尾。
-- body 解释 **why**,不解释 what(与 subject 空一行,可选)。
+- body 解释 **why**,不解释 what(与 subject 空一行)。
+- `fix` / `perf` / `refactor` 必须在 body 用标签行补齐上下文(`commit-msg` 钩子强制):
+  - `fix` 必填 `现象` / `成因` / `复测`
+  - `perf` 必填 `基线` / `优化` / `度量`
+  - `refactor` 必填 `动机` / `验证`
+
+  ```text
+  fix(login): 修复登录后未跳回来源页
+
+  现象: 在 /settings 点登录, 成功后落到首页而非 /settings
+  成因: 成功回调里写死 router.push('/'), 未读取 returnUrl
+  复测: 未登录访问 /settings -> 登录 -> 应回到 /settings
+  ```
+
+- 其余类型(`feat` / `docs` / `style` / `test` / `chore` / `ci` / `build`)body 可选。
 - 示例:`feat(tool-vision): add on-demand auto-start of llama-server`。
 
-`commit-msg` 钩子会强制校验格式。
+`commit-msg` 钩子会强制校验格式与上述内容完整性。
 
 ## 门禁检查
 
@@ -68,7 +83,7 @@ type: feat | fix | docs | style | refactor | perf | test | build | ci | chore | 
 | 阶段       | 内容                                                                        |
 | ---------- | --------------------------------------------------------------------------- |
 | commit     | prettier + eslint(自动修复)、密钥扫描(gitleaks)、YAML/JSON 校验、主分支拦截 |
-| commit-msg | Conventional Commits 格式校验                                               |
+| commit-msg | Conventional Commits 格式校验 + `fix`/`perf`/`refactor` body 内容完整性     |
 | pre-push   | `node --check` 语法检查 + tool-vision 冒烟测试 + `pnpm audit --prod`        |
 
 手动等价命令:
@@ -103,6 +118,8 @@ just check   # lint + test + audit
 6. 本地自测:`just check` 全绿后提 PR。
 
 ## PR 检查清单
+
+提 PR 时 GitHub 会自动套用 `.github/pull_request_template.md` 的结构。
 
 - [ ] `just check` 通过(lint + 冒烟测试 + audit)
 - [ ] 提交信息符合 Conventional Commits

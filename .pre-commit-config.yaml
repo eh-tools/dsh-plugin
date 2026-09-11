@@ -1,6 +1,6 @@
 # 检查分层:
 #   commit     秒级: lint + format + 密钥扫描 + 内置轻量检查
-#   commit-msg Conventional Commits 强制
+#   commit-msg Conventional Commits 强制 + 行为类提交 body 完整性
 #   pre-push   全量: 语法检查 + 冒烟测试 + 依赖审计 (repo: local, 用项目自己的环境)
 #
 # 版本升级: pre-commit autoupdate
@@ -53,6 +53,15 @@ repos:
     rev: v4.3.0
     hooks:
       - id: conventional-pre-commit
+        stages: [commit-msg]
+
+  # ---- 提交信息内容完整性 (commit-msg): fix/perf/refactor 必填「标签: 内容」body ----
+  - repo: local
+    hooks:
+      - id: commit-message-body
+        name: commit message 内容完整性
+        entry: python3 scripts/commit-message-body.py
+        language: system
         stages: [commit-msg]
 
   # ---- 主分支保护 (commit): 拒 main 直接提交, 放行 merge 与首个提交 ----
