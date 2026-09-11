@@ -234,6 +234,99 @@ const slotOf = (bundle, name) => bundle.slots.filter((s) => s.options.name === n
     });
 }
 
+// ---- 跨插件冲突: 三类「boot 期直接抛错」的重复 ----
+{
+    const all = [
+        ['file-git-explorer', loadBundle('plugins/file-git-explorer/lib/client.js')],
+        ['files-lite', loadBundle('plugins/files-lite/lib/client.js')],
+        ['doc-copy', loadBundle('plugins/doc-copy/lib/client.js')],
+    ];
+
+    check('跨插件: tab 类型 id 不重复(注册表对重名 id 抛错)', () => {
+        const seen = new Map();
+        for (const [name, bundle] of all) {
+            for (const type of bundle.tabs) {
+                assert.ok(
+                    !seen.has(type.id),
+                    'id "' + type.id + '" 被 ' + name + ' 与 ' + seen.get(type.id) + ' 同时注册',
+                );
+                seen.set(type.id, name);
+            }
+        }
+    });
+
+    check('跨插件: 同一档位内不重复声明同一个 kind', () => {
+        // coexists(): 同 kind 的两档可以配对(extension 接管 builtin), 但**同档重复**
+        // 是接线错误, 注册表直接抛错。
+        const seen = new Map();
+        for (const [name, bundle] of all) {
+            for (const type of bundle.tabs) {
+                const band = type.priority === undefined ? 'extension' : type.priority;
+                const key = type.kind + '\u0000' + band;
+                assert.ok(
+                    !seen.has(key),
+                    'kind "' +
+                        type.kind +
+                        '" 在 ' +
+                        band +
+                        ' 档被 ' +
+                        name +
+                        ' 与 ' +
+                        seen.get(key) +
+                        ' 重复注册',
+                );
+                seen.set(key, name);
+            }
+        }
+    });
+
+    check('跨插件: keyed 槽的 key 不重复(同槽同 key 会互相顶掉)', () => {
+        const seen = new Map();
+        for (const [name, bundle] of all) {
+            for (const slot of bundle.slots) {
+                if (typeof slot.options.key !== 'string') continue;
+                const key = slot.options.name + '\u0000' + slot.options.key;
+                assert.ok(
+                    !seen.has(key),
+                    '槽 ' +
+                        slot.options.name +
+                        ' 的 key "' +
+                        slot.options.key +
+                        '" 被 ' +
+                        name +
+                        ' 与 ' +
+                        seen.get(key) +
+                        ' 重复占用',
+                );
+                seen.set(key, name);
+            }
+        }
+    });
+
+    check('跨插件: list 槽的 id 不重复', () => {
+        const seen = new Map();
+        for (const [name, bundle] of all) {
+            for (const slot of bundle.slots) {
+                if (typeof slot.options.id !== 'string') continue;
+                const key = slot.options.name + '\u0000' + slot.options.id;
+                assert.ok(
+                    !seen.has(key),
+                    '槽 ' +
+                        slot.options.name +
+                        ' 的 id "' +
+                        slot.options.id +
+                        '" 被 ' +
+                        name +
+                        ' 与 ' +
+                        seen.get(key) +
+                        ' 重复占用',
+                );
+                seen.set(key, name);
+            }
+        }
+    });
+}
+
 console.log('');
 if (failures.length > 0) {
     console.error('client bundle 装配: ' + String(failures.length) + ' 项失败');
