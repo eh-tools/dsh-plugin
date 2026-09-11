@@ -90,6 +90,15 @@ pnpm --dir plugins/file-git-explorer install
 
 > diff 悬浮面板的芯片**不需要**复制图标: 官方 `DiffBlock` 自带复制按钮, 复制它重建的 `- `/`+ ` 文本。
 
+### 右栏外观(覆盖官方 chrome)
+
+这几处是**本插件对官方右栏的覆盖**, 都在 `ensureStyles` 的样式里(原理与依赖见实现事实 §11):
+
+- **宽度上限 = 15% 视口**(常量 `RIGHTBAR_MAX_VW`): 官方首开宽度是视口的 45%(1920 上就是 864px),
+  中栏被挤到只剩 776px; 压到 15vw 之后中栏拿回整块宽度, 右栏仍贴视口右缘。
+- **右栏顶部只剩「收起」与「+ 新页签」**: 「分栏」与「进全屏」按钮已隐藏(真进全屏时"退出全屏"仍在)。
+- **右栏宽度拖柄已隐藏**: 限宽之后它写进官方 store 的宽度不再影响渲染, 留着只会误导。
+
 ### 终端抽屉
 
 - **抽屉舌**: composer 下方一枚透明 chevron(无边框, 只留一枚小三角), 点击**向上**展开。**抽屉舌与抽屉都宽度贯穿
@@ -247,8 +256,12 @@ hunk 的范围由 `@@` 头声明的增删数**界定**, 所以 hunk 内一行内
 - `ctx.sidebarRight.float(tabId, rect)` 是公开接口, `rect` 原样生效(`{x, y, width, height}`, 视口坐标 ——
   悬浮面板宿主是 `position:fixed` 且 portal 到 `document.body`)。**只对 docked 页签生效**, 已浮起的页签是 no-op,
   且**无已挂载会话座位时抛错**(调用点容错)。默认几何是 380×300 + 每层错开 24px 的级联, 没有平铺 / 吸附 / 贴边。
-- **右栏左缘**从 `[data-rightbar-col]`(右栏的 grid item)量, **不要**量里面的 `[data-sidebar-right-panel]`:
-  面板靠 CSS `transform` 滑入滑出, 展开动画期间量它只会拿到中间值, 而列本身不动。列宽为 0(`data-rightbar-collapsed`)时无轨道。
+- **右栏左缘**的取法取决于右栏还有没有轨道:
+  - **不覆盖宽度时**(官方 layout 原样): 右栏是真实的一格 grid track, 从 `[data-rightbar-col]` 的 `left` 量最稳,
+    **不要**量里面的 `[data-sidebar-right-panel]` —— 面板靠 CSS `transform` 滑入滑出, 展开动画期间量它只会拿到中间值。
+  - **本插件覆盖了宽度之后**(见 §11): 第三轨恒为 0 宽、`[data-rightbar-col]` 贴在视口右缘, 于是改成
+    **从面板自己量**: 面板右缘贴视口右缘, 所以 `left = innerWidth - panel.width`。`transform` 只平移不改宽度,
+    这个宽度在展开动画期间也是准的(量 `left` 才会拿到中间值)。
 - **右栏折叠必须显式关掉悬浮面板**: 悬浮面板在 `document.body` 上的一个 `fixed` portal 里(`z-index: 60`), 不随右栏滑走。
   本插件用一个只监听 `data-rightbar-collapsed` 的 `MutationObserver` 来关。
 - **终端抽屉不参与这套几何**: 它在 `conversation.composer.dock` 里**宽度贯穿**整个座位, 既不用量也不用
@@ -311,6 +324,34 @@ diff 页签浮起后离开页签条, git 页签又成为活动页签、**重新�
 所以 git 页签的 `info` / `status` / 查看分支 / 历史 / 展开表都缓存在模块级 `gitViews`(键 = 会话 id,
 并比对工作区 cwd), 重挂时恢复, 且**同一工作区的重挂不重新拉取**。自己实现"打开一个页签"时都要考虑这条。
 
+### 11. 右栏外观覆盖: 宽度上限与隐藏的 chrome 按钮
+
+按用户要求, 本插件对**官方右栏的外观**做了几处覆盖(纯 CSS, 都在 `ensureStyles` 里):
+
+- **宽度上限 `RIGHTBAR_MAX_VW`(默认 15vw)**。官方**没有**公开的宽度 API: `setRightbar` 只存在于 layout
+  内部, 而且被钳制到 `[300px, 0.7×视口]`; 首开宽度还是 `RIGHTBAR_DEFAULT_RATIO = 0.45`(1920 宽上就是 864px,
+  中栏只剩 776px)。所以走"改画法":
+
+  ```css
+  div:has(> [data-rightbar-col]) {
+    grid-template-columns: auto minmax(0, 1fr) 0px !important;
+  }
+  [data-sidebar-right-panel='push'] {
+    max-width: 15vw !important;
+  }
+  ```
+
+  第三轨压成 0 之后, 面板靠 `position:absolute; right:0` 向左"挂"进中栏(官方注释里
+  “it can hang over the centre when there is no track”说的正是这个), 于是中栏拿回整块宽度。
+  **左栏那一轨必须留给 `auto`** —— 官方侧栏组件自带宽度(`width` 从座位注入), `auto` 会收缩到它,
+  收起成 56px 细条、拖动变宽都照旧; 写成固定值就会把左栏写死。
+  `!important` 是必须的: 官方把 `grid-template-columns` 写在 **inline style** 上。
+
+- **隐藏右栏拖柄** `[data-side="rightbar"]`: 宽度被限死之后它写进 store 的值不再影响渲染, 留在聊天区中间只会误导。
+- **隐藏「分栏」`[data-dockkit-split-button]` 与「进全屏」`[data-sidebar-right-mode="fullscreen"]`**:
+  后者的属性值是**下一个**模式, 所以只命中"当前不是全屏"时的那个按钮; 真到了全屏, 退出全屏的按钮还在,
+  不会把人关在全屏里。`[data-sidebar-right-toggle]`(收起)与 `[data-dockkit-add-tab]`(回到 guide)都保留。
+
 ## 测试与静态检查
 
 ```bash
@@ -328,6 +369,9 @@ eslint .                     # 仓库统一 lint(client bundle 按惯例忽略)
 
 在**隔离 `DSH_HOME` + 独立端口**起一个实例(先 `dsh plugin --profile <名> add link:<repo-abs-path>/plugins/file-git-explorer`,
 再 `dsh --profile <名> --port <端口> --no-open`),在真浏览器里逐条走一遍:
+
+0. **右栏外观**:宽度 ≤ 15vw(1920 窗口下约 288px)且仍贴视口右缘;中栏拿回宽度;**左栏宽度不受影响**;
+   右栏顶部只剩「收起」与「+」,没有「分栏」「全屏」;右栏拖柄不在(聊天区中间不该出现竖条拖柄)。
 
 1. **开一个全新会话**并把右栏展开 → 默认页签就是官方的「**文件**」工作区文件树(列表有行、路径是会话 cwd),
    页签条上**没有 guide 占位页**;`+` 仍能回到 guide 列表, 从那里点「Git」进本插件页签。

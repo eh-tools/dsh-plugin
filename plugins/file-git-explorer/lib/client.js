@@ -58,6 +58,8 @@ window.__ModuleLoader__.load({
       var TERM_DEFAULT_PCT = 40;
       var COMMIT_PAGE = 50;
       var DIFF_KEEP = 8;
+      /** 右侧栏最大宽度(视口百分比)。官方的首开宽度是 45%、上限 70%, 这里按用户要求压到 15。 */
+      var RIGHTBAR_MAX_VW = 15;
       /** float() 的重试预算: 座位瞬时缺位(见 floatWithRetry)下一次就够, 这里留足余量。 */
       var FLOAT_ATTEMPTS = 6;
       var FLOAT_RETRY_MS = 60;
@@ -198,6 +200,22 @@ window.__ModuleLoader__.load({
           '.fge-tongue{display:flex;align-items:center;justify-content:center;width:100%;padding:1px 0 3px;background:transparent;border:0;color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));cursor:pointer;user-select:none}',
           '.fge-tongue:hover{color:var(--dsw-alias-label-primary)}',
           '.fge-chip{font-size:11px;padding:0 5px;border-radius:999px;background:var(--dsw-alias-interactive-bg-hover);white-space:nowrap}',
+          // ---- 右栏外观调整(改的是官方 layout / sidebar-right 的 chrome, 用户点名要的) ----
+          //
+          // 1) 右栏宽度上限 = 15vw。官方没有公开的宽度 API: `setRightbar` 只在 layout 内部, 还被钳制到
+          //    [300px, 0.7×视口]; 首开宽度更是 45% of frame(`RIGHTBAR_DEFAULT_RATIO`)。所以这里**只改画法**:
+          //    把 frame 的第三轨压成 0、再把面板本身限宽 —— 中栏因此拿回整块宽度(1920 宽实测: 864px → 289px)。
+          //    左栏那一轨交给 `auto`(官方侧栏组件自带宽度), 于是收起成 56px 细条、拖动变宽都照旧。
+          //    改 15 就改下面这一个数。
+          'div:has(> [data-rightbar-col]){grid-template-columns:auto minmax(0,1fr) 0px!important}',
+          '[data-sidebar-right-panel="push"]{max-width:' + String(RIGHTBAR_MAX_VW) + 'vw!important}',
+          //    宽度被限死之后, 官方那根右栏拖柄(它写的是 store 宽度, 已经不起作用)留在聊天区中间只会误导, 一并隐藏。
+          '[data-side="rightbar"]{display:none}',
+          // 2) 隐藏右栏 chrome 的「分栏」与「进全屏」按钮(「收起」保留)。
+          //    `data-sidebar-right-mode` 的值是**下一个**模式, 所以只命中"当前不是全屏"时的进全屏按钮;
+          //    真到了全屏, 那个按钮(退出全屏)还在, 不会把人关在全屏里出不来。
+          '[data-dockkit-split-button]{display:none}',
+          '[data-sidebar-right-mode="fullscreen"]{display:none}',
         ].join('\n');
         document.head.appendChild(el);
       }
@@ -363,19 +381,23 @@ window.__ModuleLoader__.load({
       }
 
       /**
-       * 右栏左缘的视口 x。用**右栏列的 grid item**(`[data-rightbar-col]`)而不是里面那块面板:
-       * 面板靠 CSS transform 滑入滑出, 展开动画期间量它只会拿到中间值; 列本身不动。
-       * @returns {number|null} 列宽为 0(右栏收起)时 null
+       * 右栏可视区域的左缘(视口 x)。
+       *
+       * ⚠ 本插件把右栏宽度限死在 `RIGHTBAR_MAX_VW`(见 ensureStyles), 于是官方那个 grid 第三轨恒为 0 宽、
+       * `[data-rightbar-col]` 贴在视口右缘 —— **不能再拿它的宽度/位置当锚点**了(那会恒为 null)。
+       * 改从面板自己量: 面板右缘贴视口右缘、`max-width` 已经生效, 而 `transform` 只平移不改宽度,
+       * 所以展开动画期间量它的 `width` 也是准的(量 `left` 才会拿到中间值)。
+       * @returns {number|null} 右栏没显示时 null
        */
       function rightbarLeft() {
         if (typeof document === 'undefined' || typeof document.querySelector !== 'function') {
           return null;
         }
-        var col = document.querySelector('[data-rightbar-col]');
-        if (col === null) return null;
-        var rect = col.getBoundingClientRect();
-        if (!(rect.width > 0)) return null;
-        return rect.left;
+        var panel = document.querySelector('[data-sidebar-right-panel="push"]');
+        if (panel === null) return null;
+        var width = panel.getBoundingClientRect().width;
+        if (!(width > 0)) return null;
+        return window.innerWidth - width;
       }
 
       /**
