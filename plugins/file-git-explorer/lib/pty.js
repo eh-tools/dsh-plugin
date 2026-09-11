@@ -123,6 +123,28 @@ export function clampSize(cols, rows) {
   return { cols: safeCols, rows: safeRows };
 }
 
+/**
+ * shell 的启动参数。
+ *
+ * ⚠ PowerShell 家族要 **`-NoLogo`**: 不加的话每 spawn 一次就打一遍 banner(`PowerShell 7.7.0-preview.4`),
+ * 而终端进程会被重启(上一次会话结束、被 `■` 终止…), 这些 banner 会堆在回放缓冲里 ——
+ * 重开抽屉就是"一屏 banner"(用户实测反馈)。其它 shell 不带参数。
+ */
+export function shellArgs(shell) {
+  // 两种分隔符都要认(纯函数层的既有约定: 本模块不 import node:path, 见文件顶部)
+  const parts = String(shell ?? '').split(/[\\/]/);
+  const base = (parts[parts.length - 1] ?? '').toLowerCase();
+  if (
+    base === 'pwsh' ||
+    base === 'pwsh.exe' ||
+    base === 'powershell' ||
+    base === 'powershell.exe'
+  ) {
+    return ['-NoLogo'];
+  }
+  return [];
+}
+
 /** 编码一条控制帧(文本帧)。 */
 export function encodeControl(message) {
   return JSON.stringify(message);
@@ -159,6 +181,20 @@ export class RingBuffer {
   /** 缓冲末端绝对位(= 已写入的总字节数)。 */
   get end() {
     return this.base + this.buffer.length;
+  }
+
+  /**
+   * 丢弃已缓冲的字节, 但**把绝对位推到当前末端** —— 于是老客户端记住的偏移不会因为"从头开始"而
+   * 读到错位的数据(它们只会看到"没有新内容", 直到新字节写入)。
+   * 用途: PTY 重启(上一次会话结束)时把上一个进程的回放清掉, 不然每次重启都会往同一个缓冲里
+   * 再叠一份 shell banner, 重开抽屉时就是"一屏的 banner"(用户实测反馈)。
+   * @returns {number} 被丢弃的字节数
+   */
+  reset() {
+    const dropped = this.buffer.length;
+    this.base = this.end;
+    this.buffer = Buffer.alloc(0);
+    return dropped;
   }
 
   /** 追加一段字节, 超出上限时从头部整段丢弃。返回本次丢弃的字节数。 */

@@ -45,6 +45,7 @@ import {
 import {
   resolveShellExecutable,
   clampSize,
+  shellArgs,
   encodeControl,
   decodeControl,
   RingBuffer,
@@ -563,7 +564,7 @@ export function apply(ctx) {
     const shell = resolveShellExecutable(process.platform, process.env, (p) => fs.existsSync(p));
     if (shell === null) throw new Error('no-shell-found');
     const size = clampSize(cols, rows);
-    const proc = pty.spawn(shell, [], {
+    const proc = pty.spawn(shell, shellArgs(shell), {
       name: 'xterm-256color',
       cols: size.cols,
       rows: size.rows,
@@ -580,7 +581,10 @@ export function apply(ctx) {
     let entry = terminals.get(key);
     if (entry !== undefined && entry.exited === false) return entry;
     if (entry !== undefined) {
-      // 旧进程已结束: 保留其回放缓冲作为"上文", 但换一个新进程续用同一槽位。
+      // 旧进程已结束: **丢掉上一个进程的回放缓冲**再接新进程。
+      // (原来是把旧缓冲当"上文"留着 —— 配上每次重启都重打一遍的 shell banner, 缓冲里就叠了 N 份
+      //  "PowerShell … + 提示符", 重开抽屉时整屏都是它。同一次会话内的重连回放仍然照旧。)
+      entry.ring.reset();
       entry.ring.append('\r\n\x1b[90m— 上一次会话已结束, 已开启新终端 —\x1b[0m\r\n');
       entry.exited = false;
       entry.exitInfo = null;

@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import {
     resolveShellExecutable,
     clampSize,
+    shellArgs,
     encodeControl,
     decodeControl,
     RingBuffer,
@@ -163,6 +164,37 @@ test('RingBuffer: 单次写入超过上限时只留尾部', () => {
     assert.equal(rb.buffer.toString(), '6789');
     assert.equal(rb.base, 6);
     assert.equal(rb.end, 10);
+});
+
+test('RingBuffer.reset: 丢内容但推进绝对位(老客户端不会读到错位数据)', () => {
+    const rb = new RingBuffer(64);
+    rb.append('旧会话输出');
+    const endBefore = rb.end;
+    assert.equal(rb.reset(), Buffer.byteLength('旧会话输出'));
+    assert.equal(rb.buffer.length, 0);
+    assert.equal(rb.end, endBefore, '绝对位不动 → 老客户端只会看到"没有新内容"');
+    // 老客户端记着旧偏移, 新内容一来只拿到新字节(而不是从头重放 = 叠出一屏 banner)
+    rb.append('新会话');
+    const delta = rb.since(endBefore);
+    assert.equal(delta.bytes.toString(), '新会话');
+    assert.equal(delta.lossy, false);
+});
+
+// ---- shell 启动参数 ----
+
+test('shellArgs: PowerShell 家族带 -NoLogo(否则每次重启都会重打一遍 banner)', () => {
+    assert.deepEqual(shellArgs('C:\\Program Files\\PowerShell\\7\\pwsh.exe'), ['-NoLogo']);
+    assert.deepEqual(shellArgs('pwsh'), ['-NoLogo']);
+    assert.deepEqual(shellArgs('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'), [
+        '-NoLogo',
+    ]);
+});
+
+test('shellArgs: 其它 shell 不带参数', () => {
+    assert.deepEqual(shellArgs('/bin/bash'), []);
+    assert.deepEqual(shellArgs('/bin/zsh'), []);
+    assert.deepEqual(shellArgs(''), []);
+    assert.deepEqual(shellArgs(undefined), []);
 });
 
 // ---- 终端池 ----

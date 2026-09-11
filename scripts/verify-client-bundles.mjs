@@ -70,9 +70,16 @@ function makeReactStub() {
 const reactStub = makeReactStub();
 
 function makeDocumentStub(overrides = {}) {
+    // `style` 得是个**能写**的对象: apply() 里会落 CSS 变量(document.documentElement.style.setProperty)。
+    const style = () => ({
+        setProperty: () => {},
+        removeProperty: () => {},
+        getPropertyValue: () => '',
+    });
     const node = () => ({
-        style: {},
+        style: style(),
         setAttribute: () => {},
+        removeAttribute: () => {},
         appendChild: () => {},
         remove: () => {},
         removeChild: () => {},
@@ -114,13 +121,17 @@ function loadBundle(relPath, options = {}) {
                 registration = mod;
             },
         },
-        localStorage: { getItem: () => null, setItem: () => {} },
+        localStorage: options.storage || { getItem: () => null, setItem: () => {} },
         location: { protocol: 'http:', host: '127.0.0.1' },
         innerWidth: options.innerWidth === undefined ? 1600 : options.innerWidth,
         setTimeout: (fn, ms) => {
             timers.push({ fn, ms });
             return timers.length;
         },
+        // 拖动期间会往 window 上挂 pointermove / pointerup: 桩得给出来, 并能被检查手动触发。
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        ...(options.win || {}),
     };
     const documentStub = makeDocumentStub({
         addEventListener: (type, fn, capture) => {
@@ -152,6 +163,7 @@ function loadBundle(relPath, options = {}) {
 
     const slots = [];
     const tabs = [];
+    const events = [];
     const ctx = {
         slots: {
             inject: (_name, factory) => factory(),
@@ -178,6 +190,11 @@ function loadBundle(relPath, options = {}) {
                 if (typeof disposer === 'function') disposer();
             };
         },
+        // cordis 的事件订阅: apply() 里会用(例如 theme/change), stub 记下来供检查断言。
+        on: (name, listener) => {
+            events.push({ name, listener });
+            return () => {};
+        },
         get: () => undefined,
         ...(options.ctx || {}),
     };
@@ -191,6 +208,7 @@ function loadBundle(relPath, options = {}) {
         react,
         timers,
         listeners,
+        events,
     };
 }
 
@@ -417,6 +435,209 @@ await checkAsync(
             ['tab-files'],
             '浮起后应把用户原本那一格 focus 回来(否则右栏跳回 git 树)',
         );
+    },
+);
+
+await checkAsync('fge: 右栏宽度可拖 + 钳在 [200px, 15vw] + 拖动后记忆', async () => {
+    const vars = {};
+    const stored = [];
+    const frame = {
+        attrs: new Set(),
+        setAttribute(name) {
+            this.attrs.add(name);
+        },
+        removeAttribute(name) {
+            this.attrs.delete(name);
+        },
+        parentElement: null,
+    };
+    const panelWidth = { value: 240 };
+    const windowListeners = [];
+    const b = loadBundle('plugins/file-git-explorer/lib/client.js', {
+        innerWidth: 1600, // 上限 = 15vw = 240px
+        requireOverrides: {
+            '@deepseek-ai/dsh-client-ui-primitives': new Proxy({}, { get: () => () => null }),
+        },
+        win: {
+            addEventListener: (type, fn, capture) => windowListeners.push({ type, fn, capture }),
+            removeEventListener: (type, fn) => {
+                const i = windowListeners.findIndex((l) => l.type === type && l.fn === fn);
+                if (i >= 0) windowListeners.splice(i, 1);
+            },
+        },
+        documentOverrides: {
+            documentElement: {
+                style: { setProperty: (k, v) => (vars[k] = v), removeProperty: () => {} },
+            },
+            querySelector: (sel) =>
+                typeof sel === 'string' && sel.includes('[data-sidebar-right-panel')
+                    ? {
+                          getBoundingClientRect: () => ({
+                              width: panelWidth.value,
+                              height: 1000,
+                              top: 0,
+                          }),
+                      }
+                    : null,
+        },
+        storage: {
+            getItem: () => null,
+            setItem: (k, v) => stored.push({ k, v }),
+        },
+    });
+
+    const down = b.listeners.find((l) => l.type === 'pointerdown' && l.capture === true);
+    assert.ok(down !== undefined, 'apply() 应挂捕获阶段的 pointerdown 接管拖柄');
+
+    const handle = {
+        parentElement: frame,
+        closest: (sel) => (sel === '[data-side="rightbar"]' ? handle : null),
+    };
+    const ev = (x) => ({
+        clientX: x,
+        target: handle,
+        preventDefault: () => {},
+        stopPropagation: () => {},
+    });
+    down.fn(ev(1000));
+    assert.ok(
+        frame.attrs.has('data-fge-resizing'),
+        '拖动期间应给 frame 挂 data-fge-resizing(关掉官方过渡)',
+    );
+    const move = windowListeners.find((l) => l.type === 'pointermove');
+    const up = windowListeners.find((l) => l.type === 'pointerup');
+    assert.ok(move !== undefined && up !== undefined, '拖动应挂 pointermove / pointerup');
+
+    // 往右拖 500px: 240 + 500 = 740 → 必须被 15vw(=240) 钳住
+    move.fn(ev(500));
+    assert.equal(vars['--fge-rightbar-px'], '240px', '向右拖不得越过 15vw 上限');
+    // 往左拖 500px: 240 - 500 = -260 → 必须被 200px 下限接住
+    move.fn(ev(1500));
+    assert.equal(vars['--fge-rightbar-px'], '200px', '向左拖不得低于 200px 下限');
+    // 松手时量到的是"已经生效"的面板宽度(真实页面里 CSS 变量此刻已作用于轨道 / 面板 max-width)
+    panelWidth.value = 200;
+    up.fn(ev(1500));
+    assert.ok(!frame.attrs.has('data-fge-resizing'), '松手应摘掉 data-fge-resizing');
+    assert.deepEqual(
+        stored.map((s) => s.k),
+        ['fge-rightbar-w-v1'],
+        '存储键应固定(读回来的同一个键)',
+    );
+    assert.deepEqual(
+        stored.map((s) => s.v),
+        ['200'],
+        '拖动结果应写进 localStorage(刷新 / 切会话保持)',
+    );
+});
+
+check('fge: git 头部 38px(与会话头部对齐) + 拖柄不再隐藏 + 终端底色不写透明 + 订主题事件', () => {
+    const source = readFileSync(join(ROOT, 'plugins/file-git-explorer/lib/client.js'), 'utf8');
+    // 头部高度: 官方页签条 0–38, 官方的「文件」页签头也是 38px ⇒ 底边线落在 y=76, 与会话头部
+    // (`wSkVaW_header`)的底边线对齐。写成 padding 撑出来的高度会差 4px(实测 33.8px, 线在 y≈71.8)。
+    assert.match(source, /\.fge-head\{[^}]*height:38px/, '.fge-head 必须是 38px 高(border-box)');
+    assert.ok(
+        !/\[data-side="rightbar"\]\{display:none\}/.test(source),
+        '右栏拖柄不能再被 hiding —— 隐藏就没法拖',
+    );
+    // xterm 只认具体颜色: 传 rgba(0,0,0,0) 会被判无效并回落成它的默认黑,
+    // 浅色主题下标题条(白)与终端体(黑)就断开, 看着就是"标题条错位"。
+    assert.ok(
+        !/background:\s*'rgba\(0,0,0,0\)'/.test(source),
+        '终端 theme.background 必须给具体颜色(透明会被 xterm 丢掉 → 变纯黑)',
+    );
+    const b = loadBundle('plugins/file-git-explorer/lib/client.js');
+    assert.ok(
+        b.events.some((e) => e.name === 'theme/change'),
+        '应订 theme/change: 主题切换时活着的终端要就地换色',
+    );
+});
+
+check(
+    'fge: 终端表面 code-block + 抽屉/舌跟对话区同宽 + 条无底色 + 滚动条 6px 圆角 + Alt+C 复制',
+    () => {
+        // 直接看**注入出去的 CSS**: 这几条规则是字符串拼出来的, 读源码文本容易被拼法绕过去。
+        const styles = [];
+        loadBundle('plugins/file-git-explorer/lib/client.js', {
+            documentOverrides: {
+                getElementById: () => null,
+                createElement: (tag) =>
+                    tag === 'style'
+                        ? { id: '', textContent: '', setAttribute: () => {}, appendChild: () => {} }
+                        : { style: {}, setAttribute: () => {}, appendChild: () => {} },
+                head: { appendChild: (el) => styles.push(String(el.textContent || '')) },
+            },
+        });
+        const css = styles.join('\n');
+        assert.ok(css.length > 0, 'ensureStyles 应注入一段 CSS');
+        // ⚠ 官方浅色主题里 `bg-base` / `bg-layer-1/2/3` **全是纯白**, 终端用它们就与页面融合、
+        // 标题条那条分隔线也跟着看不出来(用户实测反馈)。官方终端卡片用的是 code-block 底色。
+        assert.match(
+            css,
+            /\.fge-term\b[^}]*background:var\(--dsw-alias-markdown-code-block/,
+            '终端抽屉应用 code-block 底色',
+        );
+        assert.match(
+            css,
+            /\.fge-term-body\{[^}]*background:var\(--dsw-alias-markdown-code-block/,
+            '终端体应用 code-block 底色(不是 bg-base)',
+        );
+        assert.match(
+            css,
+            /\.fge-term-body \.xterm-viewport\{background-color:var\(--dsw-alias-markdown-code-block/,
+            'viewport 覆盖色必须与画布同一个 token, 否则又会出现"接缝"',
+        );
+        // 标题条**不要自己的底色**(用户口径: 把那块色去掉) —— 透出抽屉表面, 分界靠下面那条 border。
+        assert.match(css, /\.fge-term-strip\{[^}]*background:none/, '标题条不应再有自己的底色');
+        // 抽屉 / 抽屉舌的宽度 = 上方对话区宽度(`--dsh-chat-content-width`, 即 wSkVaW_widthHandle 拖出来的那个);
+        // 座位本身是整条中栏, 不给 max-width 就会比 composer 卡片宽出一截。
+        assert.match(
+            css,
+            /\.fge-term\{[^}]*max-width:var\(--dsh-chat-content-width,100%\)[^}]*margin-inline:auto/,
+            '终端抽屉宽度要跟对话区一致(居中)',
+        );
+        assert.match(
+            css,
+            /\.fge-tongue\{[^}]*max-width:var\(--dsh-chat-content-width,100%\)/,
+            '抽屉舌也要跟对话区同宽',
+        );
+        // 滚动条: 6px + 两端圆角(参考 dsh 自己的滚动条)。
+        assert.match(
+            css,
+            /\.scrollbar\.vertical > \.slider\{[^}]*border-radius:3px/,
+            '滚动条滑块要圆角',
+        );
+        // 页签与终端体同色(于是"连着终端"), 但**不得再用投影盖掉条的底边** —— 那样页签下面就没有那条线了。
+        const tab = /\.fge-term-tab\{[^}]*\}/.exec(css);
+        assert.ok(tab !== null, '应有 .fge-term-tab 规则');
+        assert.match(
+            tab[0],
+            /background:var\(--dsw-alias-markdown-code-block/,
+            '页签底色应与终端体同色',
+        );
+        assert.ok(
+            !/box-shadow/.test(tab[0]),
+            '页签不得再用 1px 投影盖住 strip 的底边(用户要求这条线在页签下面也连续)',
+        );
+        // xterm 自带滚动条 14px 且宽高是内联样式, 必须 !important 收到 6px。
+        assert.match(
+            css,
+            /\.xterm-scrollable-element > \.scrollbar\.vertical\{width:6px!important\}/,
+            'xterm 滚动条要收到 6px 宽(官方默认 14px)',
+        );
+        assert.match(
+            css,
+            /\.xterm-scrollable-element > \.scrollbar\.vertical > \.slider\{width:100%!important/,
+            '滑块要跟着轨道收窄(否则滑块比轨道宽)',
+        );
+        // Alt+C = 复制终端选区(终端里原生复制不可用; Ctrl+C 必须留给 SIGINT, 所以走 Alt+C)。
+        const source = readFileSync(join(ROOT, 'plugins/file-git-explorer/lib/client.js'), 'utf8');
+        assert.match(source, /attachCustomKeyEventHandler/, '终端要挂自定义键处理(Alt+C 复制)');
+        assert.match(source, /ev\.altKey/, 'Alt+C 复制要判 Alt 修饰键');
+        assert.ok(
+            !/ctrlKey && ev\.shiftKey/.test(source),
+            '不要占用 Ctrl+Shift+C(那是浏览器/DevTools 的检查元素)',
+        );
+        assert.match(source, /writeClipboard/, '复制必须走 primitives.writeClipboard');
     },
 );
 

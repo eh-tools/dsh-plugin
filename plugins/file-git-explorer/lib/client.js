@@ -66,6 +66,26 @@ window.__ModuleLoader__.load({
       var DIFF_KEEP = 8;
       /** 右侧栏最大宽度(视口百分比)。官方的首开宽度是 45%、上限 70%, 这里按用户要求压到 15。 */
       var RIGHTBAR_MAX_VW = 15;
+      /**
+       * 右侧栏拖动下限(px)。上限仍是 `RIGHTBAR_MAX_VW`, 可拖区间 = [200px, 15vw]
+       * (1600 宽 → 200–240, 1920 宽 → 200–288)。宽度拖完记住, 见 readRightbarWidth/persistRightbarWidth。
+       */
+      var RIGHTBAR_MIN_PX = 200;
+      /** 拖动后宽度的存储键(与终端高度同款: localStorage, 刷新 / 切会话都在)。 */
+      var RIGHTBAR_WIDTH_KEY = 'fge-rightbar-w-v1';
+      /** 第三轨 / 面板宽度 / 拖柄位置共用的那一个值: 拖动过的 px 优先, 没拖过就按上限 15vw。 */
+      var RIGHTBAR_TRACK = 'min(var(--fge-rightbar-px,' + String(RIGHTBAR_MAX_VW) + 'vw),' + String(RIGHTBAR_MAX_VW) + 'vw)';
+      /**
+       * 终端表面色 = 官方的「代码 / 终端卡片」底色(`--dsw-alias-markdown-code-block`)。
+       *
+       * ⚠ 不能用 `--dsw-alias-bg-base` / `bg-layer-*`: 官方浅色主题里这几个 token **全是纯白**,
+       * 终端就与页面完全融合(实测: 用户主题下整个抽屉糊进背景, 连标题条的分隔线都看不出来)。
+       * 官方终端卡片(`TerminalBlock` / `ioCard`)用的正是 code-block 底色 + `border-l1` 描边。
+       * 兜底: 旧主题没有该 token 时回落到 `bg-base`。
+       */
+      var TERM_SURFACE = 'var(--dsw-alias-markdown-code-block,var(--dsw-alias-bg-base))';
+      /** xterm 只吃具体颜色: JS 侧按这个名字读 token 再归一(见 terminalTheme)。 */
+      var TERM_SURFACE_TOKEN = '--dsw-alias-markdown-code-block';
       /** float() 的重试预算: 座位瞬时缺位(见 floatWithRetry)下一次就够, 这里留足余量。 */
       var FLOAT_ATTEMPTS = 6;
       var FLOAT_RETRY_MS = 60;
@@ -133,7 +153,10 @@ window.__ModuleLoader__.load({
         el.id = id;
         el.textContent = [
           '.fge-root{display:flex;flex-direction:column;height:100%;min-height:0;font-size:12px;color:var(--dsw-alias-text-base,inherit)}',
-          '.fge-head{display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid var(--dsw-alias-border-subtle,rgba(128,128,128,.22));flex:0 0 auto}',
+          // git 页签头部: **高度必须 38px**(border-box)—— 页签条占 0–38, 官方的「文件」页签头也是 38px,
+          // 于是头部底边线正好落在 y=76, 与会话头部(`wSkVaW_header`)的底边线、以及官方文件页签的下缘对齐。
+          // 写成 padding 撑出来的高度(33.8px)会差 4px, 看上去就是"这条线跟上面那条没对齐"。
+          '.fge-head{display:flex;align-items:center;gap:6px;box-sizing:border-box;height:38px;padding:0 8px;border-bottom:.5px solid var(--dsw-alias-border-l3);flex:0 0 auto}',
           '.fge-btn{border:0;background:transparent;cursor:pointer;padding:2px 5px;border-radius:4px;color:inherit;font-size:12px;line-height:1.4}',
           '.fge-btn:hover{background:var(--dsw-alias-interactive-bg-hover)}',
           '.fge-btn[disabled]{opacity:.45;cursor:default}',
@@ -180,16 +203,31 @@ window.__ModuleLoader__.load({
           '.fge-copy[data-s="failed"]{color:#d9534f}',
           // 终端抽屉: 座位在 composer 之下(conversation.composer.dock), **宽度贯穿整个座位**,
           // 顶部两角圆角; 颜色全走主题 token(--dsw-alias-*), 不写死蓝/黑, 于是明暗主题都跟得上。
-          '.fge-term{display:flex;flex-direction:column;width:100%;border-top:1px solid var(--dsw-alias-border-l2);border-radius:12px 12px 0 0;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}',
+          //
+          // ⚠ 表面色用**官方的"代码/终端卡片"底色** `--dsw-alias-markdown-code-block`, 不要用 `bg-base`:
+          //   官方浅色主题里 `bg-base` / `layer-1/2/3` **全是纯白**, 拿它们当终端底 = 与页面完全融合,
+          //   标题条那条分隔线也跟着看不出来(实测: 用户主题下整个抽屉糊进背景)。
+          //   官方终端卡片(`TerminalBlock` / `ioCard`)用的就是 code-block 底色 + `border-l1` 描边。
+          //   ⚠ 抽屉宽度 = **上方对话区宽度**(`--dsh-chat-content-width`, 就是那条
+          //   `wSkVaW_widthHandle` 拖出来的宽度): 座位本身是整条中栏, `width:100%` 会比 composer
+          //   卡片宽出一截, 看着不像"同一个对话区"。max-width + 居中即可, 纯 CSS 零测量;
+          //   拖那条手柄时变量一变抽屉跟着变, 里面的 xterm 由 ResizeObserver 自动 refit。
+          '.fge-term{display:flex;flex-direction:column;box-sizing:border-box;width:100%;max-width:var(--dsh-chat-content-width,100%);margin-inline:auto;border-top:1px solid var(--dsw-alias-border-l2);border-radius:12px 12px 0 0;background:' +
+            TERM_SURFACE +
+            ';color:var(--dsw-alias-label-primary)}',
           // 标题条(terminal title bar): 长得像 Windows Terminal 的页签栏, 但**不是多页签容器**
           // —— 每工作区仍只有一个终端(见 CONTEXT.md「工作区终端」), 所以条里恒定一枚页签。
           // 条本身仍是收起开关(点空白处 = 点页签上的 `×`: 只收抽屉, 不杀进程)。
-          // 底色取主题的"抬高表面"色(浅色主题下与 bg-base 同为白, 深色主题下自然分层),
-          // 分隔线跟官方面板 header 同款(见 ui-sidebar-files 的 .header: border-bottom border-l3)。
-          '.fge-term-strip{display:flex;align-items:flex-end;gap:2px;padding:3px 8px 0;font-size:11.5px;cursor:pointer;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);border-bottom:1px solid var(--dsw-alias-border-l3)}',
-          // 页签: 只有当前工作区这一枚, 恒为活动态 —— 底色与终端体同色, 两角圆角, 再用 1px 实心
-          // 投影**盖掉条的底边**, 做出"页签与终端相连"的观感(只靠圆角出不来页签形)。
-          '.fge-term-tab{display:flex;align-items:center;gap:5px;min-width:0;max-width:42%;padding:3px 6px 3px 8px;border-radius:6px 6px 0 0;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);box-shadow:0 1px 0 0 var(--dsw-alias-bg-base);cursor:pointer}',
+          // ⚠ 底色**不设**(用户口径: 把那块色去掉) —— 直接透出抽屉表面, 条 / 体的分界交给下面那条
+          //   `border-l3` 分隔线; 页签用同样的表面色, 于是条里只有页签这一块"面"。
+          //   分隔线跟官方面板 header 同款(border-l3, 官方浅色主题实测 rgba(0,0,0,.12), 是三级边框里最深的)。
+          '.fge-term-strip{display:flex;align-items:flex-end;gap:2px;padding:3px 8px 0;font-size:11.5px;cursor:pointer;background:none;color:var(--dsw-alias-label-secondary);border-bottom:1px solid var(--dsw-alias-border-l3)}',
+          // 页签: 只有当前工作区这一枚, 恒为活动态 —— 底色与终端体同色(于是"连着终端"), 与条形成对比, 两角圆角。
+          // ⚠ **不再用"1px 投影盖掉条的底边"那套**: 那样页签底下就没有那条线了(用户点名要线是连续的)。
+          //   现在页签停在条的内容盒底部、**不压** border, 于是 strip 的底边线在页签下面同样看得见。
+          '.fge-term-tab{display:flex;align-items:center;gap:5px;min-width:0;max-width:42%;padding:3px 6px 3px 8px;border-radius:6px 6px 0 0;background:' +
+            TERM_SURFACE +
+            ';color:var(--dsw-alias-label-primary);cursor:pointer}',
           // 页签字形: primitives 里没有终端图标(75 枚图标全表最接近的只有 IconCodeOutline16),
           // 所以自绘 `>_` —— 与 `■` 同款做法, 不引依赖。
           '.fge-term-tab-glyph{flex:0 0 auto;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;opacity:.7}',
@@ -205,30 +243,52 @@ window.__ModuleLoader__.load({
           '.fge-term-kill:hover{color:var(--dsw-alias-state-error-primary);background:var(--dsw-alias-interactive-bg-hover-danger)}',
           '.fge-term-grip{height:5px;cursor:ns-resize;background:transparent}',
           '.fge-term-grip:hover{background:var(--dsw-alias-interactive-bg-hover)}',
-          '.fge-term-body{flex:1 1 auto;min-height:0;padding:2px 4px 4px;background:var(--dsw-alias-bg-base)}',
+          '.fge-term-body{flex:1 1 auto;min-height:0;padding:2px 4px 4px;background:' + TERM_SURFACE + '}',
           '.fge-term-body .xterm{height:100%}',
-          // 抽屉舌: 同样宽度贯穿, 中间一枚透明无边框 chevron(旧实现的观感, 见 v0.2 的 .fge-strip)。
-          '.fge-tongue{display:flex;align-items:center;justify-content:center;width:100%;padding:1px 0 3px;background:transparent;border:0;color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));cursor:pointer;user-select:none}',
+          // xterm 自带的滚动条(vscode 血统)是 **14px** 宽, 在这么窄的抽屉里显得又粗又占地方;
+          // 而且它的宽/高是 **内联样式** 写死的(`domNode.setWidth(...)`), 只有 `!important` 能压住。
+          // 这里收到 6px(抽屉里其它滚动区也是 5px 细滚条), 滑块交给 xterm 主题自己算色(跟随前景色)。
+          '.fge-term-body .xterm-scrollable-element > .scrollbar.vertical{width:6px!important}',
+          // 滑块跟着收窄 + **圆角**(用户口径: 参考 dsh 自己的滚动条 —— 细条 + 两端圆角)。
+          // 颜色不用管: xterm 按 `scrollbarSliderBackground`(默认 = 前景色 20% 透明)自己注入样式, 天然跟主题。
+          '.fge-term-body .xterm-scrollable-element > .scrollbar.vertical > .slider{width:100%!important;border-radius:3px}',
+          // xterm 自带的 xterm.css 把 `.xterm-viewport` 写死成 `background:#000`, xterm 自己**不会**改它
+          // (主题色只落在 `.xterm-scrollable-element` 上) —— 于是终端底边会漏出一条黑带。
+          // 这里按**与画布同一个**表面 token 覆盖, 主题一换跟着变(纯 CSS, 不需要 JS 参与)。
+          '.fge-term-body .xterm-viewport{background-color:' + TERM_SURFACE + '!important}',
+          // 抽屉舌: 宽度与抽屉同宽(同一个 `--dsh-chat-content-width`), 中间一枚透明无边框 chevron
+          // (旧实现的观感, 见 v0.2 的 .fge-strip)。
+          '.fge-tongue{display:flex;align-items:center;justify-content:center;box-sizing:border-box;width:100%;max-width:var(--dsh-chat-content-width,100%);margin-inline:auto;padding:1px 0 3px;background:transparent;border:0;color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));cursor:pointer;user-select:none}',
           '.fge-tongue:hover{color:var(--dsw-alias-label-primary)}',
           '.fge-chip{font-size:11px;padding:0 5px;border-radius:999px;background:var(--dsw-alias-interactive-bg-hover);white-space:nowrap}',
           // ---- 右栏外观调整(改的是官方 layout / sidebar-right 的 chrome, 用户点名要的) ----
           //
-          // 1) 右栏宽度上限 = 15vw。官方没有公开的宽度 API: `setRightbar` 只在 layout 内部, 还被钳制到
-          //    [300px, 0.7×视口]; 首开宽度更是 45% of frame(`RIGHTBAR_DEFAULT_RATIO`)。所以这里**只改画法**:
-          //    把 frame 第三轨定成 15vw、再把面板本身也限到同样宽 —— 于是右栏**占真实的一格轨道**,
-          //    打开时把中栏挤窄(而不是浮在它上面), 中栏剩下的宽度 = 总宽 - 左栏 - 15vw。
+          // 1) 右栏宽度 = **可拖**, 上限 15vw、下限 200px(用户口径: 上限保留, 但得能拖)。
+          //    官方没有公开的宽度 API: `setRightbar` 只在 layout 内部, 还被钳制到 [300px, 0.7×视口];
+          //    首开宽度更是 45% of frame(`RIGHTBAR_DEFAULT_RATIO`)。所以这里**只改画法**:
+          //    把 frame 第三轨定成 `RIGHTBAR_TRACK`(拖动过的 px, 没拖过回落 15vw)、面板也限到同样宽 ——
+          //    于是右栏**占真实的一格轨道**, 打开时把中栏挤窄(而不是浮在它上面)。
           //    ⚠ 第三轨**不能写成 0**: 轨道为 0 时官方面板(`position:absolute; right:0`)会向左挂到中栏上面
           //    (官方注释原话 "it can hang over the centre when there is no track"), 看起来就是浮层 —— 实测踩过。
           //    ⚠ 折叠时必须把这一轨**还给中栏**, 所以按官方的 `data-rightbar-collapsed` 分成两条规则。
           //    左栏那一轨交给 `auto`(官方侧栏组件自带宽度), 于是收起成 56px 细条、拖动变宽都照旧。
-          //    改 15 就改下面这一个数。
+          //    改上限/下限就改 RIGHTBAR_MAX_VW / RIGHTBAR_MIN_PX 两个常量。
           'div:has(> [data-rightbar-col]):not([data-rightbar-collapsed]){grid-template-columns:auto minmax(0,1fr) ' +
-            String(RIGHTBAR_MAX_VW) +
-            'vw!important}',
+            RIGHTBAR_TRACK +
+            '!important}',
           '[data-rightbar-collapsed]:has(> [data-rightbar-col]){grid-template-columns:auto minmax(0,1fr) 0px!important}',
-          '[data-sidebar-right-panel="push"]{max-width:' + String(RIGHTBAR_MAX_VW) + 'vw!important}',
-          //    宽度被限死之后, 官方那根右栏拖柄(它写的是 store 宽度, 已经不起作用)留在聊天区中间只会误导, 一并隐藏。
-          '[data-side="rightbar"]{display:none}',
+          '[data-sidebar-right-panel="push"]{max-width:' + RIGHTBAR_TRACK + '!important}',
+          //    拖柄: 官方那根 8px 的 col-resize 手柄本来就在边界上, 但它的 `left` 跟的是**官方**宽度
+          //    (本插件不采用), 而且 `position:absolute` 在 frame 里 —— 这里改成按本插件轨道从右边定位,
+          //    于是它始终骑在真实边界上。拖动本身由 JS 接管(见 attachRightbarDrag), 官方那套钳制不参与。
+          '[data-side="rightbar"]{left:auto!important;right:calc(' + RIGHTBAR_TRACK + ' - 4px)!important;display:block}',
+          //    hover / 拖动时的可见性提示: 一条 3px 圆角竖条(跟官方会话宽度手柄同款 token)。
+          '[data-side="rightbar"]:after{content:"";position:absolute;top:0;bottom:0;right:2px;width:3px;border-radius:3px;background:transparent}',
+          '[data-side="rightbar"]:hover:after,[data-fge-resizing] [data-side="rightbar"]:after{background:var(--dsw-alias-scrollbar-hover-l1,var(--dsw-alias-border-l2))}',
+          //    拖动中关掉 frame 的宽度过渡(官方 `transition:grid-template-columns …` 会让面板追不上指针),
+          //    并把光标钉成 col-resize —— 指针滑出那 8px 手柄时也还在拖。
+          '[data-fge-resizing]{transition:none!important}',
+          '[data-fge-resizing],[data-fge-resizing] *{cursor:col-resize!important}',
           // 2) 隐藏右栏 chrome 的「分栏」与「进全屏」按钮(「收起」保留)。
           //    `data-sidebar-right-mode` 的值是**下一个**模式, 所以只命中"当前不是全屏"时的进全屏按钮;
           //    真到了全屏, 那个按钮(退出全屏)还在, 不会把人关在全屏里出不来。
@@ -476,6 +536,120 @@ window.__ModuleLoader__.load({
           y: 0,
           width: width,
           height: window.innerHeight,
+        };
+      }
+
+      // ---- 右栏宽度: 可拖, 钳在 [RIGHTBAR_MIN_PX, 15vw] ----
+
+      /** 当前右栏可视宽度(px); 面板没渲染(右栏折叠)时 null。 */
+      function rightbarWidth() {
+        if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return null;
+        var panel = document.querySelector('[data-sidebar-right-panel="push"]');
+        if (panel === null) return null;
+        var width = panel.getBoundingClientRect().width;
+        return width > 0 ? width : null;
+      }
+
+      /** 上限的像素值(`RIGHTBAR_MAX_VW` 换算)。 */
+      function rightbarMaxPx() {
+        return (window.innerWidth * RIGHTBAR_MAX_VW) / 100;
+      }
+
+      /** 钳进 [下限, 上限]; 视口窄到上限比下限还小时**以上限为准**(上限是用户的硬要求)。 */
+      function clampRightbarWidth(px) {
+        var max = rightbarMaxPx();
+        var next = px < RIGHTBAR_MIN_PX ? RIGHTBAR_MIN_PX : px;
+        return next > max ? max : next;
+      }
+
+      /** 落宽度: 只写一个 CSS 变量, 第三轨 / 面板 max-width / 拖柄位置三条规则都读它。 */
+      function applyRightbarWidth(px) {
+        if (typeof document === 'undefined') return;
+        document.documentElement.style.setProperty('--fge-rightbar-px', String(Math.round(px)) + 'px');
+      }
+
+      /** 读上次拖动后的宽度; 没有 / 读不出(隐私模式)返回 null。 */
+      function readRightbarWidth() {
+        try {
+          var raw = window.localStorage.getItem(RIGHTBAR_WIDTH_KEY);
+          if (raw === null) return null;
+          var px = Number.parseFloat(raw);
+          return Number.isFinite(px) && px > 0 ? px : null;
+        } catch (err) {
+          return null;
+        }
+      }
+
+      function persistRightbarWidth(px) {
+        try {
+          window.localStorage.setItem(RIGHTBAR_WIDTH_KEY, String(Math.round(px)));
+        } catch (err) {
+          // 隐私模式 / 配额: 记不住而已, 不影响这次拖动
+        }
+      }
+
+      /**
+       * 接管官方那根右栏拖柄。捕获阶段吃掉 pointerdown(`stopPropagation` 之后 React 的委托处理器
+       * 收不到), 于是官方的拖动(写 layout store, 还钳到 [300px, 0.7×视口])完全不参与 ——
+       * 本插件自己按指针位置算宽度、自己钳到 [200px, 15vw]、自己存。
+       *
+       * ⚠ 拖动期间给 frame 挂 `data-fge-resizing`: 官方的 `transition:grid-template-columns` 是
+       * 慢过渡, 不关掉面板会追不上指针(顺带把光标钉成 col-resize, 指针滑出那 8px 手柄也还在拖)。
+       * @returns {() => void} 卸下监听
+       */
+      function attachRightbarDrag() {
+        function finishDrag(state, upEv) {
+          window.removeEventListener('pointermove', state.move, true);
+          window.removeEventListener('pointerup', state.finish, true);
+          window.removeEventListener('pointercancel', state.finish, true);
+          if (state.frame !== null) state.frame.removeAttribute('data-fge-resizing');
+          if (upEv !== undefined && upEv !== null && typeof upEv.clientX === 'number') {
+            setDragWidth(state, state.startWidth + (state.startX - upEv.clientX));
+          }
+          // ⚠ 存**本插件落下去的那个值**, 不要存"量出来的面板宽度": 面板是 border-box,
+          // 量出来会比变量多 1px, 存下去下次再 +1 —— 每拖一次胖一点。
+          if (state.width !== null) persistRightbarWidth(state.width);
+        }
+
+        function setDragWidth(state, px) {
+          state.width = clampRightbarWidth(px);
+          applyRightbarWidth(state.width);
+        }
+
+        function onPointerDown(ev) {
+          var target = ev.target;
+          if (target === null || typeof target.closest !== 'function') return;
+          var handle = target.closest('[data-side="rightbar"]');
+          if (handle === null) return;
+          ev.preventDefault();
+          ev.stopPropagation();
+          var startWidth = rightbarWidth();
+          var max = rightbarMaxPx();
+          // 没有可视宽度(右栏折叠中)时从变量 / 上限起算, 免得拖出个负数起点。
+          if (startWidth === null) startWidth = clampRightbarWidth(max);
+          var state = {
+            frame: handle.parentElement,
+            startX: ev.clientX,
+            startWidth: startWidth,
+            width: clampRightbarWidth(startWidth),
+            move: null,
+            finish: null,
+          };
+          state.move = function (moveEv) {
+            setDragWidth(state, state.startWidth + (state.startX - moveEv.clientX));
+          };
+          state.finish = function (upEv) {
+            finishDrag(state, upEv);
+          };
+          if (state.frame !== null) state.frame.setAttribute('data-fge-resizing', '');
+          window.addEventListener('pointermove', state.move, true);
+          window.addEventListener('pointerup', state.finish, true);
+          window.addEventListener('pointercancel', state.finish, true);
+        }
+
+        document.addEventListener('pointerdown', onPointerDown, true);
+        return function () {
+          document.removeEventListener('pointerdown', onPointerDown, true);
         };
       }
 
@@ -905,6 +1079,76 @@ window.__ModuleLoader__.load({
         });
       }
 
+      // ---- 终端配色: 跟主题 token, 不跟 xterm 的默认黑 ----
+      //
+      // ⚠ xterm 的 `theme.background` 只认**具体颜色**。原来传的是 `rgba(0,0,0,0)`(想"透明、露出容器底色"),
+      // 实测被判为无效值 → 静默回落到 xterm 自家的默认黑 `#000`, 于是浅色主题下标题条(白)与终端体(黑)
+      // 对不上 —— 标题条那条"接缝"用的是 `box-shadow: 0 1px 0 var(--dsw-alias-bg-base)`, 白线压在黑底上,
+      // 看起来就是"标题条错位/断开"。所以这里按主题色算出**不透明**的 #rrggbb 再交给 xterm。
+      /** 所有活着的 xterm 实例: 主题一换要就地更新(组件重挂才算的话, 抽屉不关就一直是旧主题)。 */
+      var liveTerms = new Set();
+      /** 最近一次 theme/change 的快照: 新开的终端直接用它算色, 不必等下次主题切换。 */
+      var lastThemeSnapshot = null;
+
+      /** 把一个 CSS 颜色(可能是 hex / rgb() / oklch() / color-mix())归一成 xterm 认得的写法。 */
+      function normalizeColor(value) {
+        if (typeof value !== 'string' || value.trim() === '') return null;
+        try {
+          var ctx2d = document.createElement('canvas').getContext('2d');
+          ctx2d.fillStyle = '#000000';
+          ctx2d.fillStyle = value.trim();
+          return ctx2d.fillStyle;
+        } catch (err) {
+          return null;
+        }
+      }
+
+      /** 主题 token → xterm theme。token 缺位时给一组中性的明色, 绝不回落成 xterm 的黑。 */
+      function terminalTheme(snapshot) {
+        function token(name, fallback) {
+          var raw =
+            snapshot !== undefined && snapshot !== null && snapshot.tokens !== undefined
+              ? snapshot.tokens[name]
+              : undefined;
+          if (typeof raw === 'string' && raw.trim() !== '') return raw;
+          if (typeof document !== 'undefined' && document.body !== null) {
+            return getComputedStyle(document.body).getPropertyValue(name);
+          }
+          return fallback;
+        }
+        var dark =
+          snapshot !== undefined && snapshot !== null && snapshot.active !== undefined
+            ? snapshot.active.colorScheme === 'dark'
+            : false;
+        // 底色必须与 CSS 里那只 `.fge-term-body / .xterm-viewport` 的 `TERM_SURFACE` 一致(都是 code-block),
+        // 否则 xterm 画出来的画布与容器不同色, 又会出现"接缝"。见 TERM_SURFACE 的注释。
+        var backgroundToken = token(TERM_SURFACE_TOKEN, '');
+        if (typeof backgroundToken !== 'string' || backgroundToken.trim() === '') {
+          backgroundToken = token('--dsw-alias-bg-base', dark ? '#151517' : '#ffffff');
+        }
+        var background = normalizeColor(backgroundToken);
+        var foreground = normalizeColor(token('--dsw-alias-label-primary', dark ? '#f9fafb' : '#0f1115'));
+        return {
+          background: background === null ? (dark ? '#151517' : '#ffffff') : background,
+          foreground: foreground === null ? (dark ? '#f9fafb' : '#0f1115') : foreground,
+          cursor: foreground === null ? (dark ? '#f9fafb' : '#0f1115') : foreground,
+          cursorAccent: background === null ? (dark ? '#151517' : '#ffffff') : background,
+          selectionBackground: 'rgba(103,153,254,.35)',
+        };
+      }
+
+      /** 主题变了就更新每个活着的终端(snapshot 可能早于 CSS 落盘, 下一帧再读一次 token 也无妨)。 */
+      function applyTerminalTheme(snapshot) {
+        var theme = terminalTheme(snapshot);
+        liveTerms.forEach(function (term) {
+          try {
+            term.options.theme = theme;
+          } catch (err) {
+            // 实例已销毁: 忽略
+          }
+        });
+      }
+
       function ensureXterm() {
         if (xtermPromise !== null) return xtermPromise;
         var link = document.createElement('link');
@@ -1012,16 +1256,34 @@ window.__ModuleLoader__.load({
                   cursorBlink: true,
                   fontSize: 12,
                   scrollback: 2000,
-                  theme: {
-                    background: 'rgba(0,0,0,0)',
-                    selectionBackground: 'rgba(103,153,254,.35)',
-                  },
+                  theme: terminalTheme(lastThemeSnapshot),
                 });
                 fit = new mod.FitAddon();
                 term.loadAddon(fit);
                 term.open(hostRef.current);
                 termRef.current = term;
                 fitRef.current = fit;
+                liveTerms.add(term);
+                // 拖动选中之后**没法复制**(终端自己不吃系统的复制快捷键), 所以按用户口径加一条
+                // **Alt+C = 复制选区**。⚠ 不用 Ctrl+C —— 那是 SIGINT, 必须原样送给 PTY;
+                // 也不占 Ctrl+Shift+C(那是浏览器/DevTools 的"检查元素", 抢了很碍事)。
+                // `attachCustomKeyEventHandler` 返回 false = 这次按键不送给 PTY。
+                term.attachCustomKeyEventHandler(function (ev) {
+                  if (ev.type !== 'keydown') return true;
+                  if (!ev.altKey) return true;
+                  if (!(ev.key === 'c' || ev.key === 'C' || ev.code === 'KeyC')) return true;
+                  var selected = typeof term.getSelection === 'function' ? term.getSelection() : '';
+                  if (typeof selected === 'string' && selected !== '') {
+                    try {
+                      Promise.resolve(primitives.writeClipboard(selected)).catch(function (err) {
+                        console.warn('[fge] 复制终端选区失败', err);
+                      });
+                    } catch (err) {
+                      console.warn('[fge] 复制终端选区失败', err);
+                    }
+                  }
+                  return false;
+                });
                 try {
                   fit.fit();
                 } catch (e) {
@@ -1124,6 +1386,7 @@ window.__ModuleLoader__.load({
                 }
               }
               if (term !== null) {
+                liveTerms.delete(term);
                 try {
                   term.dispose();
                 } catch (e) {
@@ -2136,6 +2399,31 @@ window.__ModuleLoader__.load({
           );
         });
       }, 'fge: rightbar default tab');
+
+      // 右栏宽度: 启动时落上次拖动过的值, 再把官方那根拖柄接管过来(钳在 [200px, 15vw], 见 attachRightbarDrag)。
+      ctx.effect(
+        function () {
+          var stored = readRightbarWidth();
+          if (stored !== null) applyRightbarWidth(stored);
+          return attachRightbarDrag();
+        },
+        'fge: rightbar width drag',
+      );
+
+      // 终端配色跟主题走(见 terminalTheme): 官方主题一换, 已经开着的 xterm 就地更新, 不必重开抽屉。
+      ctx.effect(
+        function () {
+          function onTheme(snapshot) {
+            lastThemeSnapshot = snapshot;
+            applyTerminalTheme(snapshot);
+          }
+          var off = ctx.on('theme/change', onTheme);
+          return function () {
+            if (typeof off === 'function') off();
+          };
+        },
+        'fge: terminal follows theme',
+      );
 
       // 记「用户动手之前右栏选中的那一格」: 浮起详情之后 focus 回去, 右栏不会自己跳走(见 restoreUserTab)。
       // 捕获阶段: 要在官方正文里的点击处理之前读到页签条的选中态。

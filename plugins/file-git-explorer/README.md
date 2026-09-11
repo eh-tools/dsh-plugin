@@ -12,8 +12,9 @@
   markdown / 代码 / 图片 / html / **pdf 全部是官方原版**; diff 用官方 `primitives.DiffBlock`。
 - **终端抽屉**(kind 无, 座位 `conversation.composer.dock`): **真 PTY** —— `node-pty` ↔ WebSocket ↔
   `xterm.js`, 所以 vim / htop / 颜色 / 补全 / Ctrl+C 全部可用。收起态是 composer 下方一枚透明 chevron,
-  点击**向上**展开;抽屉宽度贯穿座位, 配色全走主题 token, 顶上是 Windows Terminal 观感的**终端标题条**
-  (页签上的 `×` / 点条空白处收起, 右端 `■` 才杀进程)。
+  点击**向上**展开;**宽度跟上方对话区一致**(跟着 `wSkVaW_widthHandle` 拖出来的宽度), 配色全走主题 token,
+  顶上是 Windows Terminal 观感的**终端标题条**(页签上的 `×` / 点条空白处收起, 右端 `■` 才杀进程);
+  终端里拖选文字后 **Alt+C 复制**。
   终端只有这一种形态(没有右栏终端页签)。
 - 文件树**回归官方**: 本插件既不接管、也不自绘文件树。
 
@@ -97,31 +98,46 @@ pnpm --dir plugins/file-git-explorer install
 
 这几处是**本插件对官方右栏的覆盖**, 都在 `ensureStyles` 的样式里(原理与依赖见实现事实 §11):
 
-- **宽度上限 = 15% 视口**(常量 `RIGHTBAR_MAX_VW`): 官方首开宽度是视口的 45%(1920 上就是 864px),
-  中栏被挤到只剩 776px; 现在右栏只占 15vw(1920 上 ≈ 288px)且**仍然占真实一格轨道** ——
-  打开右栏是**把中栏挤窄**(不是浮在上面盖住它), 折叠时这一格宽度立刻还给中栏。
+- **宽度可拖, 上限 = 15% 视口**(常量 `RIGHTBAR_MAX_VW`): 官方首开宽度是视口的 45%(1920 上就是 864px),
+  中栏被挤到只剩 776px; 现在右栏拖柄可拖, 范围 **200px ~ 15vw**(1920 上 200–288px), 且**仍然占真实一格轨道** ——
+  打开右栏是**把中栏挤窄**(不是浮在上面盖住它), 折叠时这一格宽度立刻还给中栏。拖过的宽度**记住**
+  (`localStorage`, 刷新 / 切会话都在)。
 - **右栏顶部只剩「收起」与「+ 新页签」**: 「分栏」与「进全屏」按钮已隐藏(真进全屏时"退出全屏"仍在)。
-- **右栏宽度拖柄已隐藏**: 限宽之后它写进官方 store 的宽度不再影响渲染, 留着只会误导。
+- **右栏左缘那条 8px 的拖柄**就在面板边界上, 悬停会出现一条 3px 竖条提示。
 
 ### 终端抽屉
 
-- **抽屉舌**: composer 下方一枚透明 chevron(无边框, 只留一枚小三角), 点击**向上**展开。**抽屉舌与抽屉都宽度贯穿
-  座位**(填满 `conversation.composer.dock` 的内容盒, 与上方的 composer 同宽), 不做居中收窄 —— 所以不需要任何尺寸测量。
+- **抽屉舌**: composer 下方一枚透明 chevron(无边框, 只留一枚小三角), 点击**向上**展开。
+  **抽屉舌与抽屉的宽度都跟上方对话区一致**(`max-width:var(--dsh-chat-content-width,100%)` + `margin-inline:auto`)——
+  就是顶部那条 `wSkVaW_widthHandle` 拖出来的宽度: 座位本身是整条中栏, 直接用 `width:100%` 会比 composer 卡片宽出一截。
+  零测量、零 JS(拖那条手柄时变量一变抽屉跟着变, 里面的 xterm 由 ResizeObserver 自动 refit)。
   抽屉**顶部两角圆角**(`border-radius:12px 12px 0 0`), 底部不圆。
 - **终端标题条**(terminal title bar): 顶上一条 Windows Terminal 观感的标题区 —— 一枚页签(`>_` 字形 +
   **尾部省略号**截断的工作区路径 + **悬停才出现**的 `×`)加右端一枚 `■`。页签**恒定只有当前工作区这一枚**:
   它长得像页签, 但**不是多页签容器**(每工作区仍是一个终端, 见 `CONTEXT.md`「工作区终端」)—— 外观档,
-  没有 `+`、没有多终端、没有重命名与排序。
+  没有 `+`、没有多终端、没有重命名与排序。**条自己不带底色**(透出抽屉表面), 与终端体的分界交给下面那条 1px 线。
 - **`×` = 收起, `■` = 杀进程**: 页签上的 `×` 与点条空白处等价(**收起抽屉, 不杀进程**); `■` = **终止整棵
   终端进程树**(Windows 下走 ConPTY 终止整树), 取主题的危险色 `--dsw-alias-state-error-primary`, 悬停用
   `--dsw-alias-interactive-bg-hover-danger`。条内按钮自己 `stopPropagation`, 点它们不会连带收起。
   primitives 的图标全表里**没有终端图标**(最接近的只有 `IconCodeOutline16`), 所以 `>_` 是自绘字形, 不引依赖。
-- **页签样式**: 活动态页签底色取 `--dsw-alias-bg-base`(与终端体同色)+ 两角 `6px 6px 0 0` + 一条 1px 实心投影
-  **盖掉条的底边**, 做出"页签连着终端"的观感(只靠圆角出不来页签形); `max-width:42%` 配 `text-overflow:ellipsis`
-  在**尾部**截断长路径, 与 Windows Terminal 同款。
-- **配色跟主题**: 抽屉 / 标题条 / 页签 / 拖柄 / 按钮全部用主题 token(`--dsw-alias-bg-layer-2`、`-bg-base`、
-  `-border-l2/l3`、`-label-primary/secondary/tertiary`、`-interactive-bg-hover`、`-state-error-primary`),
-  不写死颜色, 明暗与自定义主题都跟得上。
+- **Alt+C = 复制选区**(终端自己不吃系统的复制快捷键, 选完拖蓝没法复制): 终端里拖选文字后按 **Alt+C** 即进剪贴板
+  (走官方 `primitives.writeClipboard`)。⚠ **不用 Ctrl+C**(那是 SIGINT, 必须原样送给 PTY),
+  也**不占 Ctrl+Shift+C**(那是浏览器 / DevTools 的"检查元素", 抢了很碍事)。
+- **页签样式**: 活动态页签底色取**终端表面色**(`--dsw-alias-markdown-code-block`, 与终端体同色)加两角 `6px 6px 0 0`;
+  页签停在条的内容盒底部、**不压** border, 所以**标题条那条分隔线在页签下面也是连续的**(用户口径: 线要连贯,
+  不要在页签处断一截); `max-width:42%` 配 `text-overflow:ellipsis` 在**尾部**截断长路径, 与 Windows Terminal 同款。
+- **终端滚动条 = 6px 细条 + 圆角**: xterm 自带的是 **14px**(vscode 血统, `verticalScrollbarSize = overviewRuler.width || 14`),
+  在这么窄的抽屉里又粗又占地方。它的宽是**内联样式**写死的, 只能用 `!important` 覆盖
+  (`.xterm-scrollable-element > .scrollbar.vertical{width:6px!important}` + 滑块同宽 + `border-radius:3px`,
+  与 dsh 自己的细滚条同观感); 滑块颜色仍由 xterm 主题算(跟随前景色)。
+- **配色跟主题 + 两层分明**(为什么不用 `bg-base`: 见实现事实 §13): 抽屉 / 终端体 = 官方的**代码 / 终端卡片底色**
+  `--dsw-alias-markdown-code-block`, 页签同色; 边界靠 `border-l2/l3` + 主题 token 文字色
+  (`-label-*`)、按钮 hover 用 `-interactive-bg-hover`、`■` 用 `-state-error-primary`, 明暗与自定义主题都跟得上。
+- **终端自己的底色也跟主题**(坑与实测见实现事实 §13): xterm 的 `theme.background` **只认具体颜色** ——
+  传入 `rgba(0,0,0,0)`(想"透明露出容器底色")会被判无效、静默回落到 xterm 自家的默认**纯黑**;
+  而 `xterm.css` 又把 `.xterm-viewport` 写死成 `#000`。结果就是浅色主题下整个终端体是黑的, 与抽屉其余部分断开。
+  现在按上面的表面 token 算成 `#rrggbb` 交给 xterm(与 CSS 同一只 token), 并用 CSS 覆盖 viewport 底色;
+  切明暗主题时**已经开着的终端就地换色**(订官方 `theme/change`), 不必重开抽屉。
 - **高度**: 上缘拖柄可调 **20%~70%**, 按工作区记忆在 `localStorage`(默认 40%)。
 - **`■`** 终止该工作区终端整棵进程树;**页签上的 `×` / 点标题条空白处** 只是收起抽屉, **不杀进程** ——
   抽屉关闭 / 切换会话 / 刷新页面都不影响它。
@@ -129,6 +145,10 @@ pnpm --dir plugins/file-git-explorer install
   (输出广播, 任意一端都可输入)。全局上限 **16 个**, 超出按 LRU 淘汰最久未用的。
 - **重连回放**: host 常驻终端并保留 **256KB** 尾部输出; 重开抽屉 / 刷新页面即重连并补发, 用**绝对字节位**寻址,
   因此不会因缓冲修剪而错位(客户端位置早于缓冲起点时标记 `lossy`)。
+- **PTY 重启不叠 banner**(用户实测: "一进去就看到很多 `PowerShell … / PS …>`"): 两处一起修 ——
+  ① PowerShell 家族 spawn 时带 **`-NoLogo`**(`shellArgs`), 不再每次启动都打一遍版本 banner;
+  ② 上一次会话结束后重启时 **`ring.reset()`** 丢掉上一个进程的回放, 只留一条"上一次会话已结束"标记
+  (原来是把旧缓冲当"上文"留着, 配上每次重启的 banner 就是 N 份叠在一起)。**同一次会话内**的重连回放照旧。
 - **Esc 焦点分流**: 焦点在终端内 → 交给终端(送给 PTY); 焦点在终端外 → 收起抽屉。
 - 默认 shell: `resolveShellExecutable` 产**绝对路径**(PATH 扫描 → 已知安装位置 → `ComSpec`/`/bin/sh` 兜底)。
   **Windows 上不能用裸名** —— node-pty 的 ConPTY 原生层不解析 `powershell` 这类名字, 必须以绝对路径启动。
@@ -329,25 +349,26 @@ diff 页签浮起后离开页签条, git 页签又成为活动页签、**重新�
 所以 git 页签的 `info` / `status` / 查看分支 / 历史 / 展开表都缓存在模块级 `gitViews`(键 = 会话 id,
 并比对工作区 cwd), 重挂时恢复, 且**同一工作区的重挂不重新拉取**。自己实现"打开一个页签"时都要考虑这条。
 
-### 11. 右栏外观覆盖: 宽度上限与隐藏的 chrome 按钮
+### 11. 右栏外观覆盖: 可拖宽度与隐藏的 chrome 按钮
 
-按用户要求, 本插件对**官方右栏的外观**做了几处覆盖(纯 CSS, 都在 `ensureStyles` 里):
+按用户要求, 本插件对**官方右栏的外观**做了几处覆盖(纯 CSS + 一个拖柄接管, 都在 `ensureStyles` / `attachRightbarDrag` 里):
 
-- **宽度上限 `RIGHTBAR_MAX_VW`(默认 15vw)**。官方**没有**公开的宽度 API: `setRightbar` 只存在于 layout
-  内部, 而且被钳制到 `[300px, 0.7×视口]`; 首开宽度还是 `RIGHTBAR_DEFAULT_RATIO = 0.45`(1920 宽上就是 864px,
-  中栏只剩 776px)。所以走"改画法" —— 把第三轨**改成 15vw 的真实轨道**:
+- **宽度 = 可拖, 范围 [200px, 15vw]**(常量 `RIGHTBAR_MIN_PX` / `RIGHTBAR_MAX_VW`)。官方**没有**公开的宽度 API:
+  `setRightbar` 只存在于 layout 内部, 而且被钳制到 `[300px, 0.7×视口]`; 首开宽度还是
+  `RIGHTBAR_DEFAULT_RATIO = 0.45`(1920 宽上就是 864px, 中栏只剩 776px)。所以走"改画法":
+  第三轨与面板宽度都读**同一个 CSS 变量** `--fge-rightbar-px`(拖动过的 px), 没拖过就回落 15vw:
 
   ```css
-  /* 展开: 真实第三轨 = 15vw, 于是右栏"挤"中栏 */
+  /* 展开: 真实第三轨 = 拖过的宽度(没拖过 = 15vw), 于是右栏"挤"中栏 */
   div:has(> [data-rightbar-col]):not([data-rightbar-collapsed]) {
-    grid-template-columns: auto minmax(0, 1fr) 15vw !important;
+    grid-template-columns: auto minmax(0, 1fr) min(var(--fge-rightbar-px, 15vw), 15vw) !important;
   }
   /* 折叠: 把这一轨还给中栏 */
   [data-rightbar-collapsed]:has(> [data-rightbar-col]) {
     grid-template-columns: auto minmax(0, 1fr) 0px !important;
   }
   [data-sidebar-right-panel='push'] {
-    max-width: 15vw !important;
+    max-width: min(var(--fge-rightbar-px, 15vw), 15vw) !important;
   }
   ```
 
@@ -360,7 +381,21 @@ diff 页签浮起后离开页签条, git 页签又成为活动页签、**重新�
   收起成 56px 细条(实测 57px)、拖动变宽都照旧; 写成固定值就会把左栏写死。
   `!important` 是必须的: 官方把 `grid-template-columns` 写在 **inline style** 上。
 
-- **隐藏右栏拖柄** `[data-side="rightbar"]`: 宽度被限死之后它写进 store 的值不再影响渲染, 留在聊天区中间只会误导。
+- **拖柄由本插件接管**(`attachRightbarDrag`): 官方那根 8px 的 `.pI_x6G_handle[data-side="rightbar"]`
+  本来就骑在边界上, 但它的 `left` 跟的是**官方**宽度, 而且官方的拖动会把值写进 layout store(还会钳到
+  `[300px, 0.7×视口]`, 与本插件的区间冲突)。所以:
+
+  - CSS 把它的定位改成 `left:auto; right:calc(<轨道> - 4px)` —— 不管官方值是多少, 它始终骑在**真实**边界上;
+  - JS 在**捕获阶段**吃掉 `pointerdown`(`stopPropagation` 之后 React 的委托处理器收不到),
+    按指针位移算宽度、钳进 `[200px, 15vw]`、写 `--fge-rightbar-px`、松手入 `localStorage`(`fge-rightbar-w-v1`);
+  - 拖动期间给 frame 挂 `data-fge-resizing`: 关掉官方的 `transition:grid-template-columns`(慢过渡会让面板
+    追不上指针)并把光标钉成 `col-resize`(指针滑出那 8px 手柄也还在拖);
+  - ⚠ **存的是本插件落下去的那个值, 不是量出来的面板宽度**: 面板是 border-box, 量出来会比变量多 1px ——
+    存那个值每拖一次就胖 1px(实测踩过: 200 → 201 → 202…)。
+
+- **git 页签头部高度 = 38px**(`.fge-head`, border-box): 官方页签条占 0–38, 官方的「文件」页签头也是 38px ⇒
+  头部底边线落在 **y=76**, 正好接上会话头部(`wSkVaW_header`, 0–76)的底边线与官方文件页签的下缘。
+  原来用 `padding:6px 8px` 撑出 33.8px, 那条线落在 y≈71.8 —— **差 4px, 肉眼就是"这条线没跟上面那条对齐"**。
 - **隐藏「分栏」`[data-dockkit-split-button]` 与「进全屏」`[data-sidebar-right-mode="fullscreen"]`**:
   后者的属性值是**下一个**模式, 所以只命中"当前不是全屏"时的那个按钮; 真到了全屏, 退出全屏的按钮还在,
   不会把人关在全屏里。`[data-sidebar-right-toggle]`(收起)与 `[data-dockkit-add-tab]`(回到 guide)都保留。
@@ -389,6 +424,58 @@ diff 页签浮起后离开页签条, git 页签又成为活动页签、**重新�
 > 这两条由仓库根 `scripts/verify-client-bundles.mjs` 的「座位空隙的重试走微任务 + 浮起后把用户那一格 focus 回来」
 > 一项离线守住(桩里 `float()` 第一次必抛、`setTimeout` 只记账不执行): 退回定时器、或者删掉那次 focus, 这项就红。
 
+### 13. 终端配色: xterm 只认具体颜色, 而且 viewport 是它自己写死的黑
+
+真 boot 实测(浅色主题): `.fge-term-body` / `.fge-term-strip` 都是 `rgb(255,255,255)`, 唯独
+`.xterm-viewport` 是 `rgb(0,0,0)`, 终端里的文字也是 xterm 默认的浅灰 —— 也就是**整个 theme 都没生效**。
+
+原因是两份"默认值"叠在一起:
+
+1. **`theme.background` 传了 `rgba(0,0,0,0)` 会被 xterm 丢掉**。原实现的意图是"透明, 露出容器底色"
+   (`body{background:var(--dsw-alias-bg-base)}`), 但 xterm 解析不了这个值就**静默回落**到它自家的默认黑,
+   连 `foreground` 也跟着是默认白。所以主题色必须**算成不透明色**再交出去。
+2. **`xterm.css` 里 `.xterm-viewport{background-color:#000}`**。xterm 的主题色只刷在
+   `.xterm-scrollable-element`(DOM 渲染器)上, viewport 那一层没人管 —— 终端底边会漏出一条黑带。
+
+修法:
+
+- `terminalTheme(snapshot)` 从**主题 token** 取色(`--dsw-alias-bg-base` / `--dsw-alias-label-primary`),
+  先用 canvas 的 `fillStyle` 归一成 xterm 认得的写法(`#rrggbb` / `rgba(...)`; 这样 `oklch()` / `color-mix()`
+  这类自定义主题的写法也吃得下), 再交给 xterm;
+- CSS 补一条 `.fge-term-body .xterm-viewport{background-color:var(--dsw-alias-bg-base)!important}`(跟着 token 走, 零 JS);
+- 订官方 `theme/change`(`ThemeSnapshot{tokens, active.colorScheme}`): 主题一换就把新 theme 塞给
+  **所有活着的 xterm 实例**(模块级 `liveTerms`), 不重开抽屉也是新配色。
+
+**三层表面: 为什么不能拿 `bg-base` 当终端底。** 把终端表面统一到 `--dsw-alias-bg-base` 之后, 用户实测反馈
+"整个抽屉糊进背景、下面的横线都看不到了" —— 查 token 才明白: 官方浅色主题里
+`bg-base` / `bg-layer-1` / `bg-layer-2` / `bg-layer-3` **全是纯白**(实测 `#fff`), 拿它们当终端底就等于
+把抽屉画成页面本身的颜色, 标题条的分隔线也跟着糊了。所以改成:
+
+| 层                       | 取值                                                | 实测(浅 / 深)         |
+| ------------------------ | --------------------------------------------------- | --------------------- |
+| 终端体 / 画布 / viewport | `--dsw-alias-markdown-code-block`(官方终端卡片同款) | `#f9fafb` / `#1b1b1c` |
+| 标题条                   | **不设底色**(透出上面那层)                          | 同上                  |
+| 页签                     | 与终端体同色(不压 border, 线在它下面继续)           | 同体                  |
+
+于是**条 / 页签 / 体两层**在任何主题下都读得出来, 条下面那条 `border-l3` 分隔线**在页签下面也连续**
+(像素级实测: 页签底边那行 `249,250,251 → 206,207,208 → 249,250,251`); 页面底色一变, 这层跟着变, 没有一个写死的颜色。
+(标题条不再自己叠一层墨色 —— 用户口径: 把那块色去掉, 分界交给那条线。)
+
+**抽屉宽度跟对话区对齐, 零 JS。** 座位是整条中栏, 而对话内容宽由 `--dsh-chat-content-width` 决定
+(顶部那条 `wSkVaW_widthHandle` 拖的就是它) —— 所以抽屉与抽屉舌都用
+`max-width: var(--dsh-chat-content-width, 100%); margin-inline: auto`: 与 composer 卡片**同宽同列**
+(实测两边都是 left 470 / 691px), 拖那条手柄时抽屉跟着变宽变窄, xterm 由既有的 ResizeObserver 自动 refit。
+
+**xterm 自带的滚动条要单独收拾。** 它是 vscode 血统的 `ScrollableElement`: 宽度取
+`verticalScrollbarSize = overviewRuler.width || 14`(即**默认 14px**), 而且 `domNode.setWidth(...)` 把它写成
+**内联样式** —— CSS 必须 `!important` 才压得住。这里收到 6px、滑块同宽并加 `border-radius:3px`(对齐 dsh 自己的细滚条);
+滑块颜色不用管, xterm 自己按 `scrollbarSliderBackground`(默认 = 前景色 20% 透明)注入一段 `<style>`, 于是天然跟主题。
+
+> 由 `scripts/verify-client-bundles.mjs` 的离线守住: 「终端底色不写透明」+「订了 `theme/change`」+
+> 「表面用官方 code-block 底色(不是 `bg-base`)、条无底色、抽屉/舌跟对话区同宽、viewport 与画布同色、页签不压线、
+> 滚动条 6px 圆角、Alt+C 复制」; host 侧的 `-NoLogo` 与「重启丢旧回放」由 `tests/pty.test.mjs` 守。
+> 真浏览器验收见验收清单第 9 条。
+
 ## 测试与静态检查
 
 ```bash
@@ -407,9 +494,12 @@ eslint .                     # 仓库统一 lint(client bundle 按惯例忽略)
 在**隔离 `DSH_HOME` + 独立端口**起一个实例(先 `dsh plugin --profile <名> add link:<repo-abs-path>/plugins/file-git-explorer`,
 再 `dsh --profile <名> --port <端口> --no-open`),在真浏览器里逐条走一遍:
 
-0. **右栏外观**:宽度 ≤ 15vw(1920 窗口下约 288px);**打开右栏是把中栏挤窄、不是浮在它上面** ——
+0. **右栏外观与拖动**:默认宽度 = 15vw(1920 窗口下约 288px);**打开右栏是把中栏挤窄、不是浮在它上面** ——
    面板左缘恰好等于中栏右缘(不重叠),折叠后这一格宽度立刻还给中栏;**左栏宽度不受影响**(收起仍是 56px 细条);
-   右栏顶部只剩「收起」与「+」,没有「分栏」「全屏」;右栏拖柄不在(聊天区中间不该出现竖条拖柄)。
+   右栏顶部只剩「收起」与「+」,没有「分栏」「全屏」;
+   **左缘那根 8px 拖柄可拖**(悬停出现一条 3px 竖条):往左最宽到 15vw、往右最窄到 200px,松手后宽度
+   **刷新页面 / 切会话仍在**(`localStorage`);
+   **git 页签头部的底边线与会话头部(`wSkVaW_header`)的底边线是同一条水平线**(都在 y=76, 差 ≤1px)。
 
 1. **开一个全新会话**并把右栏展开 → 默认页签就是官方的「**文件**」工作区文件树(列表有行、路径是会话 cwd),
    页签条上**没有 guide 占位页**;`+` 仍能回到 guide 列表, 从那里点「Git」进本插件页签。
@@ -426,8 +516,14 @@ eslint .                     # 仓库统一 lint(client bundle 按惯例忽略)
 7. 悬浮面板头部:文件名前有文件类型图标,后随一枚**复制图标**;点它 → 图标变「已复制」,剪贴板是磁盘原文
    (只有带扩展名的文件有;`html`/`pdf`/图片与无扩展名文件没有这枚图标)。
 8. 收起右栏 / 切换会话 / 切换工作区 / **按 Esc** → 面板消失。
-9. composer 下方有**宽度贯穿**的抽屉舌;点它**向上**展开终端(能跑 `vim` / 颜色 / 补全);抽屉**顶部两角圆角**、
-   配色跟当前主题一致(切明/暗主题看一眼);顶上**终端标题条**里恰好**一枚页签**(`>_` 字形 + 尾部省略号的
+9. composer 下方有抽屉舌;点它**向上**展开终端(能跑 `vim` / 颜色 / 补全);抽屉**顶部两角圆角**、
+   **抽屉与上方对话区同宽同列**(拖顶部那条宽度手柄,抽屉跟着变宽变窄),
+   **抽屉和页面分得开** —— 终端体是官方终端卡片底色(浅色主题下比页面略灰), **标题条没有自己的底色**;
+   **标题条那条分隔线在页签下面也不断**(页签不许压线), 终端滚动条是**细条 + 圆角**(不是 xterm 默认的 14px 粗条);
+   拖选一段文字按 **Alt+C** → 剪贴板拿到那段文字(且 Ctrl+C 仍然照常送 SIGINT);
+   **终端底色 = 主题色而非 xterm 的黑**, **切明/暗主题时已经开着的终端就地换色**(不必重开抽屉);
+   **点 `■` 杀掉终端再重开, 回放里不该出现旧的输出、也不该出现一屏 `PowerShell …` banner**(只剩一条"已开启新终端"标记);
+   顶上**终端标题条**里恰好**一枚页签**(`>_` 字形 + 尾部省略号的
    工作区路径, **没有 `+`**),悬停页签才出现 `×` 且点它只收起、右端 `■` 是**红色**且只杀进程、
    **点条空白处也能收起**;刷新页面后重开抽屉应看到历史输出;Esc(焦点在终端外)收起。
 10. 全程 DevTools 控制台**零 pageerror**、零插件 `console.error`。
