@@ -181,7 +181,11 @@ window.__ModuleLoader__.load({
         'background:var(--dsw-alias-toast-bg);color:var(--dsw-static-neutral-bluish-00);' +
         'box-shadow:var(--dsw-shadow-lv2);}' +
         // 数据库页激活期间隐藏会话输入框(挂在 body 类上, 离开视图即恢复)
-        'body.dbc-on [data-composer-card]{display:none !important;}';
+        'body.dbc-on [data-composer-card]{display:none !important;}' +
+        // 同理隐藏**聊天宽度拖柄**: 那两根是官方 ui-conversation 的
+        // `.…widthHandle`(稳定属性 `data-width-handle`), 在数据库视图里会浮在
+        // 表格/编辑器上, 且本视图用不到它。选择器挂在 body.dbc-on 上, 只在本页生效。
+        'body.dbc-on [data-width-handle]{display:none !important;}';
 
       var styleEl = null;
       // 必须在 STYLE_CSS 赋值、styleEl 初始化之后调用: STYLE_CSS 声明在本函数

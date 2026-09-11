@@ -1,6 +1,22 @@
 # dsh-file-git-explorer
 
-左右树浏览插件 —— 左侧**文件树**(可见 / 隐藏 / 忽略三区, 根 = 当前会话工作区, 支持按名搜索, 底部带 **shell 行**: ✓ 执行 / ✕ 停止的单槽后台命令行) + 右侧 **git 树**(当前分支只读下拉、工作区变更列表、悬浮 diff、查看分支的**提交历史**)。两个面板夹在会话 header 与 composer card 之间, 可左右拉伸、可收起为细条、图钉锁定, 不覆盖主对话区。
+官方**右侧栏**里的 Git 页签 + 详情悬浮面板 + 对话下方的终端抽屉。
+
+- **Git 页签**(kind `fge-git`, docked 常驻): 头部一颗**分支按钮**(当前分支 + 上游 `↑ahead ↓behind` 徽标),
+  点它弹出**分支小浮窗**(本地 / 远程分支树, 点一条即切「查看分支」; 远程按 remote 名分层);
+  **变更列表**、**提交历史**(分页); 点一条提交**就地展开**它的文件(带 ±行数), 页签内没有「返回」;
+  点任一文件 → diff 进**悬浮面板**。
+- **详情悬浮面板**: 视口 1/2 宽、满高、紧贴右栏左缘。承载两种东西 —— 官方**文档正文**(官方文件树点开、
+  聊天里的文件链接), 与本插件的 **diff**。同一时间只有一个, 开新的先关旧的, 观感即「就地换内容」。
+  文件内容**不自己渲染**: 本插件只是把官方正文页签 `ctx.sidebarRight.float()` 起来, 于是
+  markdown / 代码 / 图片 / html / **pdf 全部是官方原版**; diff 用官方 `primitives.DiffBlock`。
+- **终端抽屉**(kind 无, 座位 `conversation.composer.dock`): **真 PTY** —— `node-pty` ↔ WebSocket ↔
+  `xterm.js`, 所以 vim / htop / 颜色 / 补全 / Ctrl+C 全部可用。收起态是 composer 下方一枚透明 chevron,
+  点击**向上**展开;**宽度跟上方对话区一致**(跟着 `wSkVaW_widthHandle` 拖出来的宽度), 配色全走主题 token,
+  顶上是 Windows Terminal 观感的**终端标题条**(页签上的 `×` / 点条空白处收起, 右端 `■` 才杀进程);
+  终端里拖选文字后 **Alt+C 复制**。
+  终端只有这一种形态(没有右栏终端页签)。
+- 文件树**回归官方**: 本插件既不接管、也不自绘文件树。
 
 静态双半插件(host + client bundle), 随 web profile 启动自动加载。
 
@@ -10,176 +26,518 @@
 dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer
 ```
 
-安装后 host 半随 DSH 启动自动挂载; 浏览器 bundle 由 profile 注入, 刷新 GUI 页面生效。卸载用 `dsh plugin --profile web remove file-git-explorer`(或对应 CLI 命令)。
+host 半随 DSH 启动自动挂载; 浏览器 bundle 由 profile 注入, 刷新 GUI 页面生效。
+卸载用 `dsh plugin --profile web remove dsh-file-git-explorer`。
 
-## 布局与交互
+### 依赖
+
+| 依赖                               | 来源                | 说明                                                                                                                                                                                                                                                             |
+| ---------------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@xterm/xterm`、`@xterm/addon-fit` | 本包 `dependencies` | 终端前端。**必须由本包自带** —— 浏览器模块表(seed)是一份封闭的 9 项名单, 不含 xterm, 所以 `require('xterm')` 必然抛错; 改由 host 的 `/fge/vendor/…` 白名单路由伺服官方构建产物, client 用 `<script>` 载入后取全局 `window.Terminal` / `window.FitAddon.FitAddon` |
+| `node-pty`、`ws`                   | **dsh 自带**        | 不声明为本包依赖: 它们是 dsh 自己的依赖(`dsh-subprocess-local` → `node-pty`, `dsh-api-gateway` → `ws`), 且**只从 profile 锚点解析得到**(原因见下方「实现事实」)                                                                                                  |
+
+安装依赖(仅首次):
+
+```bash
+pnpm --dir plugins/file-git-explorer install
+```
+
+## 使用
+
+### Git 页签
+
+右栏点「Git」。页签里是**两份列表**, 都在这一个滚动容器里, 没有视图栈、没有返回按钮:
 
 ```
-┌────────────────────────────────────────────────────────────┐
-│ header / tabs ───────────── 边框线(面板顶边不得越过)          │
-│ ┌─文件树──┐   主对话区(748px 居中)    ┌──git 树──┐           │
-│ │⎇ 可显示 │   (悬浮面板可越过)          │⎇ 当前分支▾│           │
-│ │  隐藏   │                            │ M a.txt  │           │
-│ │  忽略   │                            │ A b.js   │           │
-│ └────────┘                            └──────────┘           │
-│ composer card ───────────────── 下边框(面板底边不得越过)       │
-└────────────────────────────────────────────────────────────┘
+头部:分支按钮   当前分支(带分支图标 + 箭头);点它弹出**分支小浮窗**(见下)+ 上游 ↑↓ + ⟳
+变更列表        工作区相对 HEAD 的全部变更(已暂存 + 未暂存 + 未跟踪), M/A/D/R/U/? 徽标
+提交历史        按时间倒序; 节头显示正在查看哪个分支 + 每页 50 条
+  └─ 点一条提交 就地展开: 提交说明 + 文件清单(±行数); 再点收起
+       └─ 点文件 diff 进悬浮面板
+  └─ 加载更多…  每页 50 条
 ```
 
-- **几何**: 两面板 `position:fixed`, `top`/`bottom` = `[data-conversation-scroll]` 滚动容器(对话列)的顶部 / 底边 —— 统一以对话列为基准, 面板以**对称边距垂直居中**(顶部 4px、底部 4px, 不因 composer 卡片自带 8px 底部留白而偏上)。左树左缘跟随应用侧边栏右缘(折叠成 rail 时自动跟随), 右树右缘在 details 列打开(360px)时自动让位。滚动 / resize / 侧边栏折叠 / 会话切换都通过事件重测锚点(无定时轮询)。
-- **拉伸**: 面板内侧边缘有 6px 拖柄, 水平拖动改宽度; **默认宽度 400px**, **最小宽度 250px**; **最大宽度 = 可留白的 2/3(较之前减少 1/3), 面板不会拖到对话区边缘**; 钳制上限 = 对话区与对应侧之间的留白, **永不覆盖主对话区**。拖柄悬停只显示一条细线, 淡化存在。
-- **收起 / 细条**: 面板收起为同侧 26px 细条(**只剩一个圆角箭头, 无边框底色**)。**点击细条(小三角)即整侧展开**(不再悬停展开); 鼠标移出面板后**延迟约 360ms 才收起**(张顿一下, 不因快速掠过而闪断), 期间移回即取消。头部不再提供「» / «」收起按钮——未固定时移出面板即自动收起为细条, 无需手动收起。
-- **头部路径**: 左树头部显示当前根路径, **中间省略**(保头保尾, `…`), 点击路径复制完整路径到剪贴板(复制后短暂显示「✓ 已复制」)。
-- **图钉(无色线条版 📌)**: **每侧独立**, 默认**固定**(展开并锁定, 刷新 / 首次加载仍停留在固定展开态)。**单击**固定/解除**本侧**——固定时本侧展开并锁定, 解除时本侧连同其悬浮栏一起收起为细条; **双击**同时**固定 / 解除两侧**(解除时两侧一起收起); 固定态随 cwd 缓存(按仓库根)跨会话 / 刷新保留。
-- **悬浮栏联动**: 点文件/diff 弹出的悬浮栏与**源侧栏联动** —— 鼠标移到悬浮栏时侧栏保持展开(悬浮栏豁免收起); 移出整块区域(侧栏+悬浮栏)延迟后侧栏收起并**一并关闭该悬浮栏**, 不留下「侧栏已收、悬浮栏还在」的孤儿状态。
-- **刷新 ⟳**: **先 `git fetch --all --prune`** 更新远程跟踪引用(非交互 `GIT_TERMINAL_PROMPT=0` + 20s 宽限; 失败静默、不阻断后续), 再重读 `info`(根 / 仓库根 / 当前分支) + 重跑 git status, 并作废三棵树已加载的缓存; fetch 期间 ⟳ 置灰并旋转。**自动刷新(turn 结束)不 fetch** —— 避免每个 turn 都打一次网络。
-- **外观**: 面板背景 = 对话消息列(`.Md3f7G_column` 的 `--dsw-alias-bg-base`), 与聊天区域同底色; 头部图标(图钉 / 刷新 / 收起 / 关闭 / 分支)全部用单色线稿 SVG 对齐; 面板内滚动条细且半透明(悬停才加深), 拖拽柄只在悬停时显示一条细线。
+- **分支小浮窗(查看分支)**: 点头部那颗分支按钮弹出一个小浮窗, 里面是**分支树** ——
+  `本地分支` 一组(平铺)+ `远程分支` 一组(先按 remote 名分一层, 分支缩进在下面)。
+  点任意一条(本地 / 远程都行)就把「查看分支」切到它, 立刻重取该分支的提交历史; 点文件照样出 diff。
+  当前**检出**的分支标「当前」, 正在**查看**的标「查看中」。
+  ⚠ 它只决定「看哪个分支的历史」, **不切换工作区的实际分支**(头部的分支名不会变)。见 `CONTEXT.md`「查看分支」。
+- **变更列表**: 相对 `HEAD` 的全部变更, 按路径排序, 未跟踪沉底。
+- **diff**: rename 用 `-M` 双路径 diff; 未跟踪文件 git 没有 diff 可比, 给明确提示(host 不读盘)。
+- **merge 提交只显示说明**, 不展开文件(combined diff 没有阅读价值)。
+- **点文件看 diff 不会打断这里**: 打开的 diff 页签会浮起来, 回到 git 页签时**展开态与两份列表原样保留**
+  (不会重新拉取、不会闪 —— 状态按会话缓存在模块级, 见实现事实 §10)。
+- **自动刷新**: **agent turn 结束时**(会话 `running` true→false)自动重取变更列表与历史首页, 1s 冷却;
+  页签不可见时**挂起、可见时补刷**。**自动刷新不 fetch** —— 避免每个 turn 都打一次网络。提交详情是不可变的, 不重取。
+- **⟳ 手动刷新**: 先 `git fetch --all --prune`(非交互、限时 8s、**失败放行**), 再 `info` → `status` → 历史。
+- 小浮窗: 点外面 / 点一条分支 / 按 **Esc** 都会收起。
 
-### 左侧文件树(三区, 独立滚动)
+### 详情悬浮面板
 
-| 分区       | 内容                                                                                                                        | 展开语义                                                                              |
-| ---------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| 可显示文件 | 非点开头 且 未被 .gitignore 忽略                                                                                            | 每级只展示本区成员                                                                    |
-| 隐藏文件   | `.` 开头(排除 `.git` 内部结构)                                                                                              | 普通目录只展示其 dot 子项; 点开的 **dot 目录**展示其全部子项                          |
-| 忽略文件   | .gitignore 忽略项(含被忽略的点文件), 另含**桥接目录**——自身未忽略但子树含忽略项的普通目录(如 `src`, 通向 `src/__pycache__`) | 普通目录只展示其忽略/桥接子项; 点开的 **被忽略目录**(如 `node_modules`)展示其全部子项 |
+- 打开文件(官方文件树点行、聊天里的文件链接)或点 diff **都会浮出同一个面板**。
+- **同一时间只有一个**: 打开第二个会先关掉第一个的页签, 于是看起来就是内容就地更换。
+- **不闪、也不换页签**: 详情**只以浮层出现** —— 页签条上不会先冒出一枚详情页签再消失;右栏也**不会自己跳页签**,
+  从哪一格点的就停在哪一格(从「文件」点文件之后仍是「文件」, 不会跳到 git 树)。
+  两条都是官方座位 / dockkit store 的时序问题, 成因与修法见实现事实 §12。
+- 切换会话 / 切换工作区 / **右栏折叠** / 按 **Esc** 都会把它关掉。
+  (Esc 与终端抽屉共用同一条焦点分流: 焦点在终端里时 Esc 归终端, 不动面板。)
+- 官方悬浮面板头部自带「送回侧栏」按钮且**不可移除**(官方 chrome, 没有可注入的槽) —— 这是选用官方 float
+  换取「md/代码/图片/html/pdf 零退化」所付出的已知代价, 见 `docs/adr/0002`。误点后它是右栏页签;
+  再点一次同一个文件会重新浮起。
+- 悬浮面板可以拖动 / 缩放(官方 chrome), 也可以拖走 —— 因为同时只有一个, 拖走不会与其他面板重叠。
 
-- 逐级懒加载: 点目录才拉取子节点(`POST /fge/api/tree`), 无定时扫描。
-- 点**文件** → 行高亮 + **内容悬浮面板向右浮出**(可越过对话区, 文本 + 行号 + **逐行语法高亮**: 关键字 / 类型·类名 / 函数调用 / 字符串 / 注释 / 数字, 覆盖 JS/TS/Python/Rust/Go/Java/C 等常见语言; >1 MiB 或二进制只显示提示、不预览)。
-- 点文件同时触发**联动**: 右侧 git 树若存在该文件 diff, 滚动定位并闪现高亮; **不自动打开 diff**; 无 diff 则无操作。
-- 目录单击 = 展开 / 折叠切换。
-- **行操作按钮**(悬停出现, 目录/文件行一致, 共三件): `⧉` **复制绝对路径**(成功后该钮就地变绿 `✓`, 1.2s 还原)、**文件夹图标**在**系统资源管理器中打开**(目录打开自身置前 / 文件打开所在目录, Windows `/select,` 与 macOS `-R` 顺带选中该文件)、`⋮` **更多** —— 原来平铺的 `+ / ✎ / ✕` 收进下拉(新建仅目录行; 删除为危险色)。`⋮` 下拉是固定定位小面板, 右缘对齐按钮、上缘与行底重叠 2px(鼠标从按钮移到菜单不会经过行按钮闪没的空档), 窗口底部放不下自动改为向上开; 点面板外 / Esc / 滚动 / 窗口缩放收起, 点菜单不触发行展开折叠。
+### 「复制内容」芯片
 
-#### 文件编辑与树内写操作
+官方文档页签的芯片由本插件**影子替换**(见下方实现事实), 复刻官方外观(`FileTypeIcon` + 文件名),
+并在后面加一枚**复制图标**: 复制该文件**磁盘上的原文**(经官方 `remote.workspaceFiles.readAll`),
+与预览是否渲染完无关。`html` / `pdf` / 图片等**渲染型**文件不出现这枚图标(没有「原始文本」)。
 
-![文件悬浮预览 + 行内编辑](../../png/文件详情.png)
+> diff 悬浮面板的芯片**不需要**复制图标: 官方 `DiffBlock` 自带复制按钮, 复制它重建的 `- `/`+ ` 文本。
 
-- **编辑**: 内容悬浮面板头部的「编辑」把高亮预览切换为**纯 textarea**(只读视图保持原样, 不引入编辑器依赖)。**⌘S / Ctrl+S** 保存, **Esc** 退出编辑; 未保存时标题带 `•` 点并给出确认(关闭 / 退出编辑均会拦截询问); Tab 插入两个空格。
-- **复制 / 选区**: 头部「复制」一键复制当前内容(编辑态复制未保存草稿, 只读态复制磁盘正文), 成功后按钮短暂显示 `✓ 已复制`; 面板内 **Ctrl/⌘+A 只选中本面板正文**(修复原先会选中整页), 编辑态焦点在 textarea 时放行原生全选。
-- **保存的并发保护**: 读取时返回 `mtimeMs`, 保存时回传做**乐观校验** —— 磁盘已被外部改动(如 agent 同时在写)时**拒绝保存并提示冲突**, 可「重新加载磁盘版」或「仍要覆盖写入」(Shift+⌘S 亦可强制)。内容上限 1 MiB 与预览对称, 超出时保存按钮禁用并提示。
-- **保存后自动刷新右侧 git 状态**(变更列表 / 徽标随之更新); 树内结构变化(新建 / 重命名 / 删除)则**局部重载受影响目录**, 不打断展开状态。
-- **新建**: 每分区头部 `+` 在当前分区根新建; 目录行的 `⋮ → + 新建` 在其内新建(自动展开)。名称**以 `/` 结尾 = 建目录**, 可写 `a/b/c.ts` 嵌套(父目录自动补建); 文件名重名报「同名条目已存在」。
-- **重命名 / 删除**: 行悬停 `⋮ → ✎ 重命名 / ✕ 删除`(删除为危险色); 重命名行内输入、Enter 确认; 删除先经确认框(**目录 = 连同全部内容递归删除, 不可恢复**), 非空目录在 host 侧同样要求显式 `recursive` 才放行。
-- 已打开的内容面板**跟随重命名**(含祖先目录改名)并**在删除时自动关闭**; 所有写操作拒绝触及 `.git` 段(路径逐段校验)。
+### 右栏外观(覆盖官方 chrome)
 
-#### 文件搜索(name search)
+这几处是**本插件对官方右栏的覆盖**, 都在 `ensureStyles` 的样式里(原理与依赖见实现事实 §11):
 
-- 头部**放大镜**展开搜索框, 输入防抖 ~150ms 即时按名检索——大小写不敏感子串匹配
-  相对路径, **不读取、不检索文件内容**; 三区树被平铺结果替换, Esc / 清空即恢复。
-- 每条结果带分区徽标(**显 / 隐 / 忽**); 排序 = 名字命中 > 仅路径命中 → 短路径优先;
-  扫描上限 20 000 条、返回上限 300 条, 超出时列表尾提示「已截断」。
-- 点击**文件**命中 → 打开内容悬浮面板并联动右树(与点树内文件完全一致);
-  点击**目录**命中 → 关闭搜索并在对应分区树内逐级 reveal 展开到目标并高亮
-  (混合链如 `src/.env` 在该区不可达时, 退化为高亮可达的最深祖先)。
-- 非 git 工作区回退 fs 递归扫描(不跟符号链接, 无忽略区); 会话切根自动清空搜索态。
+- **宽度可拖, 上限 = 15% 视口**(常量 `RIGHTBAR_MAX_VW`): 官方首开宽度是视口的 45%(1920 上就是 864px),
+  中栏被挤到只剩 776px; 现在右栏拖柄可拖, 范围 **200px ~ 15vw**(1920 上 200–288px), 且**仍然占真实一格轨道** ——
+  打开右栏是**把中栏挤窄**(不是浮在上面盖住它), 折叠时这一格宽度立刻还给中栏。拖过的宽度**记住**
+  (`localStorage`, 刷新 / 切会话都在)。
+- **右栏顶部只剩「收起」与「+ 新页签」**: 「分栏」与「进全屏」按钮已隐藏(真进全屏时"退出全屏"仍在)。
+- **右栏左缘那条 8px 的拖柄**就在面板边界上, 悬停会出现一条 3px 竖条提示。
 
-#### shell 行(shell bar)
+### 终端抽屉
 
-![shell 行运行中](../../png/shell运行.png)
+- **抽屉舌**: composer 下方一枚透明 chevron(无边框, 只留一枚小三角), 点击**向上**展开。
+  **抽屉舌与抽屉的宽度都跟上方对话区一致**(`max-width:var(--dsh-chat-content-width,100%)` + `margin-inline:auto`)——
+  就是顶部那条 `wSkVaW_widthHandle` 拖出来的宽度: 座位本身是整条中栏, 直接用 `width:100%` 会比 composer 卡片宽出一截。
+  零测量、零 JS(拖那条手柄时变量一变抽屉跟着变, 里面的 xterm 由 ResizeObserver 自动 refit)。
+  抽屉**顶部两角圆角**(`border-radius:12px 12px 0 0`), 底部不圆。
+- **终端标题条**(terminal title bar): 顶上一条 Windows Terminal 观感的标题区 —— 一枚页签(`>_` 字形 +
+  **尾部省略号**截断的工作区路径 + **悬停才出现**的 `×`)加右端一枚 `■`。页签**恒定只有当前工作区这一枚**:
+  它长得像页签, 但**不是多页签容器**(每工作区仍是一个终端, 见 `CONTEXT.md`「工作区终端」)—— 外观档,
+  没有 `+`、没有多终端、没有重命名与排序。**条自己不带底色**(透出抽屉表面), 与终端体的分界交给下面那条 1px 线。
+- **`×` = 收起, `■` = 杀进程**: 页签上的 `×` 与点条空白处等价(**收起抽屉, 不杀进程**); `■` = **终止整棵
+  终端进程树**(Windows 下走 ConPTY 终止整树), 取主题的危险色 `--dsw-alias-state-error-primary`, 悬停用
+  `--dsw-alias-interactive-bg-hover-danger`。条内按钮自己 `stopPropagation`, 点它们不会连带收起。
+  primitives 的图标全表里**没有终端图标**(最接近的只有 `IconCodeOutline16`), 所以 `>_` 是自绘字形, 不引依赖。
+- **Alt+C = 复制选区**(终端自己不吃系统的复制快捷键, 选完拖蓝没法复制): 终端里拖选文字后按 **Alt+C** 即进剪贴板
+  (走官方 `primitives.writeClipboard`)。⚠ **不用 Ctrl+C**(那是 SIGINT, 必须原样送给 PTY),
+  也**不占 Ctrl+Shift+C**(那是浏览器 / DevTools 的"检查元素", 抢了很碍事)。
+- **页签样式**: 活动态页签底色取**终端表面色**(`--dsw-alias-markdown-code-block`, 与终端体同色)加两角 `6px 6px 0 0`;
+  页签停在条的内容盒底部、**不压** border, 所以**标题条那条分隔线在页签下面也是连续的**(用户口径: 线要连贯,
+  不要在页签处断一截); `max-width:42%` 配 `text-overflow:ellipsis` 在**尾部**截断长路径, 与 Windows Terminal 同款。
+- **终端滚动条 = 6px 细条 + 圆角**: xterm 自带的是 **14px**(vscode 血统, `verticalScrollbarSize = overviewRuler.width || 14`),
+  在这么窄的抽屉里又粗又占地方。它的宽是**内联样式**写死的, 只能用 `!important` 覆盖
+  (`.xterm-scrollable-element > .scrollbar.vertical{width:6px!important}` + 滑块同宽 + `border-radius:3px`,
+  与 dsh 自己的细滚条同观感); 滑块颜色仍由 xterm 主题算(跟随前景色)。
+- **配色跟主题 + 两层分明**(为什么不用 `bg-base`: 见实现事实 §13): 抽屉 / 终端体 = 官方的**代码 / 终端卡片底色**
+  `--dsw-alias-markdown-code-block`, 页签同色; 边界靠 `border-l2/l3` + 主题 token 文字色
+  (`-label-*`)、按钮 hover 用 `-interactive-bg-hover`、`■` 用 `-state-error-primary`, 明暗与自定义主题都跟得上。
+- **终端自己的底色也跟主题**(坑与实测见实现事实 §13): xterm 的 `theme.background` **只认具体颜色** ——
+  传入 `rgba(0,0,0,0)`(想"透明露出容器底色")会被判无效、静默回落到 xterm 自家的默认**纯黑**;
+  而 `xterm.css` 又把 `.xterm-viewport` 写死成 `#000`。结果就是浅色主题下整个终端体是黑的, 与抽屉其余部分断开。
+  现在按上面的表面 token 算成 `#rrggbb` 交给 xterm(与 CSS 同一只 token), 并用 CSS 覆盖 viewport 底色;
+  切明暗主题时**已经开着的终端就地换色**(订官方 `theme/change`), 不必重开抽屉。
+- **高度**: 上缘拖柄可调 **20%~70%**, 按工作区记忆在 `localStorage`(默认 40%)。
+- **`■`** 终止该工作区终端整棵进程树;**页签上的 `×` / 点标题条空白处** 只是收起抽屉, **不杀进程** ——
+  抽屉关闭 / 切换会话 / 刷新页面都不影响它。
+- **每工作区一个终端**(键 = 归一化 + 大小写折叠的 cwd): 切工作区就是切换终端; 同工作区多会话**共享同一终端**
+  (输出广播, 任意一端都可输入)。全局上限 **16 个**, 超出按 LRU 淘汰最久未用的。
+- **重连回放**: host 常驻终端并保留 **256KB** 尾部输出; 重开抽屉 / 刷新页面即重连并补发, 用**绝对字节位**寻址,
+  因此不会因缓冲修剪而错位(客户端位置早于缓冲起点时标记 `lossy`)。
+- **PTY 重启不叠 banner**(用户实测: "一进去就看到很多 `PowerShell … / PS …>`"): 两处一起修 ——
+  ① PowerShell 家族 spawn 时带 **`-NoLogo`**(`shellArgs`), 不再每次启动都打一遍版本 banner;
+  ② 上一次会话结束后重启时 **`ring.reset()`** 丢掉上一个进程的回放, 只留一条"上一次会话已结束"标记
+  (原来是把旧缓冲当"上文"留着, 配上每次重启的 banner 就是 N 份叠在一起)。**同一次会话内**的重连回放照旧。
+- **Esc 焦点分流**: 焦点在终端内 → 交给终端(送给 PTY); 焦点在终端外 → 收起抽屉。
+- 默认 shell: `resolveShellExecutable` 产**绝对路径**(PATH 扫描 → 已知安装位置 → `ComSpec`/`/bin/sh` 兜底)。
+  **Windows 上不能用裸名** —— node-pty 的 ConPTY 原生层不解析 `powershell` 这类名字, 必须以绝对路径启动。
+- 进程**不进 `ctx.jobs`**: jobs 的语义是「会话销毁即取消」, 与「终端要跨抽屉关闭 / 切会话 / 页面刷新存活」矛盾,
+  故本插件自管生命周期; 插件卸载时统一收掉所有终端。
 
-左树底部常驻的命令执行行: 输入框 + **✓ 执行** / **✕ 停止**两钮(单色线稿 SVG), 语义见 CONTEXT.md「shell 行 / 单槽 / 尾部输出窗」。
+## HTTP / WebSocket 接口(host 半, 仅本机)
 
-- **执行**: ✓ 或 **Enter**(IME 组合期不触发; `preventDefault + stopPropagation` 隔离应用层按键链)。
-  命令在**会话工作区**(与文件树同根)以**用户默认 shell** 解释——POSIX 取 `$SHELL`(不可用回退 `/bin/sh`), Windows 取 `pwsh` 回退 `powershell`; 解析结果按进程缓存。命令串 trim 后非空、≤4000 字符, 越界拒绝(`invalid-command`)。
-- **执行 / 停止**: **▶ 执行** / **■ 停止** 两钮(单色线稿); Enter 与 ▶ 等价。
-- **不消失**: 执行后命令文本保留在输入框(不清空); ↑/↓ 在历史间导航(相邻去重, 上限 100 条),
-  历史随仓库根持久化(`fge-cache-v1` 的 `shellHistory` 字段)。Esc = 输入框失焦(stopPropagation, 不波及常驻 Esc 监听)。
-  **输入框右缘内按需显示运行状态点**(绿色 = 运行中/启动中, 红色 = 已停止且命令在框内; 空闲或输入框为空时不显示), pointer-events 穿透不挡输入; 修改/清空命令即作废上一任务(状态点消失, 输出窗回到一行); 刷新/切工作区认领到终态任务时命令文本回填输入框。
-- **挂后台任务**: 启动即注册为 DSH 后台任务(kind `shell`, label = 命令原文), **owner = 发起它的会话**(客户端把 `sessionId` 随请求下发, 宿主经 `ctx.agents` 解析), 故只在**该会话**头部的任务弹层出现并计入徽标 —— 其他工作区 / 会话不再显示它; 完成**不通知模型**。GUI 任务列表只读, 故 ✕ 是人停止任务的唯一入口
-  (整棵进程树 TERM → 3s → KILL)。
-- **单槽(按工作区)**: 每个工作区各自至多一条 running/stopping(宿主侧按 root 记账, 跨刷新 / 多标签成立;
-  不同工作区可并行各跑各的); 切工作区只显示本区任务 —— 刷新后自动认领本区仍在跑的任务(running 态 + ✕ 照常可停);
-  **运行中输入框锁定只读**(Enter / ✓ 执行后光标离开、不可编辑, ↑/↓ 与输入一并禁用, 任务结束后恢复)且 ✓ 置灰; ✕ 只停当前工作区那条; 无运行时长上限; 终态槽超上限按 FIFO 淘汰(运行中永不淘汰)。
-- **尾部输出窗**: **常驻显示、默认一行高**(自动滚底显示最新一行), **内容不自动换行**(长行横向滚动), 输入框**左侧小箭头**切换一行/完整显示(完整时滚动查看尾部, 运行中每 ~1s 拉一次增量, 显示尾部各流 ~16K 字符); stderr 以 `[stderr]` 段落区分; 启动失败等错误信息也写入窗内。**上下边框 = 粒子鲸鱼淡化蓝**(`rgb(103,153,254)`, 展开态同步呼吸、上强下弱)。**▶ 只执行、不控制输出窗显示**。
+信任栅栏与 `dsh-ds-balance` 同款: **仅回环地址 + `x-dsh-plugin: 1` 头 + 仅 POST**。
+`repoRoot` / `root` 必须是绝对路径; 路径一律 argv 直传 git(无 shell), ref/hash 先过白名单(`safeRef` 拒 `-` 开头 /
+`..` / 空白 / `@{`; `safeHash` 只收十六进制)。
 
-### 右侧 git 树
+| 路由                                                | 请求体                            | 返回                                                                                     |
+| --------------------------------------------------- | --------------------------------- | ---------------------------------------------------------------------------------------- |
+| `POST /fge/api/info`                                | `{root?}`                         | `{cwd, repoRoot}` —— **纯 stat, 零 git 子进程**                                          |
+| `POST /fge/api/status`                              | `{root?, repoRoot}`               | `{current, head, upstream, ahead, behind, initial, detached, branches[], changes[]}`     |
+| `POST /fge/api/sync`                                | `{root?, repoRoot}`               | `{ok}` —— `fetch --all --prune`, 成功则作废分支与历史缓存                                |
+| `POST /fge/api/diff`                                | `{repoRoot, path, status, from?}` | `{kind:'diff'\|'untracked', hunks:[{path, oldText, newText}], text}` —— 未跟踪**不读盘** |
+| `POST /fge/api/log`                                 | `{repoRoot, ref?, skip?, limit?}` | `{ref, commits[], head?}` —— `head` 只在 `skip=0` 附带                                   |
+| `POST /fge/api/show`                                | `{repoRoot, hash, path?}`         | `{kind:'commit'\|'merge'\|'diff', message, files[], hunks?, text?}`                      |
+| `GET /fge/vendor/xterm.js\|xterm.css\|addon-fit.js` | —                                 | 白名单静态资产                                                                           |
+| `GET /fge/ws/terminal?root=&cols=&rows=&from=`      | —                                 | WebSocket 升级 → PTY 字节流                                                              |
 
-- 顶部: 当前分支(前有竖着 git 分支 SVG 图标; 实时读 `git branch --show-current`), 点击从**面板左侧**弹出**所有分支下拉**(本地 / 远程分组, 纯展示清单: 行不可点、无 hover 反色, 仅以「当前 / 查看中」标记状态, 不支持切换)。**单击下拉外任意位置即收起**, 不必再点分支名。下拉与 diff / 提交历史悬浮栏**互斥**(开一关一, 两者同占面板左侧留白带, 避免互相遮挡)。
-- 下方: 工作区相对 **HEAD** 的变更列表(已暂存 + 未暂存 + 未跟踪), 平铺 + 状态徽标(`M`/`A`/`D`/`R`/`U`), 按路径排序。
-- 点变更文件 → **diff 悬浮面板向左浮出**(unified, 行级 +/− 着色, 增删行内容同样做**代码语法高亮**; 未跟踪文件显示内容; rename 用 `-M` 双路径 diff; 二进制显示提示)。再点同一项或点 ✕ 关闭。
-- diff 面板头部「**复制**」一键复制 diff 原文(untracked 为文件内容; 二进制/超限置灰), 成功后短暂显示 `✓ 已复制`; 面板内 **Ctrl/⌘+A 只选中 diff 正文**(与文件内容面板同一套「最近交互浮层」作用域)。
-- 非 git 目录: 右侧树显示「(工作区干净)」占位, 分支区为空, 历史按钮置灰。
+`hunks` 是官方 `DiffBlock` 的 `diffs` 形状: **一个 hunk 一条**, 两侧都已是拆好的行块(上下文两边各一份),
+`text` 是原始统一 diff(保留备用)。**解析在 host 侧的纯函数里**(`lib/git.js` 的 `parseDiffHunks`),
+所以它有真实 git 输出的单测 —— `DiffBlock` 自己**不做** diff 比对, 这一步必须有人做对。
 
-#### 提交历史(commit history)
+**vendor 路由是唯一不带 `x-dsh-plugin` 的例外**: `<script src>` 无法携带自定义头, 故只校验回环地址, 并以
+**硬编码白名单**(三个文件名逐字符命中)兜底 —— 不接受任意路径, 从根上排除穿越; 内容是只读第三方静态资产,
+不含任何仓库数据。
 
-![提交历史面板](../../png/git历史.png)
+### WebSocket 帧协议
 
-![提交历史 + diff 详情](../../png/提交历史diff+diff详情.png)
+与 xterm 的接缝刻意做窄: **数据走二进制帧, 控制走文本帧**。
 
-![文件级 diff 列表](../../png/git历史diff列表.png)
+```
+client → host
+  · 二进制帧                     原样写入 PTY 的 stdin
+  · {t:'resize', cols, rows}     同步 PTY 尺寸
+  · {t:'ping'}                   保活
+  · {t:'kill'}                   终止整棵终端进程树
+host → client
+  · 二进制帧                     PTY stdout 原样字节(交由 xterm 解释 ANSI)
+  · {t:'ready', id, shell, cols, rows, replay, lossy, exited}
+  · {t:'exit', code, signal, evicted?}
+  · {t:'error', error}
+```
 
-- 头部**时钟按钮**向左浮出历史面板, 与 diff 浮层**互斥共享锚位**(开一关一)。
-- 跟随「**查看分支**」= 历史面板头部按钮最后点选的分支(默认当前分支; 分支被删时回退当前分支)。右树顶部的分支下拉不含切换入口。
-- 面板头部的**分支名按钮**可直接切换查看分支: 点击弹出同款本地 / 远程分组菜单(标记「当前 / 查看中」), 点选即按该分支重拉列表 —— 这是「查看分支」的唯一入口; 只读, 不切换工作区分支。**点「当前」分支即回到跟随当前分支**(默认态, 不再卡在之前选的分支)。
-- 列表每页 50 条, 滚动到底自动追加(`--skip` 分页); 条目 = subject + 作者 · 相对时间 · 短 hash; **条目间有分割线**, 详情里文件行之间同样有分割线。
-- 点条目**仍在当前面板**看详情: 完整提交说明 + 按文件 ±行数列表(numstat); **merge 提交只显示说明、不展示 diff**(combined diff 无阅读价值)。点某条文件记录,在历史面板**左侧单开该文件的 diff 悬浮栏**(与变更列表点开 diff 同一套交互、复用同一面板; 再点同一行或 ✕ 关闭), 历史列表与详情保持不动。收起右栏 / Esc / 切换工作区会一并关闭。
-- agent turn 结束的自动刷新同样覆盖历史: 面板可见且 HEAD 变了才整页重拉已加载页数, 尽量保留滚动位置; Esc / 收起右栏 / 切换工作区都会关闭历史浮层。
+二进制帧不过 JSON —— 这样 vim 的全屏重绘与任意字节序列都不会被编码层破坏。
 
-## cwd 缓存
+## 实现事实(已实测钉死, 改实现前必读)
 
-- 树根 = **当前会话工作区**(跟随工作区切换, 经 `useSessions` 的会话 cwd 感知), 会话无 cwd 时回退 DSH 进程 `process.cwd()`; 无路径切换框(设计决策, 见 CONTEXT.md「cwd」)。
-- 按仓库根(`repoRoot`, 无仓库时按 cwd)在 `localStorage`(`fge-cache-v1`)记忆: 面板宽度、展开 / 收起状态、「查看中」的分支; 切回同一仓库自动恢复。当前分支始终实时读取, 不缓存。
+### 1. `git status --porcelain=v2 -z --branch`: 路径可能含空格
 
-## HTTP API(host 半, 仅本机)
+一条命令拿全部分支 + 上游 + ahead/behind + 变更(替代了 v0.2 的 4 连发)。**最大的坑**:
 
-信任栅栏与 `dsh-ds-balance` 同款: 仅回环地址 + `x-dsh-plugin: 1` 头 + POST。所有路径做防穿越校验(文件树/file 只能落在请求 `root` 之下, `root`/`repoRoot` 必须是绝对路径)。
+```
+1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>             → 7 个固定字段
+2 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <X><score> <path>  → 8 个固定字段
+u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>   → 9 个固定字段
+```
 
-| 路由                        | 请求体                                     | 返回                                                               |
-| --------------------------- | ------------------------------------------ | ------------------------------------------------------------------ |
-| `POST /fge/api/info`        | `{root?}`                                  | `{cwd(=root), repoRoot, branch, head}`                             |
-| `POST /fge/api/tree`        | `{root?, path, mode, reveal}`              | 目录三区条目 `[{name, rel, type, dot, ignored, subIgnored}]`       |
-| `POST /fge/api/status`      | `{root?, repoRoot}`                        | `{current, head, branches[], changes[]}`                           |
-| `POST /fge/api/fetch`       | `{root?, repoRoot}`                        | `{ok}`; 手动 ⟳ 的 `git fetch --all --prune`(失败回 fetch-failed)   |
-| `POST /fge/api/diff`        | `{root?, repoRoot, path, status, from}`    | `{kind: 'diff'\|'untracked', text, ...}`                           |
-| `POST /fge/api/file`        | `{root?, path}`                            | `{text, binary, truncated, size, mtimeMs}`(mtimeMs 供保存校验)     |
-| `POST /fge/api/search`      | `{root?, query}`                           | `{matches[{rel, type, zone, nameHit}], truncated}`                 |
-| `POST /fge/api/log`         | `{root?, repoRoot, ref?, skip?, limit?}`   | `{ref, head, commits[{hash, short, author, at, subject}]}`         |
-| `POST /fge/api/show`        | `{root?, repoRoot, hash, path?}`           | `{kind: 'commit'\|'merge'\|'diff', message, files[], text}`        |
-| `POST /fge/api/save`        | `{root?, path, content, mtimeMs?, force?}` | `{size, mtimeMs}`; conflict / too-large / invalid-path 等拒绝      |
-| `POST /fge/api/create`      | `{root?, path, kind: 'file'\|'dir'}`       | `{kind, size, mtimeMs}`; 父目录自动补建, 同名 exists 拒绝          |
-| `POST /fge/api/rename`      | `{root?, path, newName}`                   | `{}`; 同目录重命名, 目标已存在 exists / 非法名 invalid-name 拒绝   |
-| `POST /fge/api/remove`      | `{root?, path, recursive?}`                | `{}`; 目录需显式 recursive=true(否则非空 not-empty 拒绝)           |
-| `POST /fge/api/open`        | `{root?, path}`                            | `{ok}`; 在系统资源管理器中打开(目录开自身 / 文件开所在目录)        |
-| `POST /fge/api/shellStart`  | `{root?, command}`                         | `{job{id, label, status, ...}}`; busy / invalid-command 等拒绝     |
-| `POST /fge/api/shellState`  | `{root?}`                                  | `{job \| null}`(本工作区槽, GUI 刷新恢复用)                        |
-| `POST /fge/api/shellOutput` | `{root?, outFrom?, errFrom?}`              | `{job, done, out{text,next,base,lossy}, err{...}}`(绝对字符位增量) |
-| `POST /fge/api/shellStop`   | `{root?}`                                  | `{stopped, job}`(TERM→3s→KILL 整树, 只作用本工作区)                |
+去掉 `1 `/`2 `/`u ` 前缀后, **必须切掉固定数量的前导字段、再把剩余部分用空格拼回**;
+用 `split(' ').pop()` 取路径遇到 `sub dir/nested file.txt` 只会拿到 `file.txt`。
+官方文档把记录类型也算作一个字段, 按文档字段数直接数会**差一**。
 
-git 一律经 `subprocess` 服务执行(argv 数组, 无 shell)。shell 行是唯一经用户 shell 解释命令串的入口
-(解释器解析见 `lib/shell.js`, 同样只服务栅栏之后的本机请求), 启动即挂 `ctx.jobs`(kind `shell`, 无主任务)。
+- rename(`2` 行): 新路径在行内, **旧路径是紧随其后的一个裸 token**(自身也可含空格); 输出截断时该 token 孤悬, 解析器必须防御。
+- XY 未变更的一侧是 `.`(实测 `.M` / `A.` / `.D`), 解析归一为 v1 的空格形态。
+- header: `branch.oid`(空仓库为 `(initial)`)、`branch.head`(分离 HEAD 为 `(detached)`)、`branch.upstream` / `branch.ab`(有上游才有)。
+- `git diff HEAD -- <新路径>` 对 rename 只会显示 new file, 必须 `-M -- <新> <旧>`。
+- 非 ASCII 路径默认 octal 转义, 统一加 `-c core.quotepath=false`。
+- numstat 取文件清单必须 `-z`(默认输出把 rename 打成 `old =>new` 箭头串, pathspec 无法命中)。
 
-写类接口(save/create/rename/remove)的约束:
+### 2. 统一 diff → hunk: 三个只有真输出才暴露的坑
 
-- **路径逐段白校验**: 每段必须通过 `validSegmentName`(拒 `.` / `..` / `.git`、`/ \ : * ? " < > |`、NUL、首尾空格、超 255 字符; 空段如 `a//b` 同样拒绝), 再经 `resolveWithin` 防穿越 —— `.git` 段在写类接口上不可建 / 不可写 / 不可改 / 不可删。
-- **save**: `content` 必须为字符串且 ≤1 MiB(`too-large`); 携带 `mtimeMs` 时做乐观并发校验, 磁盘 mtime 差 >1ms 且未 `force` → `conflict`(附磁盘现状, 客户端提示重载或强制覆盖)。save 路由单独放宽请求体上限(3 MiB, 覆盖 JSON 转义最坏 2 倍膨胀), 其余路由仍为 256 KiB。
-- **create**: 父目录自动补建(`mkdir -p` 语义); 目标已存在 → `exists`。**rename**: 只允许单段合法名、同目录内; 目标占用 → `exists`。**remove**: 文件 / 符号链接直接删; 目录必须显式 `recursive: true`(`rm -rf` 语义), 否则非空目录 `not-empty` 拒绝; 根路径(`rel === ''`)不可删。
+`parseDiffHunks` 的夹具全是真实 `git diff` 输出, 它抓到的是:
 
-## 实现事实(已用真实仓库实测钉死)
+- `\ No newline at end of file` 是**内容行之后的标记行**, 不是内容, 必须丢;
+- 路径含空格 / 非 ASCII 时 `--- a/<路径>` 后面会**补一个 TAB**(`--- a/ren old.txt\t`),
+  所以要先在第一个 TAB 处截断再处理引号;
+- `core.quotepath=true` 时路径被 C 风格引号包住、非 ASCII 走**八进制 UTF-8 字节**转义,
+  必须按**字节**解码(否则 `\344\270\255` 会变成三个拉丁字符)。
 
-- `git status --porcelain=v1 -z`: 条目 NUL 分隔; rename 是两条 —— `R  <新路径>\0<旧路径>\0`(状态 token 带新路径, 裸 token 是旧路径)。
-- `git check-ignore` 必须 `--stdin -z`(argv 模式不允许 `-z`), 只输出命中的路径(exit 0 = 有命中, 1 = 无)。
-- 忽略区的**桥接目录**靠 `git ls-files -o -i --exclude-standard --directory -z -- :(literal)<子目录>…` 探测: `--directory` 把整体被忽略的子目录折叠成单条输出, 任一 token 落在某候选子目录下即标记 `subIgnored`(一次调用覆盖全部直接子目录, 开销同阶); 不做桥接时深层忽略路径(如 `src/__pycache__`)因父级未被忽略而无法从忽略区走到。
-- `git diff HEAD -- <新路径>` 对 rename 只会显示 new file, 必须 `-M -- <新> <旧>` 才能出 rename diff; 未跟踪文件 diff 为空, 回退读内容。
-- 非 ASCII 路径在 diff 里默认 octal 转义, 统一加 `-c core.quotepath=false`。
-- `git ls-files -c -o --exclude-standard -z` 与 `-o -i --exclude-standard -z` 分别给出「可见+隐藏」「忽略」的全量文件清单; 搜索的目录命中项由文件路径派生(`dirsFromPaths`), 与懒加载树语义解耦。
-- `git log --format=%H%x00%h%x00%an%x00%at%x00%s`: 字段 NUL 分隔、条目换行分隔, 作者名/主题含空格安全; 分页用 `--skip` + `-n`。
-- merge 提交识别: `git rev-list --parents -n 1 <hash>` 数父提交(>1 即 merge); 单文件 diff 用 `git show --format= <hash> -- <path>` 输出纯 diff, 首个提交需 `diff-tree --root` 才有 numstat。
-- numstat 取文件清单必须 `-z`: 默认输出把 rename 打成 `old =>{new}` 箭头串(pathspec 无法命中); `-z` 下为 hash\0 + `A\tD\t<路径>\0`, rename 是 `A\tD\t\0<旧>\0<新>\0`(计数 token 路径位为空, 后跟旧、新两个裸 token), 解析见 `parseNumStatZ`。
-- ref/hash 一律 argv 直传且先过白校验(safeRef 拒 `-` 开头 / `..` / 空白 / `@{`; safeHash 只收十六进制串), 无 shell 可注入面。
-- 面板锚点全部用稳定 data 属性: `[data-conversation-scroll]`、`[data-composer-card="true"]`; 对话列宽读 `--dsh-chat-content-width`; 不依赖任何哈希类名(`uV2eYG_*`/`wSkVaW_*` 等跨构建不稳定)。
+hunk 的范围由 `@@` 头声明的增删数**界定**, 所以 hunk 内一行内容本身以 `--` 开头的 `--- foo` 不会被误当成文件头,
+被 `TEXT_CAP` 截断的最后一个 hunk 也能在输入耗尽时按已收到的内容收尾。
+
+### 3. 插件依赖的解析锚点: 不能用 `import.meta.url`
+
+插件以 **junction** 挂进 profile(`~/.dsh/profiles/web/node_modules/dsh-file-git-explorer` → 仓库真实路径),
+而 Node 默认解析 **realpath**, `dsh` 也没有传 `--preserve-symlinks`。于是:
+
+- 从插件自身路径 `require('node-pty')` / `require('ws')` → **MODULE_NOT_FOUND**;
+- 从 **profile 目录** 解析 → 命中(dsh 在那装了指向自身 `node_modules` 的 junction)。
+
+故 host 半先 `createRequire(ctx.baseUrl)`(`ctx.baseUrl` 由 `dsh-app-boot` 设为 profile 目录),
+失败再退回 `createRequire(import.meta.url)`。
+**`import.meta.url` 仍然正确用于读本包自己的文件**(本插件没有自带 vendor 资产, 但新增时应照此)。
+
+### 4. 静态资产与 WebSocket
+
+- `dsh-host-webserver` **不提供**静态文件 API(它自己"不伺服任何文件"), 也不做回环校验 —— 都是插件的事。
+- `register({kind:'prefix', path, handler})` 按 **最长前缀** 匹配; 重复 `(kind, path)` 抛错,
+  所以 `/fge/api` 与 `/fge/vendor` 必须是两条路由。
+- `registerUpgrade({path, handler})` 只按 **pathname** 精确匹配(查询串被剥离, 因此 `?root=&cols=` 可用),
+  交出的是**裸 socket** —— 握手要自己用 `ws` 的 `WebSocketServer({noServer:true})` + `handleUpgrade` 完成,
+  这正是 `ws` 是依赖的原因。不合法来源在**握手前**直接写一段 HTTP 403 到 socket 上。
+- 浏览器模块表(seed)是**封闭的 9 项**: `react`、`react/jsx-runtime`、`react-dom`、`react-dom/client`、
+  `@deepseek-ai/cordis`、`-client-store`、`-client-ui-slots`、`-client-ui-primitives`、`-client-ui-dockkit`。
+  client 半只能用这些 + `dsh.client.inject` 声明的图内包 —— 所以 `dsh.client.inject` 保持 `[]`。
+
+### 5. 座位、优先级, 与「影子替换官方芯片」
+
+- 两个 kind 都是**全新**的(`fge-git` / `fge-diff`), 用 `priority: 'extension'` 注册, 不与任何 builtin 争位。
+- `sidebar.right.pane.tab` / `.title` 是 **keyed** 槽: **`key` = 类型定义的 `id`**(不是 kind)。
+  dockkit 用 `definition?.id ?? tab.kind` 当 `entryKey` 派发。
+- **拿到官方文档页签的 `tabId` 只有一条路**: 影子注册 `sidebar.right.pane.tab.title`, `key` 用官方 text 类型的
+  实现 id `@deepseek-ai/dsh-client-ui-sidebar-documentpreview`, 在组件里 `useTabInfo()` 读 `tab.id`。
+  为什么别的路全堵死, 见 `docs/adr/0003`。
+- ⚠ **同 key 同 priority 会直接抛错**, 而渲染取排序后该 key 的**第一条**, 排序按 priority **升序**
+  (`SlotCore.register`: `register at a different priority to shadow it (lowest renders)`)。
+  官方那条 title 注册没有 priority(即 0), 所以本插件**必须用负数** priority。
+- 复刻官方芯片的成本极小: `FileTypeIcon(classifyFileType(tab.title))` + `tab.title`, 两者都是
+  `primitives` 的导出; **关闭按钮 / ⋯ 菜单 / 悬浮面板 chrome 都不在这个槽里**(dockkit 单独渲染, 有
+  `data-dockkit-tab-close` / `-tab-menu` / `-float-close` / `-float-dock` / `-float-resize` 为证)⇒ 替换不丢任何交互。
+  该槽**两处都渲染**(页签条与悬浮面板头部), 所以影子组件两种位置都要站得住。
+
+### 6. 悬浮面板的几何
+
+- `ctx.sidebarRight.float(tabId, rect)` 是公开接口, `rect` 原样生效(`{x, y, width, height}`, 视口坐标 ——
+  悬浮面板宿主是 `position:fixed` 且 portal 到 `document.body`)。**只对 docked 页签生效**, 已浮起的页签是 no-op,
+  且**无已挂载会话座位时抛错**(调用点容错)。默认几何是 380×300 + 每层错开 24px 的级联, 没有平铺 / 吸附 / 贴边。
+- **右栏左缘**的取法取决于右栏还有没有轨道:
+  - **不覆盖宽度时**(官方 layout 原样): 右栏是真实的一格 grid track, 从 `[data-rightbar-col]` 的 `left` 量最稳,
+    **不要**量里面的 `[data-sidebar-right-panel]` —— 面板靠 CSS `transform` 滑入滑出, 展开动画期间量它只会拿到中间值。
+  - **本插件覆盖了宽度之后**(见 §11): 第三轨是固定 15vw(折叠时为 0), `[data-rightbar-col]` 本身仍然是一格
+    真实轨道、`left` 依旧可用; 不过面板**右缘贴视口右缘**这条更直接, 所以现在用
+    `left = innerWidth - panel.width`。`transform` 只平移不改宽度, 这个宽度在展开动画期间也是准的
+    (量 `left` 才会拿到中间值)。两种取法都对, 面板那一种对"轨道与面板不等宽"的配置更稳。
+- **右栏折叠必须显式关掉悬浮面板**: 悬浮面板在 `document.body` 上的一个 `fixed` portal 里(`z-index: 60`), 不随右栏滑走。
+  本插件用一个只监听 `data-rightbar-collapsed` 的 `MutationObserver` 来关。
+- **终端抽屉不参与这套几何**: 它在 `conversation.composer.dock` 里**宽度贯穿**整个座位, 既不用量也不用
+  `--dsh-chat-content-width`。(该变量仍定义在对话根元素上, 座位在它的子树内 —— 以后要做居中的座位元素可以
+  直接 `max-width: var(--dsh-chat-content-width); margin-inline: auto`, 零 JS。)
+- **右栏内的小浮窗(分支树)要用 `position:fixed`**: 官方 `primitives.useAnchoredPosition({open, anchorRef,
+panelRef, side, gap, margin})` 返回的是**视口坐标**(`{left, top}`), 且面板要能被它量到 `offsetWidth` ——
+  所以那条规则是: 面板先渲染(位置未算出来时先 `visibility:hidden`, 布局 effect 跑完即可见)、用 `fixed` 定位。
+  `fixed` 还顺带免疫右栏面板的 `overflow` 裁剪; 唯一要避开的是「面板正在做 transform 过渡」的那一瞬
+  (有非 `none` 的 transform 时 `fixed` 会改为相对该祖先定位, 而展开态是 `transform:none`, 所以常态无碍)。
+  关掉用官方 `primitives.useDismissOnOutsidePointer(anchorRef, open, setOpen, panelRef)`(第 4 个参数是
+  "也算内部"的额外 ref)。
+
+### 7. `DiffBlock` 的契约
+
+`primitives.DiffBlock` props = `{diffs, labels, maxLines?, className?}`:
+
+- `diffs: [{path, oldText, newText}]`, **一个 hunk 一条**; `oldText` / `newText` 已是拆好的行块(上下文两边各一份)。
+- 它**不做 diff 比对**: `oldText` 整块当删除行、`newText` 整块当新增行。无行号、无换行开关、无二进制/mode 表达。
+- 自带复制按钮(复制它重建的 `- `/`+ ` 文本)、折叠(`maxLines` 默认 16)、`└ +N -M · N files` 页脚。
+- `labels` **必填 7 个键**: `copy` / `copied` / `files(n)` / `expand(n)` / `expandAria(n)` / `collapse` / `collapseAria`。
+
+### 8. 正文渲染器的可复用性
+
+markdown → `primitives.MarkdownText`、代码 → `primitives.CodeBlock`(**可用**); `text` / `image` / `html` / `pdf`
+→ **不可复用**(组件未导出)。这正是 v0.7 改用「官方页签浮起来」而不是自绘悬浮面板的原因 —— 见 `docs/adr/0002`。
+
+### 9. 右侧栏的默认页签: 官方 `defaultSeed` 的「恰好一条」规则
+
+官方 `sidebar-right` 决定右栏首次展开时放哪个页签:
+
+```js
+const [only, ...others] = tabs.guide();
+const kind = only !== undefined && others.length === 0 ? only.kind : GUIDE_KIND;
+```
+
+也就是 **guide 条目恰好只有一条时, 默认页签就是那一条; 两条及以上就落回 guide 列表页**。
+(这也是 v0.6 时 `files-lite` 能让右栏默认显示文件树的原因: 那时 guide 里只有官方 files 的「工作区文件」一条。)
+
+v0.7 保留了本插件的 guide 条目 —— 不然 git 页签**没有任何入口**(页签只能由 `openTab` 或 guide 胶囊打开,
+而 guide 只列 `guide` 条目)。多出的一条把默认顶回了列表页, 所以本插件补一步把它拉回来:
+
+- `conversation.composer.dock` 里另注册一个**空渲染**的座位(`fge-session-seed`), 每个会话只跑一次:
+  右栏还是空的 / 只有 guide 时, `ctx.sidebarRight.openTab('files')` 打开官方「工作区文件」,
+  再 `close()` 掉 guide 占位页(此时它不是唯一页签, 官方 `canCloseTab` 允许关)。
+- **不抢用户已经开的页签**: 每次尝试前先看 `ctx.sidebarRight.active()`, kind 不是 `guide` 就直接放手。
+- 座位还没绑定时 `openTab` 会抛错, 按 20×150ms 退避重试; 用尽就静默放弃(这只是锦上添花)。
+- 依赖两个官方内部字面量: 页签 kind `'files'`(ui-sidebar-files)与 `'guide'`(sidebar-right 的 `canCloseTab`
+  也按这个字面量判断)。两边改名时这里要跟着改 —— 失败是静默的, 只退化回官方默认行为。
+
+### 10. 页签体只渲染**活动**页签 ⇒ 组件状态必须外置
+
+dockkit 只渲染活动页签的页签体(`bodiesFor(panel)` 按活动页签派发, 其余 docked 页签的 body **不挂载**;
+官方文档那句「docked bodies need an expanded sidebar and an active tab」说的就是这件事)。
+
+本插件正好会**自己把活动页签换掉**: 点文件打开 `fge-diff` 页签并激活它 ⇒ git 页签体被卸载;
+diff 页签浮起后离开页签条, git 页签又成为活动页签、**重新挂载**。状态只放组件里的话就会出现
+「点一下文件, 历史列表闪一下、刚展开的提交被收起来」(真 boot 实测复现: 展开 1 条 + 4 个文件 → 点文件后归零)。
+
+所以 git 页签的 `info` / `status` / 查看分支 / 历史 / 展开表都缓存在模块级 `gitViews`(键 = 会话 id,
+并比对工作区 cwd), 重挂时恢复, 且**同一工作区的重挂不重新拉取**。自己实现"打开一个页签"时都要考虑这条。
+
+### 11. 右栏外观覆盖: 可拖宽度与隐藏的 chrome 按钮
+
+按用户要求, 本插件对**官方右栏的外观**做了几处覆盖(纯 CSS + 一个拖柄接管, 都在 `ensureStyles` / `attachRightbarDrag` 里):
+
+- **宽度 = 可拖, 范围 [200px, 15vw]**(常量 `RIGHTBAR_MIN_PX` / `RIGHTBAR_MAX_VW`)。官方**没有**公开的宽度 API:
+  `setRightbar` 只存在于 layout 内部, 而且被钳制到 `[300px, 0.7×视口]`; 首开宽度还是
+  `RIGHTBAR_DEFAULT_RATIO = 0.45`(1920 宽上就是 864px, 中栏只剩 776px)。所以走"改画法":
+  第三轨与面板宽度都读**同一个 CSS 变量** `--fge-rightbar-px`(拖动过的 px), 没拖过就回落 15vw:
+
+  ```css
+  /* 展开: 真实第三轨 = 拖过的宽度(没拖过 = 15vw), 于是右栏"挤"中栏 */
+  div:has(> [data-rightbar-col]):not([data-rightbar-collapsed]) {
+    grid-template-columns: auto minmax(0, 1fr) min(var(--fge-rightbar-px, 15vw), 15vw) !important;
+  }
+  /* 折叠: 把这一轨还给中栏 */
+  [data-rightbar-collapsed]:has(> [data-rightbar-col]) {
+    grid-template-columns: auto minmax(0, 1fr) 0px !important;
+  }
+  [data-sidebar-right-panel='push'] {
+    max-width: min(var(--fge-rightbar-px, 15vw), 15vw) !important;
+  }
+  ```
+
+  ⚠ **第三轨绝不能写成 0**: 轨道为 0 时官方面板(`position:absolute; right:0`)会向左挂到中栏**上面**
+  (官方注释原话 "it can hang over the centre when there is no track"), 观感是"浮了一层"而不是"挤" ——
+  这条真踩过。轨道留成真实宽度 + 面板限到同宽, 面板就正好落在自己那一格里, 中栏被挤窄但不被遮住
+  (判据: **面板左缘 == 第三轨左缘 == 中栏右缘**)。
+  ⚠ **折叠时要把这一轨还回去**, 否则收起右栏聊天还是不宽 —— 所以按 `data-rightbar-collapsed` 分成两条规则。
+  **左栏那一轨必须留给 `auto`** —— 官方侧栏组件自带宽度(`width` 从座位注入), `auto` 会收缩到它,
+  收起成 56px 细条(实测 57px)、拖动变宽都照旧; 写成固定值就会把左栏写死。
+  `!important` 是必须的: 官方把 `grid-template-columns` 写在 **inline style** 上。
+
+- **拖柄由本插件接管**(`attachRightbarDrag`): 官方那根 8px 的 `.pI_x6G_handle[data-side="rightbar"]`
+  本来就骑在边界上, 但它的 `left` 跟的是**官方**宽度, 而且官方的拖动会把值写进 layout store(还会钳到
+  `[300px, 0.7×视口]`, 与本插件的区间冲突)。所以:
+
+  - CSS 把它的定位改成 `left:auto; right:calc(<轨道> - 4px)` —— 不管官方值是多少, 它始终骑在**真实**边界上;
+  - JS 在**捕获阶段**吃掉 `pointerdown`(`stopPropagation` 之后 React 的委托处理器收不到),
+    按指针位移算宽度、钳进 `[200px, 15vw]`、写 `--fge-rightbar-px`、松手入 `localStorage`(`fge-rightbar-w-v1`);
+  - 拖动期间给 frame 挂 `data-fge-resizing`: 关掉官方的 `transition:grid-template-columns`(慢过渡会让面板
+    追不上指针)并把光标钉成 `col-resize`(指针滑出那 8px 手柄也还在拖);
+  - ⚠ **存的是本插件落下去的那个值, 不是量出来的面板宽度**: 面板是 border-box, 量出来会比变量多 1px ——
+    存那个值每拖一次就胖 1px(实测踩过: 200 → 201 → 202…)。
+
+- **git 页签头部高度 = 38px**(`.fge-head`, border-box): 官方页签条占 0–38, 官方的「文件」页签头也是 38px ⇒
+  头部底边线落在 **y=76**, 正好接上会话头部(`wSkVaW_header`, 0–76)的底边线与官方文件页签的下缘。
+  原来用 `padding:6px 8px` 撑出 33.8px, 那条线落在 y≈71.8 —— **差 4px, 肉眼就是"这条线没跟上面那条对齐"**。
+- **隐藏「分栏」`[data-dockkit-split-button]` 与「进全屏」`[data-sidebar-right-mode="fullscreen"]`**:
+  后者的属性值是**下一个**模式, 所以只命中"当前不是全屏"时的那个按钮; 真到了全屏, 退出全屏的按钮还在,
+  不会把人关在全屏里。`[data-sidebar-right-toggle]`(收起)与 `[data-dockkit-add-tab]`(回到 guide)都保留。
+
+### 12. 浮起详情的两个时序陷阱: 页签条"闪一下"与右栏跳页签
+
+两条都只在真浏览器里看得见, 成因都在**官方座位绑定与 dockkit store** 的时序上。
+
+- **第一次 `float()` 必抛「sidebarRight: no session surface is mounted」**。官方座位的绑定写在
+  `useEffect(() => bindService({...}), [..., surfaces])` 里, 而新页签让 `surfaces` 变了: 那一轮 flush
+  **先跑整棵树的卸载阶段**(座位释放绑定)、**再跑装载阶段**(子先父后)—— 本插件的芯片 effect 正好夹在
+  "已释放、尚未重绑"的空隙里。关键是**空隙在同一轮 flush 的收尾就补好**, 所以重试要用**微任务**
+  (`Promise.resolve().then`): 微任务在 flush 之后、paint 之前跑, 详情页签于是**一帧都不会**出现在页签条上。
+  用 `setTimeout(60ms)` 会把这 60ms 的中间态画到屏幕上 —— 真 boot 实测: 页签条上冒出详情页签
+  **45–66ms / 3–5 帧**, 使用者看到的就是"先加一个 tag, 闪一下, 消失"。
+  `retryFloat` = 前 2 次走微任务、之后退回定时器; 「量不出 rect」(右栏还在展开、没有轨道)那一路仍用定时器
+  (那是真的得等下一帧)。`close()` 与 `float()` 共用这条重试, 顺序仍是"先关后浮"。
+- **浮起之后右栏会跳到"详情左边那一格"**。dockkit 的 float reducer 会把来源 pane 的 activeTabId 改成
+  `tabs[max(0, index - 1)]`(内部 `W3`; index = 被浮起页签的下标), 而详情页签总是**追加在末尾** ——
+  从「文件」页签点文件时, 左边那格正是先前打开的 git 树, 观感就是"右栏自己切回 git 树了"。
+  修法不是猜"左边那格应该是谁": 本插件用一条**捕获阶段**的 `click` 监听记住"用户这次动作之前页签条上选中的那一格"
+  (读 DOM 的 `aria-selected`, 每次动作前重读, 点在页签条本身上时跳过), 浮起成功后 `sidebarRight.focus()` 回去 ——
+  右栏就停在用户原本看的地方。focus 与 float 落在同一拍(同一个微任务)里, 所以连"先跳过去再跳回来"的闪动都没有。
+  实现事实 §10 里那次"自己把活动页签换掉"是同一枚硬币的另一面: **本插件有能力改动右栏当前页签, 就欠用户一个还原**。
+
+> 这两条由仓库根 `scripts/verify-client-bundles.mjs` 的「座位空隙的重试走微任务 + 浮起后把用户那一格 focus 回来」
+> 一项离线守住(桩里 `float()` 第一次必抛、`setTimeout` 只记账不执行): 退回定时器、或者删掉那次 focus, 这项就红。
+
+### 13. 终端配色: xterm 只认具体颜色, 而且 viewport 是它自己写死的黑
+
+真 boot 实测(浅色主题): `.fge-term-body` / `.fge-term-strip` 都是 `rgb(255,255,255)`, 唯独
+`.xterm-viewport` 是 `rgb(0,0,0)`, 终端里的文字也是 xterm 默认的浅灰 —— 也就是**整个 theme 都没生效**。
+
+原因是两份"默认值"叠在一起:
+
+1. **`theme.background` 传了 `rgba(0,0,0,0)` 会被 xterm 丢掉**。原实现的意图是"透明, 露出容器底色"
+   (`body{background:var(--dsw-alias-bg-base)}`), 但 xterm 解析不了这个值就**静默回落**到它自家的默认黑,
+   连 `foreground` 也跟着是默认白。所以主题色必须**算成不透明色**再交出去。
+2. **`xterm.css` 里 `.xterm-viewport{background-color:#000}`**。xterm 的主题色只刷在
+   `.xterm-scrollable-element`(DOM 渲染器)上, viewport 那一层没人管 —— 终端底边会漏出一条黑带。
+
+修法:
+
+- `terminalTheme(snapshot)` 从**主题 token** 取色(`--dsw-alias-bg-base` / `--dsw-alias-label-primary`),
+  先用 canvas 的 `fillStyle` 归一成 xterm 认得的写法(`#rrggbb` / `rgba(...)`; 这样 `oklch()` / `color-mix()`
+  这类自定义主题的写法也吃得下), 再交给 xterm;
+- CSS 补一条 `.fge-term-body .xterm-viewport{background-color:var(--dsw-alias-bg-base)!important}`(跟着 token 走, 零 JS);
+- 订官方 `theme/change`(`ThemeSnapshot{tokens, active.colorScheme}`): 主题一换就把新 theme 塞给
+  **所有活着的 xterm 实例**(模块级 `liveTerms`), 不重开抽屉也是新配色。
+
+**三层表面: 为什么不能拿 `bg-base` 当终端底。** 把终端表面统一到 `--dsw-alias-bg-base` 之后, 用户实测反馈
+"整个抽屉糊进背景、下面的横线都看不到了" —— 查 token 才明白: 官方浅色主题里
+`bg-base` / `bg-layer-1` / `bg-layer-2` / `bg-layer-3` **全是纯白**(实测 `#fff`), 拿它们当终端底就等于
+把抽屉画成页面本身的颜色, 标题条的分隔线也跟着糊了。所以改成:
+
+| 层                       | 取值                                                | 实测(浅 / 深)         |
+| ------------------------ | --------------------------------------------------- | --------------------- |
+| 终端体 / 画布 / viewport | `--dsw-alias-markdown-code-block`(官方终端卡片同款) | `#f9fafb` / `#1b1b1c` |
+| 标题条                   | **不设底色**(透出上面那层)                          | 同上                  |
+| 页签                     | 与终端体同色(不压 border, 线在它下面继续)           | 同体                  |
+
+于是**条 / 页签 / 体两层**在任何主题下都读得出来, 条下面那条 `border-l3` 分隔线**在页签下面也连续**
+(像素级实测: 页签底边那行 `249,250,251 → 206,207,208 → 249,250,251`); 页面底色一变, 这层跟着变, 没有一个写死的颜色。
+(标题条不再自己叠一层墨色 —— 用户口径: 把那块色去掉, 分界交给那条线。)
+
+**抽屉宽度跟对话区对齐, 零 JS。** 座位是整条中栏, 而对话内容宽由 `--dsh-chat-content-width` 决定
+(顶部那条 `wSkVaW_widthHandle` 拖的就是它) —— 所以抽屉与抽屉舌都用
+`max-width: var(--dsh-chat-content-width, 100%); margin-inline: auto`: 与 composer 卡片**同宽同列**
+(实测两边都是 left 470 / 691px), 拖那条手柄时抽屉跟着变宽变窄, xterm 由既有的 ResizeObserver 自动 refit。
+
+**xterm 自带的滚动条要单独收拾。** 它是 vscode 血统的 `ScrollableElement`: 宽度取
+`verticalScrollbarSize = overviewRuler.width || 14`(即**默认 14px**), 而且 `domNode.setWidth(...)` 把它写成
+**内联样式** —— CSS 必须 `!important` 才压得住。这里收到 6px、滑块同宽并加 `border-radius:3px`(对齐 dsh 自己的细滚条);
+滑块颜色不用管, xterm 自己按 `scrollbarSliderBackground`(默认 = 前景色 20% 透明)注入一段 `<style>`, 于是天然跟主题。
+
+> 由 `scripts/verify-client-bundles.mjs` 的离线守住: 「终端底色不写透明」+「订了 `theme/change`」+
+> 「表面用官方 code-block 底色(不是 `bg-base`)、条无底色、抽屉/舌跟对话区同宽、viewport 与画布同色、页签不压线、
+> 滚动条 6px 圆角、Alt+C 复制」; host 侧的 `-NoLogo` 与「重启丢旧回放」由 `tests/pty.test.mjs` 守。
+> 真浏览器验收见验收清单第 9 条。
 
 ## 测试与静态检查
 
 ```bash
-node tests/git.test.mjs    # 纯函数层单测(status 解析 / 三区划分 / 防穿越 / diff 参数)
-node tests/shell.test.mjs  # shell 行纯函数层单测(解释器解析 / 历史 / 尾部窗口数学)
-node tests/edit.test.mjs   # 写类接口单测(save 并发冲突 / create / rename / remove, 临时目录)
-node tests/open.test.mjs   # 「打开文件夹」argv 映射单测(win/mac/linux × 目录/文件)
-node tests/verify.mjs      # host 集成冒烟(真实 git, 需在仓库内运行)
-eslint .                   # 仓库统一 lint(client bundle 按惯例忽略)
+node tests/git.test.mjs      # git 纯函数层(porcelain v2 解析 / 白名单 / diff argv / 统一 diff→hunk)
+node tests/address.test.mjs  # 文件地址与「复制内容」纯函数层(芯片逻辑的可执行规约)
+node tests/pty.test.mjs      # 终端纯函数层(shell 绝对路径解析 / 尺寸钳制 / 帧编解码 / 回放缓冲 / LRU)
+node tests/verify.mjs        # host 全链路冒烟: 真实 git + 真实 HTTP 栅栏 + vendor + 真 WS/PTY 端到端
+eslint .                     # 仓库统一 lint(client bundle 按惯例忽略)
 ```
 
-> 三者均已接入根 `package.json` 的 `test` / `check` 与 `justfile test`。
+浏览器半边的**装配契约**(种子模块引用、槽位名 / key / priority)由仓库根的
+`scripts/verify-client-bundles.mjs` 离线护栏 —— 其中一条就是「影子芯片必须是负数 priority」。
+
+### 浏览器验收清单(离线脚本盖不到, 需要真 boot)
+
+在**隔离 `DSH_HOME` + 独立端口**起一个实例(先 `dsh plugin --profile <名> add link:<repo-abs-path>/plugins/file-git-explorer`,
+再 `dsh --profile <名> --port <端口> --no-open`),在真浏览器里逐条走一遍:
+
+0. **右栏外观与拖动**:默认宽度 = 15vw(1920 窗口下约 288px);**打开右栏是把中栏挤窄、不是浮在它上面** ——
+   面板左缘恰好等于中栏右缘(不重叠),折叠后这一格宽度立刻还给中栏;**左栏宽度不受影响**(收起仍是 56px 细条);
+   右栏顶部只剩「收起」与「+」,没有「分栏」「全屏」;
+   **左缘那根 8px 拖柄可拖**(悬停出现一条 3px 竖条):往左最宽到 15vw、往右最窄到 200px,松手后宽度
+   **刷新页面 / 切会话仍在**(`localStorage`);
+   **git 页签头部的底边线与会话头部(`wSkVaW_header`)的底边线是同一条水平线**(都在 y=76, 差 ≤1px)。
+
+1. **开一个全新会话**并把右栏展开 → 默认页签就是官方的「**文件**」工作区文件树(列表有行、路径是会话 cwd),
+   页签条上**没有 guide 占位页**;`+` 仍能回到 guide 列表, 从那里点「Git」进本插件页签。
+2. 右栏 guide 里有「Git」胶囊;点它打开页签 → 头部是**分支按钮** + `↑/↓` + `⟳`,正文是**变更列表**与**提交历史**两段。
+3. 点头部那颗分支按钮 → 弹出**分支小浮窗**(`本地分支` / `远程分支`, 远程下面按 remote 名分层缩进);
+   点一条远程分支 → 浮窗收起、提交历史换成该分支的历史,**头部那颗按钮仍显示当前检出的分支**;
+   再点一条本地分支、按 Esc、点浮窗外面 → 浮窗都能收起。
+4. 点一条提交 → **就地展开**说明 + 文件 ±行数(merge 提交只出说明);再点收起;「加载更多…」能翻页。
+5. 点展开出来的文件 → **悬浮面板**出现在右栏左侧:视口 1/2 宽、满高、右缘贴右栏左缘;正文是官方 `DiffBlock`(带复制按钮)。
+   **页签条上不出现详情页签**(没有"闪一下"), 右栏活动页签仍是「Git」。
+   **关掉浮层回到 git 页签: 刚才那条提交仍是展开的, 两份列表没有重新加载、也没有闪。**
+6. 官方文件树点一个文件 → 用**同一个**悬浮面板位显示官方正文;再点另一个文件 → 仍是**一个**面板、内容就地更换。
+   **每次点文件, 右栏都停在「文件」页签**(不会自己跳到 git 树), 页签条同样不闪。
+7. 悬浮面板头部:文件名前有文件类型图标,后随一枚**复制图标**;点它 → 图标变「已复制」,剪贴板是磁盘原文
+   (只有带扩展名的文件有;`html`/`pdf`/图片与无扩展名文件没有这枚图标)。
+8. 收起右栏 / 切换会话 / 切换工作区 / **按 Esc** → 面板消失。
+9. composer 下方有抽屉舌;点它**向上**展开终端(能跑 `vim` / 颜色 / 补全);抽屉**顶部两角圆角**、
+   **抽屉与上方对话区同宽同列**(拖顶部那条宽度手柄,抽屉跟着变宽变窄),
+   **抽屉和页面分得开** —— 终端体是官方终端卡片底色(浅色主题下比页面略灰), **标题条没有自己的底色**;
+   **标题条那条分隔线在页签下面也不断**(页签不许压线), 终端滚动条是**细条 + 圆角**(不是 xterm 默认的 14px 粗条);
+   拖选一段文字按 **Alt+C** → 剪贴板拿到那段文字(且 Ctrl+C 仍然照常送 SIGINT);
+   **终端底色 = 主题色而非 xterm 的黑**, **切明/暗主题时已经开着的终端就地换色**(不必重开抽屉);
+   **点 `■` 杀掉终端再重开, 回放里不该出现旧的输出、也不该出现一屏 `PowerShell …` banner**(只剩一条"已开启新终端"标记);
+   顶上**终端标题条**里恰好**一枚页签**(`>_` 字形 + 尾部省略号的
+   工作区路径, **没有 `+`**),悬停页签才出现 `×` 且点它只收起、右端 `■` 是**红色**且只杀进程、
+   **点条空白处也能收起**;刷新页面后重开抽屉应看到历史输出;Esc(焦点在终端外)收起。
+10. 全程 DevTools 控制台**零 pageerror**、零插件 `console.error`。
+
+## 已知限制(接受, 不是 bug)
+
+- 悬浮面板头部自带的「送回侧栏」按钮**不可移除**(官方 chrome 没有可注入的槽); 误点后再点同一个文件即可重新浮起。
+- 悬浮面板**不吸**右栏边缘, 可以被拖走 / 缩放; 换窗口尺寸后也不会自动跟着重排(几何只在浮起那一刻算)。
+- Windows 下 PTY 退出后 ConPTY 会滞留句柄直到事件循环排空, **dsh 重启清零**; 终端进程生命周期与 dsh 进程绑定。
+- 终端尺寸同步依赖浏览器 `ResizeObserver`, 极端布局变化下可能差一格, 下一次 resize 自愈。
+- 悬浮面板的状态是**按会话**存的(官方 `sidebarRight` 的 store 就是按会话的), 所以切走再切回来会看到它还在;
+  切到别的会话时它不会跟过去。
 
 ## 术语
 
-「cwd」「可见组 / 隐藏组 / 忽略组」「悬浮面板」「细条」「图钉」「联动」「diff 范围」「分支」「查看分支」「文件搜索」「提交历史」「刷新」「cwd 缓存」「树面板」的定义见仓库根 `CONTEXT.md`。
+「右侧栏页签」「git 页签」「变更列表」「diff 范围」「提交历史」「查看分支」「刷新」「悬浮面板」「详情」
+「composer 座」「抽屉舌」「终端抽屉」「终端标题条」「工作区终端」「回放缓冲」「工作区」的定义见仓库根 `CONTEXT.md`。
