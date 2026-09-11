@@ -107,7 +107,11 @@ fs.mkdirSync(projectRoot, { recursive: true });
     const storeFile = path.join(tmpHome, 'storages', 'db-console.json');
     assert.ok(fs.existsSync(storeFile));
     const mode = fs.statSync(storeFile).mode & 0o777;
-    assert.equal(mode, 0o600, '配置文件应为 0600, 实际 ' + mode.toString(8));
+    // Windows 没有 POSIX 权限位: Node 一律报 0o666, 收紧权限靠 ACL 而非 mode。
+    // 该断言只在 POSIX 平台上有意义, 否则会让整个 test 门禁在 Windows 上必然变红。
+    if (process.platform !== 'win32') {
+        assert.equal(mode, 0o600, '配置文件应为 0600, 实际 ' + mode.toString(8));
+    }
     const raw = fs.readFileSync(storeFile, 'utf8');
     assert.ok(raw.includes('postgres://alice:s3cret@127.0.0.1:5439/somedb'), '按口径明文存储');
 }
