@@ -32,8 +32,11 @@ e2e:
     node plugins/obsolete/tool-vision/tests/e2e.mjs
 
 # ---- 依赖安全审计 ----
+# ⚠ **不带 `--prod`**: 高危常常藏在 dev / 传递依赖里。这里原来只扫生产依赖, 于是
+#    2026-09 那个 js-yaml 高危(eslint → @eslint/eslintrc → js-yaml, dev only)在
+#    `just check` 里一直是绿的, 而 Dependabot 报了警 —— 口径现在与它对齐(全量)。
 audit:
-    pnpm audit --prod
+    pnpm audit
 
 # ---- 全量检查(等同 pre-push 的内容) ----
 check: lint test audit
