@@ -839,15 +839,13 @@ window.__ModuleLoader__.load({
           //    并把光标钉成 col-resize —— 指针滑出那 8px 手柄时也还在拖。
           '[data-fge-resizing]{transition:none!important}',
           '[data-fge-resizing],[data-fge-resizing] *{cursor:col-resize!important}',
-          // 2) 隐藏右栏 chrome 的「分栏」按钮(「收起」「+ 新页签」「进全屏」保留)。
-          //    ⚠ 「进全屏」原来一并藏了, 已按用户要求**放回来**: 它和「退出全屏」是**同一个**按钮 ——
-          //      非全屏时带 `data-sidebar-right-mode="fullscreen"`(图标/aria 是"进全屏"), 进了全屏才变成
-          //      `"push"`。所以藏掉它 = 非全屏时**永远进不去**(原来那条注释只说对了一半)。
-          //    ⚠ 放它回来不会跟上面那两条宽度规则打架: 官方面板全屏时自己换成
-          //      `data-sidebar-right-panel="fullscreen"` + `position:fixed;inset:0`(width:100%),
-          //      于是 ① 限宽的 `[data-sidebar-right-panel="push"]` 那条**不适用**, ② 面板是 fixed 覆盖,
-          //      grid 那一轨多宽都看不见; 官方此时也不再渲染右栏拖柄(`!layoutInfo.rightbarFullscreen`)。
+          // 2) 隐藏右栏 chrome 的「分栏」与「进全屏」按钮(「收起」「+ 新页签」保留)。
+          //    ⚠ 这两枚曾一起藏, 后来把「进全屏」放回来过一轮 —— 用户随后指出**位置放错了**:
+          //      全屏要落在**详情浮窗**上(见下面 4) 那枚), 不是右栏页签条这一格。所以又藏了回去。
+          //      顺带留下容易再踩的那点: `data-sidebar-right-mode` 的值是**下一个**模式, 页签条那枚
+          //      「进全屏」/「退出全屏」是**同一个按钮**(非全屏时才是 `"fullscreen"`, 全屏时变 `"push"`)。
           '[data-dockkit-split-button]{display:none}',
+          '[data-sidebar-right-mode="fullscreen"]{display:none}',
           //    「详情浮窗」头上的**「送回侧栏」**(`data-dockkit-float-dock`)也藏掉(用户口径):
           //    它的效果是把详情变回右栏页签 —— 与"详情只以浮层出现"这条设计相反(误点后还得再点一次
           //    同一个文件才重新浮起, 见 ADR-0002 / ADR-0003 的影子芯片), 留着只会让人误触。
@@ -870,6 +868,25 @@ window.__ModuleLoader__.load({
           //    ⚠ 只管**浮窗里**的: 页签条上那两格还靠官方 80/170 维持版式, 不动。
           '[class*="_float_"] *:has(> [data-dockkit-tab-title]){max-width:none!important}',
           '[class*="_floatTitle_"]{max-width:none!important}',
+          // 4) 详情浮窗头上的**「全屏」开关** —— 本插件自己加的一枚按钮(见 FloatFullButton)。
+          //    用户口径: 全屏要落在**详情面板**上, 不是右栏页签条那一格。
+          //    ⚠ 为什么只能"改画法": 官方没有移动 / 缩放悬浮面板的公开接口(`ctx.sidebarRight` 只有
+          //      close/focus/float/dock/split), 而 `float()` 对已浮起的页签是 no-op ⇒ 尺寸重新算不了。
+          //      所以给浮窗元素打一个标记, 用 `!important` 压掉官方 inline 的 left/top/width/height ——
+          //      与上面第 1 条右栏宽度同一个手法(author 的 `!important` 压得过 inline 的普通声明)。
+          //    ⚠ 按钮**只在浮窗里露面**: 标题槽在页签条与浮窗头部**两处都渲染**, 所以先 `display:none`,
+          //      再由 `[data-dockkit-float] .fge-float-full` 放开它 —— 用 JS 判据分不清这两处
+          //      (`tab.visible` 的定义里还包含"右栏展开且是本格", 条上与浮窗里都是 true)。
+          //    ⚠ 「退出全屏」没有单独的官方图标(primitives 只有 `IconFullscreenOutline16`),
+          //      所以两态同一个图标, 靠按钮自身的 `data-s="on"`(底色 + 主文字色)表示"正在全屏"。
+          '.fge-float-full{display:none;align-items:center;justify-content:center;flex:none;width:20px;height:20px;padding:0;border:0;border-radius:5px;background:transparent;color:var(--dsw-alias-label-secondary,inherit);cursor:pointer}',
+          '[data-dockkit-float] .fge-float-full{display:inline-flex}',
+          '.fge-float-full:hover,.fge-float-full[data-s="on"]{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.18))}',
+          '.fge-float-full:hover{color:var(--dsw-alias-label-primary,inherit)}',
+          //    全屏态: `inset:0` 一次盖住四个方向(浮窗是 `position:fixed`); 圆角归零 —— 官方是 20px,
+          //    铺满视口时那圈圆角会把后面的东西露出来; z-index 抬到别的浮窗之上; 右下角的缩放手柄此时没意义。
+          '[data-dockkit-float][data-fge-float-full]{inset:0!important;width:auto!important;height:auto!important;border-radius:0!important;z-index:50!important}',
+          '[data-dockkit-float][data-fge-float-full] [data-dockkit-float-resize]{display:none}',
         ].join('\n');
         document.head.appendChild(el);
       }
@@ -1102,6 +1119,7 @@ window.__ModuleLoader__.load({
        * ⚠ 只在**浮起那一刻**算一次: 官方没有移动 / 缩放悬浮面板的公开接口
        * (`ctx.sidebarRight` 只有 close/focus/float/dock/split, `ctx.layout` 只有面板选择与右栏显隐),
        * 而 float() 对已浮起的页签是 no-op。所以换窗口尺寸之后面板不会自动重排 —— 见 README 已知限制。
+       * (唯一的例外是浮窗自己那枚「全屏」开关: 它**只改画法**, 不动官方这份 rect —— 见 ensureStyles 第 4 条。)
        */
       function measureFloatRect() {
         var left = rightbarLeft();
@@ -1366,6 +1384,7 @@ window.__ModuleLoader__.load({
           }),
           h(DocName, { name: title }),
           h(FileCopyButton, { address: address, sessionId: sessionId }),
+          h(FloatFullButton, null),
         );
       }
 
@@ -1556,6 +1575,65 @@ window.__ModuleLoader__.load({
         );
       }
 
+      /**
+       * 详情浮窗头上的**「全屏」开关**(用户口径: 全屏落在**这个详情面板**上, 不是右栏页签条那格)。
+       *
+       * - 状态就用 `useState`, 但**标记打在浮窗元素上**(`data-fge-float-full`), 由 CSS 用 `!important`
+       *   压掉官方 inline 的 `left/top/width/height` —— 官方没有移动 / 缩放浮窗的公开接口
+       *   (`ctx.sidebarRight` 只有 close/focus/float/dock/split), 而 `float()` 对已浮起页签是 no-op。
+       *   见 ensureStyles 第 4 条。
+       * - 卸载(关详情 / 换文件)时把标记摘掉 —— 所以下一次浮起一定从"非全屏"开始, 不会记着上一次。
+       * - ⚠ `onPointerDown` 必须 `stopPropagation`: 官方浮窗的**整条 header 都是拖拽柄**, 它在
+       *   pointerdown 里对自己 `setPointerCapture`, 那之后子元素的 `click` 永远不派发
+       *   (实测 click 计数 0 —— 与「文件名点击复制」同一个坑, 见 §11 那条)。同层那枚「复制内容」芯片
+       *   也是这么办的。
+       * - ⚠ 按钮在**页签条上也渲染**(标题槽两处都渲染), 靠 CSS `.fge-float-full{display:none}` +
+       *   `[data-dockkit-float] .fge-float-full{display:inline-flex}` 只在浮窗里露面。
+       * - 两态同一个官方图标(`IconFullscreenOutline16`, primitives 没有"退出全屏"那枚), 靠 `data-s="on"`
+       *   的底色 + 主文字色表示"正在全屏"; 提示文字 / aria 会跟着切。
+       */
+      function FloatFullButton() {
+        var pair = React.useState(false);
+        var on = pair[0];
+        var setOn = pair[1];
+        var ref = React.useRef(null);
+
+        React.useEffect(
+          function () {
+            var el = ref.current;
+            var float = el === null || el === undefined ? null : el.closest('[data-dockkit-float]');
+            if (float === null) return undefined;
+            if (on) float.setAttribute('data-fge-float-full', '');
+            else float.removeAttribute('data-fge-float-full');
+            return function () {
+              float.removeAttribute('data-fge-float-full');
+            };
+          },
+          [on],
+        );
+
+        var label = on ? '退出全屏' : '全屏';
+        return h(
+          'button',
+          {
+            type: 'button',
+            ref: ref,
+            className: 'fge-float-full',
+            'data-s': on ? 'on' : 'off',
+            title: label,
+            'aria-label': label,
+            'aria-pressed': on ? 'true' : 'false',
+            onPointerDown: function (ev) {
+              ev.stopPropagation();
+            },
+            onClick: function () {
+              setOn(!on);
+            },
+          },
+          h(primitives.IconFullscreenOutline16, { size: 14 }),
+        );
+      }
+
       // ---- diff 页签(第二个 kind): 开出来即被浮起 ----
 
       /** token → diff 详情。只把 token 放进页签的 navigation.params, 免得把 diff 正文写进会话布局记录。 */
@@ -1641,7 +1719,13 @@ window.__ModuleLoader__.load({
         var label = found.detail && found.detail.path ? found.detail.path : 'diff';
         // 路径也走 click-to-copy(用户口径"点击文件名的时候自动复制"): diff 详情里显示的就是**路径**,
         // 所以复制的就是它 —— 点的是什么就复制什么。
-        return h('span', { className: 'fge-chip-label', title: label }, h(DocName, { name: label }));
+        // 「全屏」那枚按钮放在芯片**外面**(芯片是 `overflow:hidden` + 省略号, 塞进去会被截掉)。
+        return h(
+          React.Fragment,
+          null,
+          h('span', { className: 'fge-chip-label', title: label }, h(DocName, { name: label })),
+          h(FloatFullButton, null),
+        );
       }
 
       function DiffTabBody(props) {
