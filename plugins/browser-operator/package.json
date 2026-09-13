@@ -1,0 +1,28 @@
+{
+  "name": "dsh-browser-operator",
+  "version": "0.1.0",
+  "description": "浏览器操作预设的宿主侧插件: 注册 8 个 browser_* 工具, 共享一个常驻有头浏览器会话(独立 profile 复用登录态), 产物落项目已 ignore 的目录。纯 host 插件。",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./artifacts": {
+      "default": "./lib/artifacts.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.yml",
+    "README.md"
+  ],
+  "dependencies": {
+    "playwright-core": "1.60.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}

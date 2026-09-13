@@ -10,19 +10,24 @@
 
 DSH 的插件生态还在早期,本仓库把几个日常高频缺口做成了独立插件,一个插件一个目录,按需取用:
 
-| 插件                     | 状态   | 解决什么问题                             | 一句话说明                                                                                             |
-| ------------------------ | ------ | ---------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `ds-balance`             | 维护中 | 官方状态栏看不到余额和用量               | stats 行下方加第二行:余额 + 今日/本月 token,每 5 分钟刷新                                              |
-| `file-git-explorer`      | 维护中 | 看不到 git 状态、GUI 里没有终端          | 官方右侧栏「git 页签」(变更列表 + 提交历史)+ 详情悬浮面板(官方正文 / diff)+ 终端抽屉(真 PTY)           |
-| `db-console`             | 维护中 | GUI 里没有数据库客户端                   | 会话头部「数据库」页签:PG 完整链接登录(按项目保存)、schema 树、SQL 补全高亮、结果网格                  |
-| `deepseek-harness`       | 维护中 | 想要粒子鲸鱼背景                         | 蓝色粒子鲸鱼(DeepSeek 品牌蓝)默认开启,沿用官方明/暗/系统主题;`?dshtest=1` 隐藏式诊断面板               |
-| `stylevault-localchrome` | 维护中 | 想用本机 Chrome 配色当 DSH 主题          | 读本机 Chrome 用户色, 解码成 `#RRGGBB` 生成 StyleVault 1.0 预设; 授权后自动应用(需先装上游 StyleVault) |
-| `batch-archive`          | 维护中 | 会话只能一个个归档                       | 侧边栏底部「批量归档」按钮 + 面板:勾选/全选多个会话一键归档(两次点击确认)                              |
-| `tool-vision`            | 已归档 | DeepSeek 模型不支持图片输入              | 本地识图工具,把图片交给本地视觉模型(llama-server / LM Studio / Ollama)描述                             |
-| `paste-image`            | 已归档 | 粘贴图片发送会被"当前模型不支持图片"拒绝 | 粘贴瞬间把图片落盘成文件,路径写入草稿,配合 `tool-vision` 实现看图                                      |
+| 插件                     | 状态   | 解决什么问题                             | 一句话说明                                                                                                                           |
+| ------------------------ | ------ | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `ds-balance`             | 维护中 | 官方状态栏看不到余额和用量               | stats 行下方加第二行:余额 + 今日/本月 token,每 5 分钟刷新                                                                            |
+| `file-git-explorer`      | 维护中 | 看不到 git 状态、GUI 里没有终端          | 官方右侧栏「git 页签」(变更列表 + 提交历史)+ 详情悬浮面板(官方正文 / diff)+ 终端抽屉(真 PTY)                                         |
+| `db-console`             | 维护中 | GUI 里没有数据库客户端                   | 会话头部「数据库」页签:PG 完整链接登录(按项目保存)、schema 树、SQL 补全高亮、结果网格                                                |
+| `deepseek-harness`       | 维护中 | 想要粒子鲸鱼背景                         | 蓝色粒子鲸鱼(DeepSeek 品牌蓝)默认开启,沿用官方明/暗/系统主题;`?dshtest=1` 隐藏式诊断面板                                             |
+| `stylevault-localchrome` | 维护中 | 想用本机 Chrome 配色当 DSH 主题          | 读本机 Chrome 用户色, 解码成 `#RRGGBB` 生成 StyleVault 1.0 预设; 授权后自动应用(需先装上游 StyleVault)                               |
+| `batch-archive`          | 维护中 | 会话只能一个个归档                       | 侧边栏底部「批量归档」按钮 + 面板:勾选/全选多个会话一键归档(两次点击确认)                                                            |
+| `browser-operator`       | 维护中 | 复现 Web bug 时没有可控的浏览器          | 纯 host 插件:9 个 `browser_*` 工具 + 一个常驻有头浏览器会话(独立 profile、登录态复用、与日常浏览器并存);挂进「浏览器操作」agent 预设 |
+| `tool-vision`            | 已归档 | DeepSeek 模型不支持图片输入              | 本地识图工具,把图片交给本地视觉模型(llama-server / LM Studio / Ollama)描述                                                           |
+| `paste-image`            | 已归档 | 粘贴图片发送会被"当前模型不支持图片"拒绝 | 粘贴瞬间把图片落盘成文件,路径写入草稿,配合 `tool-vision` 实现看图                                                                    |
 
 > ⚠️ `tool-vision` 与 `paste-image` 已**归档**:源码移到 `plugins/obsolete/`,不再维护、
 > 不再列入默认安装,仅保留以便参考。其余插件为当前维护中。
+
+> `browser-operator` 是**纯 host 插件**,挂载方式和上面几个**不一样**:它没有 client 半、
+> 不发布服务,所以**不用** `dsh plugin --profile web add link:`,而是把一行加进
+> **agent preset** 的 `agent.cordis.yml`(见下方对应章节)。
 
 ## 效果展示
 
@@ -49,6 +54,9 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/batch-archive
 
 > `tool-vision` 与 `paste-image` 已**归档**(`plugins/obsolete/`),不再列入默认安装;
 > 如需装旧版,安装 / 挂载命令见下文对应章节。
+
+> `browser-operator` **不在这条安装命令里** —— 它是纯 host 插件,挂进 **agent preset**
+> 而不是 profile。用法见下文「`browser-operator` —— 常驻可见浏览器」。
 
 > 更新插件:`git pull` 后重跑同一条安装命令;只改 `lib/client.js` 时刷新浏览器即可,
 > 改 `lib/index.js` 才需要重启 DSH。
@@ -234,6 +242,51 @@ composer 座下方的终端抽屉。**文件树回归官方**,本插件不接管
 - 只读本机 `Preferences` 的 `browser.theme.user_color`, 主题引擎与设置面板指向上游, 本插件不实现。
 
 详见 `plugins/stylevault-localchrome/README.md`。
+
+### browser-operator —— 常驻可见浏览器(挂进 agent preset,不走 profile)
+
+复现 / 定位 / 验证 Web bug 用的**常驻、有头、跨轮次**浏览器会话。它不是 profile bundle,
+而是挂进 **agent preset**:一个会话能做什么工具由 preset 决定,这个插件就是「浏览器操作」
+那个 preset 的全部理由。
+
+- **挂载**:先在插件目录装一次依赖(只有一个 `playwright-core`;浏览器用系统已装的 Chrome,
+  **不下载**任何浏览器二进制):
+
+  ```sh
+  pnpm --dir <repo-abs-path>/plugins/browser-operator install
+  ```
+
+  再把一行加进 preset 的 `agent.cordis.yml`(完整可粘贴的行见
+  `plugins/browser-operator/cordis.yml`):
+
+  ```yaml
+  - id: browser-operator
+    name: <repo-abs-path>/plugins/browser-operator/lib/index.js
+    config:
+      browser: chrome
+      headless: false
+  ```
+
+  `name` 写**绝对路径**即可 —— preset 的 `name` 只要是绝对路径,roster 就会把它转成
+  `file:` URL 直接 import,因此**不需要**装进 profile。改 `lib/index.js` 要**重启 DSH**
+  (host 侧插件不走浏览器热更)。
+
+- **与日常浏览器并存**:Playwright 用 `launchPersistentContext` + `channel: 'chrome'`,
+  带**独立 profile** 拉起一个**新进程**,所以不需要 `--remote-debugging-port` —— 同时绕开
+  「Chrome 拒绝在默认 profile 上开调试端口」和「同安装间带调试参数的启动被单例转发」
+  两条坑;**也从不调用 `taskkill`**。实测日常 Chrome 开着 16 个进程时,会话拉起 / 操作 / 关闭
+  前后 `chrome.exe` 进程数一进一出完全相等。
+- **登录态长期复用**:profile 落在 `$DSH_HOME/browser-operator/profile`;首次在**那个可见窗口**
+  里人工登录一次(SSO / 验证码不做自动化),之后跨轮次、跨 dsh 重启都在。
+- **9 个工具**:`browser_navigate`、`browser_snapshot`、`browser_click`、`browser_fill`、
+  `browser_eval`、`browser_screenshot`、`browser_console`、`browser_network`、`browser_artifacts`。
+- **产物目录不脏仓库**:截图等产物优先落进项目**已经 ignore** 的目录(`logs/`、`output/`、
+  `tmp/`、`scripts/`、`test-results/`、`playwright-report/` …)下的 `browser-operator/` 子目录;
+  仓库里找不到就退到 `$DSH_HOME/browser-operator/<session-id>`,**绝不**往仓库写没被 ignore 的
+  东西。判定以 `git check-ignore` 为准;`browser_artifacts` 会报告当前用的是哪个目录、以及为什么。
+  同一套规则也写进了预设人设,模型不会自己去手写路径。
+
+详见 `plugins/browser-operator/README.md`。
 
 ## 常见问题速查
 
