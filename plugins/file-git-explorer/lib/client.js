@@ -694,6 +694,12 @@ window.__ModuleLoader__.load({
           '.fge-copy:hover{color:var(--dsw-alias-label-primary);background:rgba(128,128,128,.18)}',
           '.fge-copy[data-s="done"]{color:#3fa34d}',
           '.fge-copy[data-s="failed"]{color:#d9534f}',
+          // 详情标题里的**文件名**: 点一下复制它自己(见 DocName)。
+          // ⚠ 不动文字(不换成"已复制") —— 那样就看不见自己点的是哪个文件了, 只**染一下色**当反馈。
+          '.fge-doc-name{cursor:pointer;border-radius:3px;padding:0 2px;margin:0 -2px}',
+          '.fge-doc-name:hover{background:rgba(128,128,128,.18)}',
+          '.fge-doc-name[data-s="done"]{color:#3fa34d}',
+          '.fge-doc-name[data-s="failed"]{color:#d9534f}',
           // 终端抽屉: 座位在 composer 之下(conversation.composer.dock), **宽度贯穿整个座位**,
           // 顶部两角圆角; 颜色全走主题 token(--dsw-alias-*), 不写死蓝/黑, 于是明暗主题都跟得上。
           //
@@ -834,6 +840,11 @@ window.__ModuleLoader__.load({
           //    真到了全屏, 那个按钮(退出全屏)还在, 不会把人关在全屏里出不来。
           '[data-dockkit-split-button]{display:none}',
           '[data-sidebar-right-mode="fullscreen"]{display:none}',
+          // 3) 详情页签 / 浮窗头部的标题: 官方那层 `[data-dockkit-tab-title]` 把宽度卡得很死 —— 在**半屏宽的
+          //    浮窗头部**明明有地方, 文件名也经常被截成 "…"。这里放开上限、让它吃掉能拿到的宽度;
+          //    真的没地方时仍由官方那层的 ellipsis 收尾(我们只是不再**提前**截断)。
+          //    只影响标题**内部**的宽度分配, 不动页签本身的宽度 —— 页签条里还有别的格子时不会被挤走。
+          '[data-dockkit-tab-title]{max-width:none!important;min-width:0;flex:1 1 auto}',
         ].join('\n');
         document.head.appendChild(el);
       }
@@ -1327,8 +1338,67 @@ window.__ModuleLoader__.load({
             kind: primitives.classifyFileType(title),
             size: 16,
           }),
-          title,
+          h(DocName, { name: title }),
           h(FileCopyButton, { address: address, sessionId: sessionId }),
+        );
+      }
+
+      /**
+       * 标题里的**文件名**(用户口径: "点击文件名的时候自动复制")。
+       *
+       * - 复制的就是**文件名本身** —— 点的是什么就复制什么; 路径另有出处(地址在 `title` 属性上,
+       *   内容复制走旁边那枚「复制内容」芯片)。
+       * - ⚠ **不吃掉这次点击**(不 `preventDefault` / 不 `stopPropagation`): 这个标题**同时出现在
+       *   页签条与浮窗头部**(见 DocTitle 的注释), 在页签条里让点击继续走到官方那层去"选中这个页签"
+       *   才是对的 —— 复制只是搭个便车。
+       * - 反馈沿用仓库既有的 `data-s`(done / failed, 1.2s), 只**染一下色**: 把文件名换成"已复制"
+       *   会让人看不见自己点的是哪个文件。
+       */
+      function DocName(props) {
+        var name = props.name;
+        var pair = React.useState('idle');
+        var state = pair[0];
+        var setState = pair[1];
+
+        React.useEffect(
+          function () {
+            if (state === 'idle') return undefined;
+            var timer = window.setTimeout(function () {
+              setState('idle');
+            }, 1200);
+            return function () {
+              window.clearTimeout(timer);
+            };
+          },
+          [state],
+        );
+
+        function onClick() {
+          if (typeof name !== 'string' || name === '') return;
+          try {
+            Promise.resolve(primitives.writeClipboard(name))
+              .then(function (ok) {
+                setState(ok === false ? 'failed' : 'done');
+              })
+              .catch(function (err) {
+                console.warn('[fge] 复制文件名失败', err);
+                setState('failed');
+              });
+          } catch (err) {
+            console.warn('[fge] 复制文件名失败', err);
+            setState('failed');
+          }
+        }
+
+        return h(
+          'span',
+          {
+            className: 'fge-doc-name',
+            'data-s': state,
+            title: '点击复制文件名',
+            onClick: onClick,
+          },
+          name,
         );
       }
 

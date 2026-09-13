@@ -1744,6 +1744,43 @@ check('fge: Alt+Ctrl+R 刷新 git 树(与 ⟳ 同一条)+ 打开抽屉自动聚�
     );
 });
 
+check('fge: 详情标题加长 + 文件名点击复制', () => {
+    const source = readFileSync(join(ROOT, 'plugins/file-git-explorer/lib/client.js'), 'utf8');
+
+    // —— 标题加长: 官方那层把宽度卡得很死, 在**半屏宽的浮窗头部**文件名也被截成 "…" ——
+    // 插件用属性选择器放开它(与 §11 隐藏官方 chrome 按钮同一套手法), 只动标题内部的宽度分配。
+    assert.match(
+        source,
+        /'\[data-dockkit-tab-title\]\{max-width:none!important;min-width:0;flex:1 1 auto\}'/,
+        '要放开 [data-dockkit-tab-title] 的宽度上限(否则文件名在浮窗里也截断)',
+    );
+
+    // —— 文件名点击复制 ——
+    // 复制的必须是**文件名本身**; 而且**不许吃掉这次点击**: 这个标题同时出现在页签条与浮窗头部,
+    // 在页签条里点击还要继续走到官方那层去"选中这个页签"。
+    assert.match(
+        source,
+        /h\(DocName, \{ name: title \}\)/,
+        '标题里的文件名要走 DocName(不是裸字符串)',
+    );
+    const fnAt = source.indexOf('function DocName(props)');
+    assert.ok(fnAt > 0, '应有 DocName');
+    const body = source.slice(fnAt, source.indexOf('function FileCopyButton(', fnAt));
+    assert.match(body, /primitives\.writeClipboard\(name\)/, '点击要复制**文件名**');
+    assert.ok(
+        !/stopPropagation|preventDefault/.test(body),
+        '不许吃掉这次点击 —— 页签条里那一下还要用来选中页签(复制只是搭便车)',
+    );
+    assert.match(body, /className: 'fge-doc-name'/, '要有自己的类名(样式与护栏都按它找)');
+    assert.match(body, /'data-s': state/, '反馈沿用 data-s = done / failed');
+    assert.match(body, /setState\(ok === false \? 'failed' : 'done'\)/, '写入失败要能反馈(failed)');
+    assert.match(
+        source,
+        /\.fge-doc-name\[data-s="done"\]\{color:#3fa34d\}/,
+        '成功反馈只染色, 不换文字(换成"已复制"就看不见自己点的是哪个文件了)',
+    );
+});
+
 console.log('');
 if (failures.length > 0) {
     console.error('client bundle 装配: ' + String(failures.length) + ' 项失败');
