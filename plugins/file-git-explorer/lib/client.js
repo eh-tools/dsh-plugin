@@ -319,6 +319,35 @@ window.__ModuleLoader__.load({
       return next;
     }
 
+    /** git 数据快照的**新鲜窗口**(毫秒): 窗口内切会话**一个请求都不发**(见 gitDataDecision)。 */
+    var GIT_DATA_FRESH_MS = 30 * 1000;
+
+    /**
+     * 工作区键: 归一化 cwd —— 反斜杠折成 `/`、去掉尾斜杠、Windows 盘符与 UNC 折大小写,
+     * 于是 `E:\a\b\` 与 `e:/a/b` 是同一个工作区。空 / 非字符串返回 null(= 没有工作区, 不缓存也不复用)。
+     */
+    function workspaceKey(cwd) {
+      if (typeof cwd !== 'string') return null;
+      var key = cwd.trim().replace(/\\/g, '/').replace(/\/+$/, '');
+      if (key === '') return null;
+      var foldable = /^[A-Za-z]:/.test(key) || key.slice(0, 2) === '//';
+      return foldable ? key.toLowerCase() : key;
+    }
+
+    /**
+     * 挂载 / 切会话时该怎么对待这份**工作区快照** —— 纯函数, 离线护栏直接跑它
+     * (出口见 `exports.__gitDataDecision`)。三选一:
+     *   `'skip'`       同工作区且快照还新鲜: 一个请求都不发, 快照原样铺上屏;
+     *   `'revalidate'` 同工作区但快照旧了: 先把快照铺上屏, 再在后台重取一次(不白屏、不等待);
+     *   `'load'`       没有这个工作区的快照(或工作区还不知道): 按老规矩从头取。
+     */
+    function gitDataDecision(snapshot, sessionCwd, now, freshMs) {
+      var key = workspaceKey(sessionCwd);
+      if (key === null) return 'load'; // 工作区还不知道: 不能拿别的仓库的数据顶上
+      if (snapshot === undefined || snapshot === null) return 'load';
+      if (workspaceKey(snapshot.cwd) !== key) return 'load';
+      return now - snapshot.at < freshMs ? 'skip' : 'revalidate';
+    }
 
     /**
      * 「最后一行有内容」的**纯逻辑**: 从 `from` 往上找第一行有文字的行号(全是空行给 `-1`)。
@@ -564,13 +593,25 @@ window.__ModuleLoader__.load({
           //   · 展开的**提交说明自己那条滚动条保留**(`.fge-msg-text`), 那是"该滚的那一条"。
           //   两行都写: `scrollbar-width` 管标准属性, `::-webkit-scrollbar` 管 Chromium 当下的那条路
           //   (官方 CSS 把 `scrollbar-width` 藏在 `@supports not selector(::-webkit-scrollbar)` 里)。
-          '.fge-pane{min-height:0;overflow:auto;scrollbar-width:none;padding:0 0 6px}',
+          // ⚠ **上栏不留底部内边距**: 它原来有 `padding:0 0 6px`, 与下面那条 5px 拖柄叠起来就是**两栏
+          //   之间一块约 11px 的空白带** —— 两栏底色都透出面板底色, 于是那一带看着就是"缺口"
+          //   (用户口径: "fge-grip 导致两栏之间背景色不一致, 有空隙")。留白只留给**下栏最底缘**
+          //   (见 `.fge-pane-bottom`), 夹在两栏中间的那一份彻底去掉。
+          '.fge-pane{min-height:0;overflow:auto;scrollbar-width:none;padding:0}',
           '.fge-pane::-webkit-scrollbar{display:none}',
-          '.fge-pane-bottom{flex:1 1 auto}',
-          // ⚠ 与终端抽屉的上缘拖柄**同一口径**: 没有 hover 底色 —— 它同样是一整条 5px 通宽横带, 一亮就是
+          '.fge-pane-bottom{flex:1 1 auto;padding:0 0 6px}',
+          // ⚠ 与终端抽屉的上缘拖柄**同一口径**: 没有 hover 底色 —— 它同样是一整条通宽横带, 一亮就是
           //   一整条; 而这条正好夹在两块长得很像的列表之间, 变色会被读成"这一条跟别处不是一个颜色",
           //   不是"提示"。可拖的提示一样交给 `cursor:ns-resize`, 底色常驻 `transparent`。
-          '.fge-grip{flex:0 0 auto;box-sizing:border-box;height:5px;cursor:ns-resize;border-top:1px solid var(--dsw-alias-border-l3);background:transparent}',
+          //
+          // ⚠ 布局高度 = **1px**(就是那条分界线本身), 热区交给伪元素压上去 —— 5px 的实体盒子会在
+          //   两栏之间再占出 4px 空隙, 正是上面那条要消掉的东西。热区仍是 5px(线 + 线上方 4px),
+          //   与原来那条 5px 实体拖柄**一样好拖**, 只是不再撑出空隙。
+          // ⚠ 必须 `z-index:2`: 两个 sticky 标题栏都是 `z-index:1`, 不压过它们, 热区在线那一带会被
+          //   下栏的标题栏抢走(实测 elementFromPoint 命中 fge-section)—— 拖柄有一半按不动。
+          //   热区**不向下越线**: 下栏顶上那几 px 留给标题栏, 免得连滚轮翻页都被吃掉。
+          '.fge-grip{flex:0 0 auto;box-sizing:border-box;height:1px;position:relative;z-index:2;cursor:ns-resize;border-top:1px solid var(--dsw-alias-border-l3);background:transparent}',
+          '.fge-grip::after{content:"";position:absolute;left:0;right:0;top:-4px;height:5px}',
           // 标题栏(上下两栏各一条): **不透明**的实色横条 + 下边一条 `.5px` 细线 ——
           // 官方的真 sticky 分组头(model-selection 的 groupTitle)就是这个配方
           // (`sticky/top:0/z-index:1`, 12px/500, label-tertiary, padding 5px 8px 3px)。
@@ -2217,8 +2258,26 @@ window.__ModuleLoader__.load({
         }
       }
 
-      /** 按会话缓存的 git 页签视图状态(见 GitTabBody 顶部注释)。 */
+      /**
+       * 按**会话**缓存的 git 页签**视图状态** —— 只记「你看到哪儿了」, 不装 git 数据本体:
+       * `{cwd, viewedRef, focused, splitBefore, msgOpen}`。重挂 / 切回来时靠它恢复(见 §10)。
+       */
       var gitViews = new Map();
+
+      /**
+       * git **数据**快照, 按**工作区**缓存: 键 = `workspaceKey(cwd)`, 值 = `{cwd, info, status, history, at}`。
+       *
+       * ⚠ 「数据」与「视图状态」分成两份, 是这一步修的东西: 两者原来一起挂在**会话 id** 上, 于是
+       *   "同一个工作区、换个会话"被当成全新工作区, 从头 `info → status → log` 再读一遍 —— 面板先白成
+       *   「读取中… / 读取历史…」再回填, 用户看到的就是"切个会话又要等它读一遍"(实测: 每次切换固定
+       *   三条请求 200–730ms)。同一个工作区的两个会话看的是**同一个仓库**, 数据本来就该共享;
+       *   真正该按会话分的只有上面那份"你看到哪儿了"。
+       *
+       * `history` 只收**当前分支第一页**(`history.ref === null`): 切回来时 `viewedRef` 会被重置成 `''`,
+       *   只有这一页与它对得上; 看过别的分支的历史只留在那个会话自己的视图里, 不进快照。
+       */
+      var gitData = new Map();
+
 
       /**
        * 「从聚焦提交返回列表」的回调: 只在聚焦态叠着时才有值(GitTabBody 每次渲染写一次)。
@@ -2362,9 +2421,14 @@ window.__ModuleLoader__.load({
        *
        * ⚠ 本组件**会被卸载重挂**: dockkit 只渲染活动页签的页签体, 而点文件打开的 diff 页签会成为
        * 活动页签, 于是 git 页签体被卸载; diff 页签浮起后离开页签条, git 页签又成为活动页签、重新挂载。
+       * **切会话也是重挂** —— 每个会话的右栏页签是各自的一份, 所以这一步挂在会话 id 上就会重来一遍。
        * 状态若只放组件里, 就会出现"点一下文件, 历史列表闪一下、你正看的那条被顶掉"(实测复现)。
-       * 所以 info / status / 查看分支 / 历史 / **聚焦态 / 列表滚动位置 / 分栏比例 / 说明展开态**都按
-       * 会话 + 工作区缓存在模块级 Map 里, 重挂时恢复, 并且**同一工作区的重挂不重新拉取**(不闪)。
+       *
+       * 于是模块级放**两份**缓存, 按两种不同的东西分:
+       *   · `gitViews`(键 = **会话 id**)—— **视图状态**: 查看分支 / 聚焦态 / 列表滚动位置 / 分栏比例 /
+       *     说明展开态。这些是"你看到哪儿了", 换会话本来就该各看各的;
+       *   · `gitData`(键 = **工作区**)—— **数据**: info / status / 历史首页。同一个工作区的两个会话
+       *     看的是同一个仓库, 没有理由各存一份、更没有理由切一次就重读一次(见下面 mount effect)。
        */
       function GitTabBody(props) {
         var useTabInfo = props.useTabInfo;
@@ -2377,16 +2441,18 @@ window.__ModuleLoader__.load({
         var sessionCwd = useSessionCwd(useSessions, sessionId);
         var running = useSessionRunning(useSessions, sessionId);
 
-        // 只有"同一个工作区"的缓存可以直接复用; 换工作区必须重来。
+        // 视图状态按**会话**复用(同一个工作区的重挂 / 切回来都还在); 数据按**工作区**取(见 gitData)。
         var viewKey = sessionId || '(no-session)';
         var cachedView = gitViews.get(viewKey);
         var restored =
           cachedView !== undefined && cachedView.cwd === sessionCwd ? cachedView : null;
+        var dataKey = workspaceKey(sessionCwd);
+        var snapshot = dataKey === null ? undefined : gitData.get(dataKey);
 
-        var infoPair = React.useState(restored === null ? null : restored.info);
+        var infoPair = React.useState(snapshot === undefined ? null : snapshot.info);
         var info = infoPair[0];
         var setInfo = infoPair[1];
-        var statusPair = React.useState(restored === null ? null : restored.status);
+        var statusPair = React.useState(snapshot === undefined ? null : snapshot.status);
         var status = statusPair[0];
         var setStatus = statusPair[1];
         var errorPair = React.useState(null);
@@ -2398,7 +2464,7 @@ window.__ModuleLoader__.load({
         var refPair = React.useState(restored === null ? '' : restored.viewedRef);
         var viewedRef = refPair[0];
         var setViewedRef = refPair[1];
-        var histPair = React.useState(restored === null ? null : restored.history);
+        var histPair = React.useState(snapshot === undefined ? null : snapshot.history);
         var history = histPair[0];
         var setHistory = histPair[1];
         // 聚焦提交: null = 下栏是提交历史列表; 否则下栏整栏只有这一条(见 focusCommit)。
@@ -2467,11 +2533,12 @@ window.__ModuleLoader__.load({
 
         /**
          * 最近一次 info/status 得到的根, 供各次 git 调用复用(避免把 status 塞进所有依赖)。
-         * 重挂时直接从缓存里恢复 —— 否则刚挂载就点文件会带着空的 repoRoot 去请求。
+         * 重挂时直接从工作区快照里恢复 —— 否则刚挂载就点文件会带着空的 repoRoot 去请求。
          */
         var repoRef = React.useRef({
-          root: restored !== null && restored.info !== null ? restored.info.cwd : null,
-          repoRoot: restored !== null && restored.status !== null ? restored.status.repoRoot : null,
+          root: snapshot === undefined || snapshot.info === null ? null : snapshot.info.cwd,
+          repoRoot:
+            snapshot === undefined || snapshot.status === null ? null : snapshot.status.repoRoot,
         });
         var handlers = React.useRef({});
 
@@ -2593,30 +2660,61 @@ window.__ModuleLoader__.load({
           };
         });
 
+        /**
+         * 工作区数据快照落盘: 只有 **info + status + 当前分支第一页历史**都齐了才写。
+         * `history.ref` 必须是 null(见 gitData 的注释): 看过别的分支的历史不进快照。
+         *
+         * ⚠ 只在数据**真的换了对象**时才推进 `at`: `gitData.set` 每次渲染都跑, 若无条件刷新时间戳,
+         *   一次重渲染(开个分支浮窗、拖一下拖柄)就会把"新鲜窗口"一直往后推, 快照永远不过期。
+         */
+        function publishGitData() {
+          if (info === null || status === null || history === null) return;
+          if (history.loading === true || history.error != null) return;
+          if (history.ref !== null && history.ref !== '') return;
+          var key = workspaceKey(info.cwd);
+          if (key === null) return;
+          var prev = gitData.get(key);
+          if (prev !== undefined && prev.status === status && prev.history === history) return;
+          gitData.set(key, {
+            cwd: info.cwd,
+            info: info,
+            status: status,
+            history: history,
+            at: Date.now(),
+          });
+        }
+
         // 视图状态回写缓存(每次渲染后都写)。重挂时就是靠它恢复的。
         React.useEffect(function () {
           gitViews.set(viewKey, {
             cwd: sessionCwd,
-            info: info,
-            status: status,
             viewedRef: viewedRef,
-            history: history,
             focused: focused,
             splitBefore: splitBefore,
             msgOpen: msgOpen,
           });
+          publishGitData();
         });
 
         React.useEffect(
           function () {
-            // 同一工作区的重挂(例如点文件开了 diff 页签又回来): 从缓存恢复, 既不清状态也不重新拉取。
+            // 同一会话的重挂(点文件开了 diff 页签又回来): 视图状态与数据都还在, 什么都不做、不重新拉取。
             if (restored !== null) return;
             setViewedRef('');
             setFocused(null);
             setSplitBefore(null);
             setMsgOpen({});
-            setHistory(null);
-            closeOwnedFloat(); // 切工作区: 详情悬浮面板关掉
+            closeOwnedFloat(); // 切会话 / 切工作区: 详情悬浮面板关掉
+            // 数据按**工作区**复用 —— 这一条就是"同工作区切会话不再等一遍"的地方:
+            //   还新鲜 → 一个请求都不发(快照已经在屏上了);
+            //   旧了   → 快照照样铺在屏上, 后台再取一次, 取到就地回填(不白屏、不阻塞);
+            //   没快照 → 从头取(下栏先回到「读取历史…」, 与老行为一致)。
+            var decision = gitDataDecision(snapshot, sessionCwd, Date.now(), GIT_DATA_FRESH_MS);
+            // 屏上铺的要是**别的工作区**的数据(工作区在原地被换掉、组件没重挂), 那就不是"可以复用", 是"得换掉"。
+            var shownKey = info === null ? null : workspaceKey(info.cwd);
+            if (shownKey !== null && shownKey !== dataKey) decision = 'load';
+            if (decision === 'skip') return;
+            if (decision === 'load') setHistory(null);
             handlers.current.reload();
           },
           [sessionCwd],
@@ -3735,6 +3833,7 @@ window.__ModuleLoader__.load({
             closeOwnedFloat();
             diffs.clear();
             gitViews.clear();
+            gitData.clear();
             seededSessions.clear();
           };
         },
@@ -3753,6 +3852,13 @@ window.__ModuleLoader__.load({
     exports.__terminalPalette = terminalPalette;
     /** 右栏页签左右切换的下标计算 —— 离线护栏验它的**不环绕**语义(见 §14)。 */
     exports.__tabNeighbor = tabNeighbor;
+    /**
+     * git 数据的复用判据 —— 离线护栏直接跑它: 同工作区切会话**不许**再发一遍请求
+     * (「加载过慢」那条 bug 的回归锁, 见 §10 与上面 gitData 的注释)。
+     */
+    exports.__gitDataDecision = gitDataDecision;
+    /** 工作区键的归一化 —— 与判据配套验(盘符 / 尾斜杠 / 大小写 / 反斜杠)。 */
+    exports.__workspaceKey = workspaceKey;
     /**
      * 终端选区**尾巴收敛**的两个纯函数(见 §13): 找"最后一行有内容" + 把尾巴收到那行。
      * 离线护栏直接拿假行数据跑 —— 这条 bug("拖到空白区, 复制出一堆空行")就是它们兜住的。

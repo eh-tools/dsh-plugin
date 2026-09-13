@@ -103,6 +103,75 @@ function makeDocumentStub(overrides = {}) {
 }
 
 /**
+ * 一个**只带 hooks 语义、不画 UI** 的最小 React —— 给"组件级"的离线回归用。
+ *
+ * 真渲染(`react-dom`)与真 DOM 由浏览器里那段负责; 这里要验的是**挂载决策**:
+ * 同一个工作区换个会话把组件挂第二遍时, 它到底还发不发 git 请求。那取决于 `useState` 的**初值**
+ * 与那条 mount effect, 不取决于 DOM —— 所以够用的 hook 语义足矣, 多写了反而是自欺。
+ *
+ * 语义: hook 顺序稳定(每次渲染从 0 数)、状态 / ref 跨渲染保持、effect 按依赖数组决定跑不跑
+ * (无依赖数组 = 每次渲染都跑, 挂载必跑)。`remount()` = 换一个组件实例(旧实例的状态不回来),
+ * 正是「切会话」在 hook 层的样子。
+ */
+function makeHookReact() {
+    const hooks = [];
+    let cursor = 0;
+    let queued = [];
+    const react = {
+        createElement: (type, props, ...children) => ({ type, props: props || {}, children }),
+        useState: (init) => {
+            const at = cursor++;
+            if (!(at in hooks)) hooks[at] = typeof init === 'function' ? init() : init;
+            const set = (value) => {
+                hooks[at] = typeof value === 'function' ? value(hooks[at]) : value;
+            };
+            return [hooks[at], set];
+        },
+        useRef: (init) => {
+            const at = cursor++;
+            if (!(at in hooks)) hooks[at] = { current: init };
+            return hooks[at];
+        },
+        useMemo: (fn) => fn(),
+        useCallback: (fn) => fn(),
+        useEffect: (fn, deps) => {
+            const at = cursor++;
+            const prev = hooks[at];
+            const same =
+                prev !== undefined &&
+                prev.deps !== undefined &&
+                deps !== undefined &&
+                deps.length === prev.deps.length &&
+                deps.every((dep, i) => Object.is(dep, prev.deps[i]));
+            hooks[at] = { deps: deps === undefined ? undefined : deps.slice() };
+            if (!same) queued.push(fn);
+        },
+        useLayoutEffect: (...args) => react.useEffect(...args),
+        /** 渲染一次: 重置 hook 游标, 并收下这次要跑的 effect(由调用方 flush)。 */
+        render(component, props) {
+            cursor = 0;
+            queued = [];
+            const tree = component(props);
+            return { tree, effects: queued };
+        },
+        /** 换一个组件实例(卸载重挂) —— hook 清零。 */
+        remount() {
+            hooks.length = 0;
+        },
+    };
+    return react;
+}
+
+/** 把一棵 `createElement` 树里的**文本子节点**收成一个串(断言"屏上有什么"用)。 */
+function treeText(node) {
+    if (node === null || node === undefined || node === true || node === false) return '';
+    if (typeof node === 'string' || typeof node === 'number') return String(node);
+    if (Array.isArray(node)) return node.map(treeText).join('');
+    if (typeof node === 'object' && Array.isArray(node.children)) return treeText(node.children);
+    return '';
+}
+
+/**
  * 在 stub 环境里加载一个 client bundle 并执行 apply()。
  * @param {string} relPath bundle 相对仓库根的路径
  * @param {object} [options] 需要更真的环境时给的覆盖项:
@@ -315,6 +384,210 @@ const OFFICIAL_TEXT_ID = '@deepseek-ai/dsh-client-ui-sidebar-documentpreview';
         }
     });
 }
+
+// ---- fge: 同一个工作区切会话**不许**再读一遍 git(§10 回归锁) ----
+//
+// 复现的 bug: 数据快照原先与"视图状态"一起挂在**会话 id** 上, 于是同一个工作区换个会话就被当成
+// 全新工作区, `info → status → log` 又走一遍(真 boot 实测: 每次切换固定这三条, 200–730ms),
+// 面板先白成「读取中… / 读取历史…」再回填 —— 使用者口径就是"切个会话又要等它读一遍"。
+//
+// 判据(纯函数)与**真实组件**各验一遍: 前者锁规则, 后者锁"组件真的按这条规则在跑"
+// (把 `gitDataDecision` 退回"同工作区也永远重新取"的旧规则, 这一条立刻变红)。
+
+{
+    const b = loadBundle('plugins/file-git-explorer/lib/client.js');
+
+    check('fge: 工作区键归一化(盘符 / 反斜杠 / 尾斜杠 / 大小写)', () => {
+        const key = b.exports.__workspaceKey;
+        assert.equal(typeof key, 'function', 'bundle 应导出 __workspaceKey');
+        assert.equal(key('E:\\repo\\'), 'e:/repo', '盘符折大小写、反斜杠折 /、去掉尾斜杠');
+        assert.equal(key('e:/repo'), key('E:\\repo\\'), '同一目录的不同写法是同一个工作区');
+        assert.equal(key('//server/share/Repo/'), '//server/share/repo');
+        assert.equal(key('/home/u/repo/'), '/home/u/repo', '非盘符路径不折大小写');
+        assert.equal(key('/home/u/REPO'), '/home/u/REPO', 'POSIX 大小写敏感, 不许折');
+        assert.equal(key(''), null, '空 = 没有工作区');
+        assert.equal(key('   '), null);
+        assert.equal(key(undefined), null);
+        assert.equal(key(null), null);
+    });
+
+    check('fge: 复用判据 —— 同工作区新鲜则 skip, 旧了 revalidate, 别的仓库 load', () => {
+        const decide = b.exports.__gitDataDecision;
+        assert.equal(typeof decide, 'function', 'bundle 应导出 __gitDataDecision');
+        const snap = { cwd: 'E:\\repo', at: 1000 };
+        assert.equal(
+            decide(snap, 'E:\\repo', 1000 + 29_000, 30_000),
+            'skip',
+            '同工作区 + 新鲜 → skip',
+        );
+        assert.equal(
+            decide(snap, 'e:/repo', 1000 + 1, 30_000),
+            'skip',
+            '同一目录的另一种写法也算同工作区',
+        );
+        assert.equal(
+            decide(snap, 'E:\\repo', 1000 + 31_000, 30_000),
+            'revalidate',
+            '同工作区但旧了 → 快照照铺, 后台重取',
+        );
+        assert.equal(decide(snap, 'E:\\other', 1000 + 1, 30_000), 'load', '换工作区 → 从头取');
+        assert.equal(decide(undefined, 'E:\\repo', 1000, 30_000), 'load', '没有快照 → 从头取');
+        assert.equal(
+            decide(snap, null, 1000, 30_000),
+            'load',
+            '工作区还不知道 → 从头取, 不许拿别的仓库的数据顶上',
+        );
+        assert.equal(decide(snap, '', 1000, 30_000), 'load', '空 cwd 同上');
+    });
+
+    check('fge: 上下两栏之间只剩那条 1px 分界线(拖柄不再撑出空隙)', () => {
+        // 直接看**注入出去的 CSS**(与终端那几条同款手法): 这几条是字符串拼出来的, 读源码文本会被拼法绕过去。
+        const styles = [];
+        loadBundle('plugins/file-git-explorer/lib/client.js', {
+            documentOverrides: {
+                getElementById: () => null,
+                createElement: (tag) =>
+                    tag === 'style'
+                        ? { id: '', textContent: '', setAttribute: () => {}, appendChild: () => {} }
+                        : { style: {}, setAttribute: () => {}, appendChild: () => {} },
+                head: { appendChild: (el) => styles.push(String(el.textContent || '')) },
+            },
+        });
+        const css = styles.join('\n');
+        const rule = (selector) => {
+            const at = css.indexOf(selector + '{');
+            assert.ok(at >= 0, '应注入 ' + selector + ' 规则');
+            return css.slice(at + selector.length + 1, css.indexOf('}', at));
+        };
+        // 用户报的"空隙": 上栏 `padding-bottom:6px` + 5px 实体拖柄 = 两栏之间约 11px 的空白带。
+        assert.ok(
+            !/(^|;)\s*padding[^;]*6px/.test(rule('.fge-pane')),
+            '上栏不许再留底部内边距 —— 那 6px 与拖柄叠起来就是两栏之间那块空白带',
+        );
+        assert.match(rule('.fge-pane-bottom'), /padding:0 0 6px/, '留白只留给下栏最底缘');
+        // 拖柄 = 那条分界线本身: 布局高度 1px, 热区由伪元素压上去(不再占出 4px 空隙)。
+        assert.match(rule('.fge-grip'), /height:1px/, '拖柄布局高度必须是 1px(就是那条分界线)');
+        assert.match(
+            rule('.fge-grip'),
+            /z-index:2/,
+            '热区要压过 sticky 标题栏的 z-index:1, 否则线那一带会被标题栏抢走、按不动',
+        );
+        assert.match(
+            rule('.fge-grip::after'),
+            /top:-4px/,
+            '热区交给 ::after 压上去, 不许再用实体盒子占高度',
+        );
+        assert.match(
+            rule('.fge-grip::after'),
+            /height:5px/,
+            '热区仍是 5px, 与原来那条实体拖柄一样好拖',
+        );
+    });
+}
+
+await checkAsync('fge: 同工作区切会话 —— 第二个会话一次 git 请求都不发, 数据直接上屏', async () => {
+    const CWD = 'E:\\repo';
+    const responses = {
+        info: { ok: true, cwd: CWD, repoRoot: CWD },
+        status: {
+            ok: true,
+            repoRoot: CWD,
+            current: 'main',
+            head: 'head-1',
+            upstream: null,
+            ahead: 0,
+            behind: 0,
+            initial: false,
+            detached: false,
+            branches: [],
+            changes: [{ path: 'a.txt', badge: 'M' }],
+        },
+        log: {
+            ok: true,
+            repoRoot: CWD,
+            ref: null,
+            head: 'head-1',
+            commits: [
+                { hash: 'c0ffee', short: 'c0ffe', author: 'ann', at: 1, subject: '工作区里的提交' },
+            ],
+        },
+    };
+    const calls = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+        const method = String(url).slice(String(url).lastIndexOf('/') + 1);
+        calls.push(method);
+        return { ok: true, status: 200, json: async () => responses[method] };
+    };
+    /** 让出足够多拍, 把 fetch 的整条 promise 链(info → status → log)跑完。 */
+    const settle = async () => {
+        for (let i = 0; i < 8; i += 1) await Promise.resolve();
+        await new Promise((resolve) => setImmediate(resolve));
+    };
+    try {
+        const react = makeHookReact();
+        const b = loadBundle('plugins/file-git-explorer/lib/client.js', {
+            requireOverrides: {
+                react,
+                // git 页签体只用到这两个官方 hook 与两个图标; 它们与本回归无关, 给空实现即可。
+                '@deepseek-ai/dsh-client-ui-primitives': {
+                    useAnchoredPosition: () => null,
+                    useDismissOnOutsidePointer: () => {},
+                    IconBranchOutline16: () => null,
+                    IconChevronDownOutline14: () => null,
+                },
+            },
+        });
+        const git = b.slots.find(
+            (s) =>
+                s.options.name === 'sidebar.right.pane.tab' &&
+                s.options.key === 'dsh-file-git-explorer/git',
+        );
+        assert.ok(git !== undefined, 'git 页签体应注册在 sidebar.right.pane.tab');
+        /** 会话快照: 两个会话 id, **同一个工作区**(这就是复现条件)。 */
+        const propsFor = (id) => ({
+            sessionId: id,
+            useTabInfo: () => ({
+                tab: {
+                    id: 'tab-git',
+                    kind: 'fge-git',
+                    title: 'Git',
+                    visible: true,
+                    navigation: { revision: 1, params: {} },
+                },
+            }),
+            useSessions: (selector) =>
+                selector({ current: id, byId: { [id]: { cwd: CWD, running: false } } }),
+        });
+        const flush = (rendered) => {
+            for (const fn of rendered.effects) fn();
+        };
+
+        // 1) 第一个会话: 没有快照 ⇒ 老老实实 info → status → log。
+        flush(react.render(git.component, propsFor('session-a')));
+        await settle();
+        assert.deepEqual(calls, ['info', 'status', 'log'], '首次挂载应取一遍 git 数据');
+        // 真实 React 在 setState 后会重渲染; 这里手动重渲染一次, 让那份数据落进快照
+        // (落盘在"每次渲染后"的那条 effect 里)。
+        flush(react.render(git.component, propsFor('session-a')));
+
+        // 2) 第二个会话, **同一个工作区**: 一次请求都不该发, 数据直接上屏(不白、不等)。
+        const before = calls.length;
+        react.remount(); // 切会话 = 组件换实例
+        const second = react.render(git.component, propsFor('session-b'));
+        flush(second);
+        await settle();
+        assert.deepEqual(calls.slice(before), [], '同工作区切会话不得再发 git 请求');
+        const text = treeText(second.tree);
+        assert.ok(text.includes('变更列表'), '上栏标题应在屏上');
+        assert.ok(text.includes('a.txt'), '变更列表应直接是那份快照(不再等一次 status)');
+        assert.ok(text.includes('工作区里的提交'), '提交历史也应直接是快照里那一页');
+        assert.ok(!text.includes('读取中'), '快照在手时不该出现「读取中…」');
+        assert.ok(!text.includes('读取历史'), '快照在手时不该出现「读取历史…」');
+    } finally {
+        globalThis.fetch = realFetch;
+    }
+});
 
 // ---- fge: 详情浮起的两条硬约束(页签条"闪一下" / 右栏自己跳回 git 树) ----
 //
