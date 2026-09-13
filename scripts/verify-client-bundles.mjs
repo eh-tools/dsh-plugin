@@ -910,10 +910,10 @@ check(
             !/box-shadow/.test(tab[0]),
             '页签不得再用 1px 投影盖住 strip 的底边(用户要求这条线在页签下面也连续)',
         );
-        // 页签与 ■ 要落在**拖柄 + 标题条**这条带子的垂直中心(用户口径)。
+        // 页签与终止键要落在**拖柄 + 标题条**这条带子的垂直中心(用户口径)。
         // 做法: 条里 `align-items:center` + 下内边距比上边多 `拖柄高 - 分隔线高` —— 拖柄在条上面、
-        // 分隔线在条下面, 两者把带子的中心往上推了 2px, 用下内边距补回来。真机量过: 页签 / ■ / 带子
-        // 三者中心都在 19.5px(偏差 0)。
+        // 分隔线在条下面, 两者把带子的中心往上推了 2px, 用下内边距补回来。真机量过: 页签 / 终止键 /
+        // 带子三者中心都在 19.5px(偏差 0)。
         const strip = /\.fge-term-strip\{[^}]*\}/.exec(css);
         assert.ok(strip !== null, '应有 .fge-term-strip 规则');
         assert.match(strip[0], /align-items:center/, '标题条里要垂直居中(原来贴底 flex-end)');
@@ -941,7 +941,48 @@ check(
         );
         assert.ok(
             !/\.fge-term-glyph\{[^}]*margin-bottom/.test(css),
-            '■ 不再自己贴底(margin-bottom), 跟着条一起居中',
+            '终止键不再自己贴底(margin-bottom), 跟着条一起居中',
+        );
+        // 终止键里的图标必须是**官方 SVG**, 不许退回文字字形 `■`: 同一个码位在不同平台/字体回退下
+        // 大小与粗细都不一样(与刷新键那个 `⟳` 同一个毛病)。取色走 currentColor, 由 .fge-term-kill 给危险色。
+        const source = readFileSync(join(ROOT, 'plugins/file-git-explorer/lib/client.js'), 'utf8');
+        assert.match(
+            source,
+            /h\(primitives\.IconStopFill16, \{ size: 12 \}\)/,
+            '终止键要换成官方 SVG 图标 IconStopFill16(尺寸 12)',
+        );
+        assert.ok(!/'■'/.test(source), '终止键不许再退回文字字形 ■(注释里提历史可以, 字面量不行)');
+        assert.match(
+            css,
+            /\.fge-term-glyph\{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:18px;padding:0 4px\}/,
+            '图标按钮的盒子里不要再有 font-size/line-height(那是给文字字形的)',
+        );
+        // 开关的**尺寸全套取偶数**(盒子 18 与终止键一致 / 轨道 12 / 滑块 8 / 文字行盒 12)。
+        // 条里内容行高是奇数(页签 21px), 控件自己若是 17 / 轨道 13 / 行盒 11.5, 居中就落在 .5px 上 ——
+        // 相邻元素的**文字与几何各自吸到不同的半像素**, 用户看到的就是"文字和开关垂直没对齐"。
+        // 真机量: 修前 轨道 top=13.000 而文字行盒 top=13.750(不同相位); 修后两者都是 13.500 ✓
+        const switchRule = /\.fge-term-switch\{[^}]*\}/.exec(css);
+        assert.ok(switchRule !== null, '应有 .fge-term-switch 规则');
+        assert.match(switchRule[0], /height:18px/, '开关盒子高 18(与终止键一致, 居中不留半像素)');
+        assert.match(
+            css,
+            /\.fge-term-switch-track\{position:relative;flex:0 0 auto;width:24px;height:12px;border-radius:6px/,
+            '轨道 24×12、圆角 6(半高, 偶数)',
+        );
+        assert.match(
+            css,
+            /\.fge-term-switch-knob\{position:absolute;top:2px;left:2px;width:8px;height:8px;border-radius:50%/,
+            '滑块 8×8、四角整数留 2px',
+        );
+        assert.match(
+            css,
+            /\.fge-term-switch\[aria-checked="true"\] \.fge-term-switch-knob\{left:14px\}/,
+            '开的滑块位置 = 24−8−2 = 14(整数 px, 不做百分比)',
+        );
+        assert.match(
+            css,
+            /\.fge-term-switch-label\{white-space:nowrap;line-height:12px\}/,
+            '文字行盒 12px(偶数且与轨道同高) —— 它和轨道共一条中心线、同一个像素相位',
         );
         // xterm 自带滚动条 14px 且宽高是内联样式, 必须 !important 收到 6px。
         assert.match(
@@ -955,7 +996,6 @@ check(
             '滑块要跟着轨道收窄(否则滑块比轨道宽)',
         );
         // 终端里的复制: 选中即复制(终端不吃系统复制快捷键 —— Ctrl+C 必须留给 SIGINT, 所以拖选后靠 mouseup)。
-        const source = readFileSync(join(ROOT, 'plugins/file-git-explorer/lib/client.js'), 'utf8');
         assert.match(source, /attachCustomKeyEventHandler/, '终端要挂自定义键处理(Alt+C 复制)');
         assert.match(source, /ev\.altKey/, 'Alt+C 复制要判 Alt 修饰键');
         assert.ok(

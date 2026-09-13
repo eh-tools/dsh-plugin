@@ -750,25 +750,33 @@ window.__ModuleLoader__.load({
           '.fge-term-tab-close{flex:0 0 auto;display:none;align-items:center;justify-content:center;width:14px;height:14px;padding:0;border:0;border-radius:3px;background:transparent;color:inherit;font-size:11px;line-height:1;cursor:pointer}',
           '.fge-term-tab:hover .fge-term-tab-close,.fge-term-tab-close:focus-visible{display:inline-flex}',
           '.fge-term-tab-close:hover{background:var(--dsw-alias-interactive-bg-hover)}',
-          // 条右端的 `■`: 终止整棵终端进程树(危险色) —— 人停止终端的唯一入口, 与 `×`(收起)分开。
+          // 条右端的 `■` 位: 终止整棵终端进程树(危险色) —— 人停止终端的唯一入口, 与 `×`(收起)分开。
           // ⚠ 它原来跟着页签一起**贴底**(`margin-bottom:3px`); 页签改成在带子里垂直居中之后, 这里就交给
           //   `align-items:center` 一起居中, 两边不再各算各的。
-          '.fge-term-glyph{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:18px;padding:0 4px;font-size:14px;line-height:1}',
+          // ⚠ 里的图标已换成**官方 SVG**(`IconStopFill16`, 原来是文字字形 `■`), 所以这里不再需要
+          //   `font-size` / `line-height` —— 盒子高 18 与开关一致, 条里两项同一相位。
+          '.fge-term-glyph{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:18px;padding:0 4px}',
           '.fge-term-kill{color:var(--dsw-alias-state-error-primary)}',
           '.fge-term-kill:hover{color:var(--dsw-alias-state-error-primary);background:var(--dsw-alias-interactive-bg-hover-danger)}',
           // 条右端的「选中即复制」开关(用户口径: 做成开关放在 strip 右侧)。
           // ⚠ 它长在**整条可点即收起**的标题条里, 所以它的 onClick 必须 stopPropagation —— 否则一按开关
           //   就把抽屉收起来。hover 底色与 `×` / `■` 同款, 提示"这是个控件, 不是条的一部分"。
-          '.fge-term-switch{display:flex;flex:0 0 auto;align-items:center;gap:5px;padding:2px 5px;border:0;border-radius:4px;background:transparent;color:var(--dsw-alias-label-secondary);font-size:11.5px;line-height:1;cursor:pointer}',
+          // ⚠ 尺寸**全套取偶数**(盒子 18 与终止键一致、轨道 12、滑块 8、文字行盒 12): 条里内容行高是奇数
+          //   (页签 21px), 控件自己若是 17 / 轨道 13 / 行盒 11.5, 居中就会落在 .5px 上 —— 相邻元素的
+          //   **文字与几何各自吸到不同的半像素**, 看着就是"文字和开关垂直没对齐"。全取偶数后,
+          //   盒子落在 .5px 时内部每一项仍是整数, 文字与轨道共一条中心线、同一个像素相位。
+          '.fge-term-switch{display:flex;flex:0 0 auto;align-items:center;gap:5px;height:18px;padding:0 5px;border:0;border-radius:4px;background:transparent;color:var(--dsw-alias-label-secondary);font-size:11.5px;line-height:1;cursor:pointer}',
           '.fge-term-switch:hover{background:var(--dsw-alias-interactive-bg-hover)}',
           '.fge-term-switch:focus-visible{outline:1px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
           // 轨道 + 滑块: 自己画的(primitives 里没有开关组件, 与 `>_` / `■` 同款做法, 不引依赖)。
           // 关 = 边框色轨道, 开 = 品牌色轨道(active 态用品牌色是本仓库既有口径)。
-          '.fge-term-switch-track{position:relative;flex:0 0 auto;width:24px;height:13px;border-radius:7px;background:var(--dsw-alias-border-l2);transition:background-color .12s}',
-          '.fge-term-switch-knob{position:absolute;top:2px;left:2px;width:9px;height:9px;border-radius:50%;background:var(--dsw-alias-bg-base,#fff);transition:left .12s}',
+          '.fge-term-switch-track{position:relative;flex:0 0 auto;width:24px;height:12px;border-radius:6px;background:var(--dsw-alias-border-l2);transition:background-color .12s}',
+          '.fge-term-switch-knob{position:absolute;top:2px;left:2px;width:8px;height:8px;border-radius:50%;background:var(--dsw-alias-bg-base,#fff);transition:left .12s}',
           '.fge-term-switch[aria-checked="true"] .fge-term-switch-track{background:var(--dsw-alias-brand-primary)}',
-          '.fge-term-switch[aria-checked="true"] .fge-term-switch-knob{left:13px}',
-          '.fge-term-switch-label{white-space:nowrap}',
+          // 开的滑块位置 = 轨道宽 − 滑块宽 − 左边距 = 24 − 8 − 2 = 14(全是整数 px, 不做百分比计算, 免得又落半像素)
+          '.fge-term-switch[aria-checked="true"] .fge-term-switch-knob{left:14px}',
+          // 文字行盒取 12px(偶数, 且与轨道同高): 它跟轨道**共一条中心线**, 谁也不会多出半个像素。
+          '.fge-term-switch-label{white-space:nowrap;line-height:12px}',
           // ⚠ 拖柄**没有 hover 底色**(用户口径: "想拉伸抽屉时鼠标 hover 到边缘, 看到这条的底色跟旁边不一样") ——
           //   它是一整条 5px 通宽的横带, 一亮就是一整条, 在抽屉边缘上非常扎眼。
           //   可拖的提示交给 `cursor:ns-resize`(悬停时指针就变了), 这里保持完全透明。
@@ -3566,7 +3574,10 @@ window.__ModuleLoader__.load({
                   if (root !== '') killTerminal(root);
                 },
               },
-              '■',
+              // `■` 原来是个**文字字形**: 同一个码位在不同平台/字体回退下大小与粗细都不一样
+              // (与刷新键那个 `⟳` 同一个毛病), 换成官方 SVG 图标 —— `IconStopFill16` 是实心方块,
+              // 语义与 `■` 完全一致, 取色走 `currentColor`(危险色由 .fge-term-kill 给)。
+              h(primitives.IconStopFill16, { size: 12 }),
             ),
           ),
           h(
