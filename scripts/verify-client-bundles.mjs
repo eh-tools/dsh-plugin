@@ -535,6 +535,8 @@ await checkAsync('fge: 同工作区切会话 —— 第二个会话一次 git �
                     useDismissOnOutsidePointer: () => {},
                     IconBranchOutline16: () => null,
                     IconChevronDownOutline14: () => null,
+                    // worktree 切换器的图标: 列表空时那条按钮不渲染, 但补上免得这个 stub 变成隐式契约。
+                    IconFolderOpenOutline16: () => null,
                 },
             },
         });
@@ -563,10 +565,16 @@ await checkAsync('fge: 同工作区切会话 —— 第二个会话一次 git �
             for (const fn of rendered.effects) fn();
         };
 
-        // 1) 第一个会话: 没有快照 ⇒ 老老实实 info → status → log。
+        // 1) 第一个会话: 没有快照 ⇒ 老老实实 info → status → log, 最后再补一条 worktrees。
+        //    ⚠ worktrees 是**工作区数据的一部分**(切换器的列表), 所以它跟在同一轮加载的尾巴上、
+        //      也进同一份快照 —— 正因为进了快照, 下面"第二个会话零请求"才照样成立。
         flush(react.render(git.component, propsFor('session-a')));
         await settle();
-        assert.deepEqual(calls, ['info', 'status', 'log'], '首次挂载应取一遍 git 数据');
+        assert.deepEqual(
+            calls,
+            ['info', 'status', 'log', 'worktrees'],
+            '首次挂载应取一遍 git 数据(外加切换器那份 worktree 列表)',
+        );
         // 真实 React 在 setState 后会重渲染; 这里手动重渲染一次, 让那份数据落进快照
         // (落盘在"每次渲染后"的那条 effect 里)。
         flush(react.render(git.component, propsFor('session-a')));
@@ -1944,6 +1952,56 @@ check('fge: 详情浮窗 Alt+滚轮 = 横向滚动', () => {
         body,
         /window\.removeEventListener\('wheel', onWheel, \{ capture: true \}\)/,
         '卸载要摘干净',
+    );
+});
+
+check('fge: worktree 切换器(主仓 / 各 worktree)', () => {
+    const source = readFileSync(join(ROOT, 'plugins/file-git-explorer/lib/client.js'), 'utf8');
+    const host = readFileSync(join(ROOT, 'plugins/file-git-explorer/lib/index.js'), 'utf8');
+    const lib = readFileSync(join(ROOT, 'plugins/file-git-explorer/lib/git.js'), 'utf8');
+
+    // host: 一条专用路由 + 可离线测的纯解析函数(夹具在 tests/git.test.mjs)。
+    assert.match(host, /worktrees:\s*handleWorktrees/, 'host 要注册 /fge/api/worktrees');
+    assert.match(
+        host,
+        /\['worktree', 'list', '--porcelain'\]/,
+        '列工作区只能靠 `git worktree list`(不能由客户端报路径)',
+    );
+    assert.match(lib, /export function parseWorktreeList\(/, '解析器要是纯函数(离线可测)');
+
+    // client: **只有 git 数据**跟着选中的 worktree 走(终端仍旧拿会话的 root), 且列表走专用路由。
+    assert.match(
+        source,
+        /var dataRoot = worktreePath \|\| sessionCwd;/,
+        'git 数据根 = 选中的 worktree, 否则会话工作区',
+    );
+    assert.match(
+        source,
+        /api\('info', dataRoot \? \{ root: dataRoot \} : \{\}\)/,
+        '取数据要把这个根带上',
+    );
+    assert.match(source, /api\('worktrees', \{ root: reqRoot \}\)/, '列表走专用路由');
+    assert.match(
+        source,
+        /workspaceKey\(res\.repoRoot\) !== workspaceKey\(worktreePath\)/,
+        'worktree 被删 / prune 之后必须能识别出来并回落(否则按钮写着它、数据其实是主仓)',
+    );
+    assert.match(source, /setWorktreePath\(null\)/, '回落 = 清掉选中项');
+    assert.match(source, /function pickWorktree\(entry\)/, '要有切换函数');
+    assert.match(source, /className: 'fge-wt'/, '按钮要有自己的类名(样式与护栏都按它找)');
+    assert.match(
+        source,
+        /var wtVisible = worktreePath !== null \|\| wtEntries\.length > 1;/,
+        '平时不占位置: 只有仓库里存在别的 worktree 才露出按钮',
+    );
+    assert.match(
+        source,
+        /worktree: worktreePath,/,
+        '选中项按会话记(与 viewedRef 同款存进 gitViews)',
+    );
+    assert.ok(
+        !/'\.fge-wt\{[^}]*flex:1/.test(source),
+        '切换器按钮不许也是弹性项 —— 弹性项只能有一个(分支那颗)',
     );
 });
 
