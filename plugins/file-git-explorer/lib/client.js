@@ -687,8 +687,10 @@ window.__ModuleLoader__.load({
           '.fge-numstat{flex:0 0 auto;display:flex;gap:6px;align-items:baseline;font-size:11px;font-variant-numeric:tabular-nums}',
           // diff 悬浮面板的正文: 官方 FloatLayer 的 body 自己会滚, 这里只管排布与留白。
           '.fge-diff{padding:6px 8px 10px}',
-          // diff 页签的芯片文字: 只做截断, 版式交给 dockkit 的页签壳。
-          '.fge-chip-label{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:22em}',
+          // diff 页签的芯片文字: 截断交给官方那层(它有 min-width:0 + overflow:hidden + mask 渐隐)。
+          // ⚠ **不再自己钉 `max-width:22em`**: 浮窗是半屏宽, 22em(≈253px)会在有地方的时候先把路径截掉 ——
+          //   与"文件名显示不全"是同一个病。页签条里它照样被官方那层的宽度挤着, 不会溢出。
+          '.fge-chip-label{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
           // 影子芯片上的「复制内容」: 只占一枚小图标, 不吃掉页签的点击。
           '.fge-copy{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;padding:0;border:0;border-radius:4px;background:transparent;color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));cursor:pointer}',
           '.fge-copy:hover{color:var(--dsw-alias-label-primary);background:rgba(128,128,128,.18)}',
@@ -840,11 +842,16 @@ window.__ModuleLoader__.load({
           //    真到了全屏, 那个按钮(退出全屏)还在, 不会把人关在全屏里出不来。
           '[data-dockkit-split-button]{display:none}',
           '[data-sidebar-right-mode="fullscreen"]{display:none}',
-          // 3) 详情页签 / 浮窗头部的标题: 官方那层 `[data-dockkit-tab-title]` 把宽度卡得很死 —— 在**半屏宽的
-          //    浮窗头部**明明有地方, 文件名也经常被截成 "…"。这里放开上限、让它吃掉能拿到的宽度;
-          //    真的没地方时仍由官方那层的 ellipsis 收尾(我们只是不再**提前**截断)。
-          //    只影响标题**内部**的宽度分配, 不动页签本身的宽度 —— 页签条里还有别的格子时不会被挤走。
-          '[data-dockkit-tab-title]{max-width:none!important;min-width:0;flex:1 1 auto}',
+          // 3) 详情(浮窗)头部的**页签宽度** —— "文件名经常显示不全"的真因在这里, 不在标题上:
+          //    官方给页签钉的是 `min-width:80px; max-width:170px`(`._tab_17p4l_156`), 而**浮窗头部那个标题
+          //    就是同一个页签元素**(只是多挂了一个 `_floatTitle_` 变体, 见 `._float_17p4l_306`) ——
+          //    于是半屏宽的浮窗里, 文件名可用宽度也只有 **170px**。
+          //    ⚠ 标题自己(`[data-dockkit-tab-title]`)本来就没有 max-width(`flex:1 1 auto; min-width:0;
+          //      overflow:hidden` + 裁切时加 `mask-image`), 所以**改它是空操作** —— 这条踩过。
+          //    ⚠ 只放开**浮窗里**那一个: 页签条上那两格还靠官方这套 80/170 维持版式, 不动。
+          //    ⚠ 选择器用的是类名里的**可读段**(`_floatTitle_`)而不是 hash —— hash 每次构建都变;
+          //      真要改名了这条会静默失效(护栏里有断言盯这句存在)。
+          '[data-dockkit-tab][class*="_floatTitle_"]{max-width:none!important}',
         ].join('\n');
         document.head.appendChild(el);
       }
@@ -1573,7 +1580,9 @@ window.__ModuleLoader__.load({
         );
 
         var label = found.detail && found.detail.path ? found.detail.path : 'diff';
-        return h('span', { className: 'fge-chip-label', title: label }, label);
+        // 路径也走 click-to-copy(用户口径"点击文件名的时候自动复制"): diff 详情里显示的就是**路径**,
+        // 所以复制的就是它 —— 点的是什么就复制什么。
+        return h('span', { className: 'fge-chip-label', title: label }, h(DocName, { name: label }));
       }
 
       function DiffTabBody(props) {

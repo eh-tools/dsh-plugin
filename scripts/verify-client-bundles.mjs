@@ -1747,13 +1747,25 @@ check('fge: Alt+Ctrl+R 刷新 git 树(与 ⟳ 同一条)+ 打开抽屉自动聚�
 check('fge: 详情标题加长 + 文件名点击复制', () => {
     const source = readFileSync(join(ROOT, 'plugins/file-git-explorer/lib/client.js'), 'utf8');
 
-    // —— 标题加长: 官方那层把宽度卡得很死, 在**半屏宽的浮窗头部**文件名也被截成 "…" ——
-    // 插件用属性选择器放开它(与 §11 隐藏官方 chrome 按钮同一套手法), 只动标题内部的宽度分配。
+    // —— 详情标题的宽度: 真因是页面签被官方钉死, 不是标题 ——
+    // 官方 `._tab_…{min-width:80px;max-width:170px}`; 浮窗头部那个标题**就是同一个页签元素**
+    // (多挂 `_floatTitle_` 变体), 所以半屏宽的浮窗里文件名也只有 170px。
+    // ⚠ 标题自己(`[data-dockkit-tab-title]`)没有 max-width —— 第一版改它是**空操作**, 这里留一道反向锁。
     assert.match(
         source,
-        /'\[data-dockkit-tab-title\]\{max-width:none!important;min-width:0;flex:1 1 auto\}'/,
-        '要放开 [data-dockkit-tab-title] 的宽度上限(否则文件名在浮窗里也截断)',
+        /'\[data-dockkit-tab\]\[class\*="_floatTitle_"\]\{max-width:none!important\}'/,
+        '要放开**浮窗里**那个页签的 max-width(=170px), 这才是文件名被截的真因',
     );
+    assert.ok(
+        !/\{max-width:none!important;min-width:0;flex:1 1 auto\}/.test(source),
+        '标题元素本来就没有 max-width, 别再给它加那条空操作(真因在页签上)',
+    );
+    assert.match(
+        source,
+        /\.fge-chip-label\{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap\}/,
+        'diff 芯片也不许自己钉 max-width(22em)—— 浮窗有地方时它会把路径先截掉',
+    );
+    assert.ok(!/\.fge-chip-label\{[^}]*max-width/.test(source), '同样的病不要在另一条路径上留着');
 
     // —— 文件名点击复制 ——
     // 复制的必须是**文件名本身**; 而且**不许吃掉这次点击**: 这个标题同时出现在页签条与浮窗头部,
@@ -1761,7 +1773,12 @@ check('fge: 详情标题加长 + 文件名点击复制', () => {
     assert.match(
         source,
         /h\(DocName, \{ name: title \}\)/,
-        '标题里的文件名要走 DocName(不是裸字符串)',
+        '影子页签(文档详情)里的文件名要走 DocName(不是裸字符串)',
+    );
+    assert.match(
+        source,
+        /h\('span', \{ className: 'fge-chip-label', title: label \}, h\(DocName, \{ name: label \}\)\)/,
+        'diff 详情那条路径(显示的是路径)也要能给点击复制',
     );
     const fnAt = source.indexOf('function DocName(props)');
     assert.ok(fnAt > 0, '应有 DocName');
