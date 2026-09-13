@@ -390,6 +390,44 @@ function makeEnv({
     console.log('8 usage/amount(userToken) → today matched by UTC date ok');
 }
 
+// 9. DSH_DS_BALANCE_DEMO=1: 固定假快照, 不读凭证、不联网
+//    (回归: 伪造的 dsh web 演示环境 base URL 必然非官方, 那一行会被整行隐藏)
+{
+    process.env.DSH_DS_BALANCE_DEMO = '1';
+    try {
+        const call = makeEnv();
+        let fetched = 0;
+        globalThis.fetch = async () => {
+            fetched += 1;
+            throw new Error('demo mode must not touch the network');
+        };
+        const r = await call();
+        if (!r.ok) throw new Error('expected ok');
+        if (r.demo !== true) throw new Error('expected demo=true');
+        if (r.official !== true) throw new Error('expected official=true');
+        if (r.hasToken !== true) throw new Error('expected hasToken=true');
+        if (r.total !== 31.93) throw new Error('total != 31.93, got ' + r.total);
+        if (r.usage === null) throw new Error('expected usage');
+        if (r.usage.today.requests !== 954)
+            throw new Error('today.requests != 954, got ' + r.usage.today.requests);
+        if (r.usage.month.requests !== 27158)
+            throw new Error('month.requests != 27158, got ' + r.usage.month.requests);
+        if (fetched !== 0) throw new Error('demo mode fetched ' + fetched + ' time(s)');
+        console.log('9 DSH_DS_BALANCE_DEMO=1 → fixed snapshot, no credential, no fetch ok');
+    } finally {
+        delete process.env.DSH_DS_BALANCE_DEMO;
+    }
+}
+
+// 10. 演示开关默认关闭: 同一环境走真实路径, 数值来自 mock 响应而非演示快照
+{
+    const call = makeEnv();
+    const r = await call();
+    if (r.demo !== undefined) throw new Error('demo flag leaked into the real path');
+    if (r.total !== 68.64) throw new Error('real path total != 68.64, got ' + r.total);
+    console.log('10 demo off by default → real balance path unchanged ok');
+}
+
 console.log('\nALL HOST LOGIC CHECKS PASSED');
 
 globalThis.fetch = originalFetch;

@@ -67,6 +67,20 @@ DEEPSEEK_USER_TOKEN: <上面复制的 userToken>
 >
 > 返回 `data.biz_data.days[]` 即成功;`code: 40002/40003` 说明 token 已过期。
 
+### 演示模式(截图用,非真实数据)
+
+`DSH_DS_BALANCE_DEMO=1` 时,host 半直接返回一份**固定的**快照:不解析任何凭证、
+不发起任何网络请求,数值(余额 ¥31.93、今日 954 次、本月 27158 次)全部是写死的
+假数据。默认关闭,真实环境行为完全不受影响。
+
+存在的唯一理由是"非官方 API 不显示"那条规则:伪造的 dsh web 演示环境把
+`DEEPSEEK_BASE_URL` 指向本地 mock 端点,主机必然不是 `api.deepseek.com`,第二行
+会被整行挡掉——而演示截图需要那一行。**请不要在真实使用中打开它。**
+
+```bash
+DSH_DS_BALANCE_DEMO=1 dsh web
+```
+
 ### 界面内获取 token(浏览器一键登录)
 
 插件检测到官方 API 且未配置 `DEEPSEEK_USER_TOKEN` 时,第二行出现"浏览器登录"入口:
@@ -105,13 +119,13 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/ds-balance
 
 ## 文件
 
-| 文件               | 内容                                                                                                                                                                                                                                                                                                                         |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `lib/index.js`     | **Host 半(静态)** — 解析 `DEEPSEEK_API_KEY` / `DEEPSEEK_USER_TOKEN`(credentials 服务), curl 请求余额 + 用量接口(`usage/amount`, userToken 认证), 经 `ctx.webServer` 暴露 `POST /ds-balance/api/{query,open-login,browser-login,login-status}`;带 60s 缓存 + 并发去重;非官方 host 判定;密钥走显式 env opt-in, 不进进程 argv。 |
-| `lib/client.js`    | **Client 半(静态 bundle)** — 注册 `conversation.composer.dock` 的独立 `ds-balance` 单元格(order:1, 排在官方 stats 之下);非官方/无 key 时整行不渲染;`fetch` 调 host 路由(替代动态的 `host.call`)。                                                                                                                            |
-| `package.json`     | npm 包声明(`dsh.bundle.patch` + `dsh.client`)                                                                                                                                                                                                                                                                                |
-| `cordis.patch.yml` | 挂载层(profile boot 时自动合并)                                                                                                                                                                                                                                                                                              |
-| `manifest.json`    | kind / files / install, 供重建使用                                                                                                                                                                                                                                                                                           |
+| 文件               | 内容                                                                                                                                                                                                                                                                                                                                                                              |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lib/index.js`     | **Host 半(静态)** — 解析 `DEEPSEEK_API_KEY` / `DEEPSEEK_USER_TOKEN`(credentials 服务), curl 请求余额 + 用量接口(`usage/amount`, userToken 认证), 经 `ctx.webServer` 暴露 `POST /ds-balance/api/{query,open-login,browser-login,login-status}`;带 60s 缓存 + 并发去重;非官方 host 判定;密钥走显式 env opt-in, 不进进程 argv;`DSH_DS_BALANCE_DEMO=1` 走固定假快照(见「演示模式」)。 |
+| `lib/client.js`    | **Client 半(静态 bundle)** — 注册 `conversation.composer.dock` 的独立 `ds-balance` 单元格(order:1, 排在官方 stats 之下);非官方/无 key 时整行不渲染;`fetch` 调 host 路由(替代动态的 `host.call`)。                                                                                                                                                                                 |
+| `package.json`     | npm 包声明(`dsh.bundle.patch` + `dsh.client`)                                                                                                                                                                                                                                                                                                                                     |
+| `cordis.patch.yml` | 挂载层(profile boot 时自动合并)                                                                                                                                                                                                                                                                                                                                                   |
+| `manifest.json`    | kind / files / install, 供重建使用                                                                                                                                                                                                                                                                                                                                                |
 
 ## 备注
 
