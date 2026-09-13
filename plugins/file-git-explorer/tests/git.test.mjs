@@ -28,7 +28,41 @@ import {
     parseNumStatZ,
     parentsFromRevList,
     parseDiffHunks,
+    parseWorktreeList,
 } from '../lib/git.js';
+
+// ---- worktree 夹具: Windows git 2.53.0 的 `worktree list --porcelain` 真实输出(原样抄录) ----
+
+/** 主仓 + 一个 worktree(最常见形态)。 */
+const WORKTREES_TWO = [
+    'worktree E:/dev-tools/claude-space/dsh-plugin',
+    'HEAD be817b6a10dcf086f301409e1c3838b4d3b50201',
+    'branch refs/heads/main',
+    '',
+    'worktree E:/dev-tools/claude-space/dsh-plugin/.worktrees/fge-worktree-switch',
+    'HEAD be817b6a10dcf086f301409e1c3838b4d3b50201',
+    'branch refs/heads/feat/fge-worktree-switch',
+    '',
+    '',
+].join('\n');
+
+/** 全变体: 分离 HEAD、prunable(目录被删, 行尾还带一句原因)、locked。 */
+const WORKTREES_VARIANTS = [
+    'worktree E:/repo',
+    'HEAD be817b6a10dcf086f301409e1c3838b4d3b50201',
+    'branch refs/heads/main',
+    '',
+    'worktree E:/repo/.worktrees/probe-detached',
+    'HEAD be817b6a10dcf086f301409e1c3838b4d3b50201',
+    'detached',
+    'prunable gitdir file points to non-existent location',
+    '',
+    'worktree E:/repo/.worktrees/probe-locked',
+    'HEAD be817b6a10dcf086f301409e1c3838b4d3b50201',
+    'branch refs/heads/probe/locked',
+    'locked',
+    '',
+].join('\n');
 
 // ---- 夹具: 与真实输出逐字节一致(以 NUL 连接, 末尾保留 git 的收尾 NUL) ----
 
@@ -579,4 +613,53 @@ test('parseDiffHunks: 每个 hunk 的行数与 @@ 头声明的增删数一致', 
             );
         });
     }
+});
+
+test('parseWorktreeList: 主仓 + worktree(真实夹具)', () => {
+    const entries = parseWorktreeList(WORKTREES_TWO);
+    assert.equal(entries.length, 2);
+    // git 保证主工作区排第一 ⇒ 这就是"主仓"判据(first)。
+    assert.equal(entries[0].first, true);
+    assert.equal(entries[0].path, 'E:/dev-tools/claude-space/dsh-plugin');
+    assert.equal(entries[0].branch, 'main', 'refs/heads/ 前缀要去掉');
+    assert.equal(entries[0].head, 'be817b6a10dcf086f301409e1c3838b4d3b50201');
+    assert.equal(entries[0].detached, false);
+    assert.equal(entries[0].prunable, false);
+    assert.equal(entries[1].first, false);
+    assert.equal(
+        entries[1].path,
+        'E:/dev-tools/claude-space/dsh-plugin/.worktrees/fge-worktree-switch',
+    );
+    assert.equal(entries[1].branch, 'feat/fge-worktree-switch', '分支名里的斜杠不能被吃掉');
+});
+
+test('parseWorktreeList: detached / prunable(带原因) / locked', () => {
+    const entries = parseWorktreeList(WORKTREES_VARIANTS);
+    assert.equal(entries.length, 3);
+    // detached: 没有 branch 行, 只有 detached
+    assert.equal(entries[1].detached, true);
+    assert.equal(entries[1].branch, null);
+    // prunable 后面跟一句原因, 只认关键字
+    assert.equal(entries[1].prunable, true);
+    assert.equal(entries[2].branch, 'probe/locked');
+    assert.equal(entries[2].locked, true);
+    assert.equal(entries[2].prunable, false);
+});
+
+test('parseWorktreeList: 空输入 / 尾随空行 / 路径带空格', () => {
+    assert.deepEqual(parseWorktreeList(''), []);
+    assert.deepEqual(parseWorktreeList('\n\n'), []);
+    // 路径里有空格(甚至以 "worktree " 开头)也不能截错: `worktree ` 之后整行都是路径。
+    const spaced = parseWorktreeList(
+        ['worktree E:/my repo worktree', 'HEAD abc123', 'branch refs/heads/x', ''].join('\n'),
+    );
+    assert.equal(spaced.length, 1);
+    assert.equal(spaced[0].path, 'E:/my repo worktree');
+    // CRLF(Windows 上 git 也可能给 \r\n): 行尾 \r 不能混进路径
+    const crlf = parseWorktreeList(
+        ['worktree E:/repo', 'HEAD abc123', 'branch refs/heads/main', '', ''].join('\r\n'),
+    );
+    assert.equal(crlf.length, 1);
+    assert.equal(crlf[0].path, 'E:/repo');
+    assert.equal(crlf[0].branch, 'main');
 });

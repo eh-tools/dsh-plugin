@@ -577,6 +577,15 @@ window.__ModuleLoader__.load({
           '.fge-branch-item[data-viewed="1"]{color:var(--dsw-alias-brand-primary);font-weight:600}',
           '.fge-branch-sub{padding-left:16px}',
           '.fge-branch-mark{margin-left:auto;font-size:10px;color:var(--dsw-alias-label-tertiary)}',
+          // worktree 切换器(主仓 / 各 worktree): 触发按钮和分支那颗**共用菜单样式**,
+          // 但**不能也 flex:1** —— 弹性项只能有一个, 否则两者平分空白、分支按钮就长不到 ⟳ 前面。
+          // 所以这里 `flex:0 0 auto` + 自己的最大宽度; 菜单内部照旧用 .fge-branch-menu / -item / -group。
+          '.fge-wt{display:flex;align-items:center;gap:4px;flex:0 0 auto;max-width:11em;padding:2px 6px;border:0;border-radius:4px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;cursor:pointer}',
+          '.fge-wt:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
+          '.fge-wt[data-away="1"]{color:var(--dsw-alias-brand-primary)}',
+          '.fge-wt-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+          '.fge-wt-sub{margin-left:auto;font-size:10px;color:var(--dsw-alias-label-tertiary)}',
+          '.fge-branch-item[data-current="1"]{color:var(--dsw-alias-brand-primary);font-weight:600}',
           '.fge-ab{display:inline-flex;gap:4px;font-variant-numeric:tabular-nums;opacity:.85}',
           '.fge-spacer{flex:1 1 auto}',
           // git 页签正文 = **上下两栏**(上 = 变更列表 / 当前 diff, 默认 3/4; 下 = 提交历史),
@@ -2776,19 +2785,55 @@ window.__ModuleLoader__.load({
           branchMenuRef,
         );
 
-        // Esc 关小浮窗(焦点分流与终端一致: 终端里的 Esc 归终端)。
+        // ---- worktree 切换器(主仓 / 各 worktree) ----
+        //
+        // ⚠ 为什么需要它: git 页签的数据根是**会话的工作区**(DSH 的 workspace 就是那个目录, 不会因为
+        //   仓库里存在 worktree 就变), 而实际干活常常在 `.worktrees/<名字>` 里 —— 于是页签一直显示主仓
+        //   所在的 `main`。这里给一个显式选择: 选谁, 之后 status / log / diff 就都拿谁的路径当 `root`。
+        // ⚠ 选中的路径由 host 用 `git worktree list` 校验(见 handleWorktrees), 不是"客户端报什么信什么"。
+        // ⚠ 选中项**按会话记**(与 viewedRef 同款存进 gitViews): 视角属于会话, 数据属于仓库。
+        var wtPair = React.useState(restored === null ? null : restored.worktree || null);
+        var worktreePath = wtPair[0];
+        var setWorktreePath = wtPair[1];
+        // worktree 列表也是**工作区数据**: 重挂 / 同工作区切会话时直接从快照恢复,
+        // 于是"切会话零请求"那条承诺不受影响(见 reload 尾部的注释)。
+        var wtListPair = React.useState(
+          snapshot === undefined || !Array.isArray(snapshot.worktrees) ? [] : snapshot.worktrees,
+        );
+        var wtEntries = wtListPair[0];
+        var setWtEntries = wtListPair[1];
+        var wtMenuPair = React.useState(false);
+        var wtMenuOpen = wtMenuPair[0];
+        var setWtMenuOpen = wtMenuPair[1];
+        var wtAnchorRef = React.useRef(null);
+        var wtMenuRef = React.useRef(null);
+        var wtMenuPos = primitives.useAnchoredPosition({
+          open: wtMenuOpen,
+          anchorRef: wtAnchorRef,
+          panelRef: wtMenuRef,
+          side: 'bottom',
+          gap: 4,
+          margin: 8,
+        });
+        primitives.useDismissOnOutsidePointer(wtAnchorRef, wtMenuOpen, setWtMenuOpen, wtMenuRef);
+
+        // Esc 关小浮窗(焦点分流与终端一致: 终端里的 Esc 归终端)。两个浮窗一起管:
+        // 同时开着的情况极罕见, 但"按一下 Esc 只关一个、另一个还在"更让人困惑。
         React.useEffect(
           function () {
-            if (!menuOpen) return undefined;
+            if (!menuOpen && !wtMenuOpen) return undefined;
             function onKey(ev) {
-              if (ev.key === 'Escape') setMenuOpen(false);
+              if (ev.key === 'Escape') {
+                setMenuOpen(false);
+                setWtMenuOpen(false);
+              }
             }
             document.addEventListener('keydown', onKey, true);
             return function () {
               document.removeEventListener('keydown', onKey, true);
             };
           },
-          [menuOpen],
+          [menuOpen, wtMenuOpen],
         );
 
         /**
@@ -2803,11 +2848,39 @@ window.__ModuleLoader__.load({
         var handlers = React.useRef({});
 
         var root = sessionCwd || (info ? info.cwd : null);
+        /**
+         * git 数据要看的根: 选了 worktree 就是它, 否则是会话自己的工作区。
+         * ⚠ 只有 git 数据该跟着 worktree 走 —— 终端抽屉(`TerminalView`)仍然拿 `root`, 那是"会话的 shell"。
+         */
+        var dataRoot = worktreePath || sessionCwd;
+
+        /** 拉一份 worktree 列表(主仓 + 各 worktree)。列表里只有主仓时切换器不露面。 */
+        function loadWorktrees() {
+          var reqRoot = sessionCwd || (info ? info.cwd : null);
+          if (!reqRoot) {
+            setWtEntries([]);
+            return Promise.resolve(null);
+          }
+          return api('worktrees', { root: reqRoot })
+            .then(function (res) {
+              setWtEntries(res && res.ok === true && Array.isArray(res.entries) ? res.entries : []);
+              return res;
+            })
+            .catch(function () {
+              setWtEntries([]);
+              return null;
+            });
+        }
 
         function loadStatus() {
-          return api('info', sessionCwd ? { root: sessionCwd } : {})
+          return api('info', dataRoot ? { root: dataRoot } : {})
             .then(function (res) {
               if (!res || res.ok !== true) throw new Error((res && res.error) || 'info-failed');
+              // ⚠ 选中的 worktree 被删掉 / prune 之后, host 会从那个不存在的路径**向上**找到主仓 ——
+              //   这时必须把选中项清掉: 否则按钮写着 worktree 的名字, 屏上其实是主仓的数据。
+              if (worktreePath !== null && workspaceKey(res.repoRoot) !== workspaceKey(worktreePath)) {
+                setWorktreePath(null);
+              }
               setInfo(res);
               repoRef.current.root = res.cwd;
               return api('status', { root: res.cwd, repoRoot: res.repoRoot || undefined });
@@ -2876,12 +2949,39 @@ window.__ModuleLoader__.load({
             });
         }
 
-        /** 首次 / 切工作区: 重取 info → status, 再看一次历史首页。 */
+        /** 首次 / 切工作区 / 切 worktree: 重取 info → status, 再看一次历史首页。 */
         function reload() {
-          return loadStatus().then(function (stat) {
-            if (stat !== null) return loadHistory(viewedRef || null, 0);
-            return null;
-          });
+          return loadStatus()
+            .then(function (stat) {
+              if (stat !== null) return loadHistory(viewedRef || null, 0);
+              return null;
+            })
+            .then(function (done) {
+              // worktree 列表与这份数据同属"工作区" ⇒ 放在同一条链的尾部一起取、一起进快照。
+              // ⚠ 顺序上**必须**排在 git 数据之后: 它是切换器要用的, 不该插在 info/status/log 中间;
+              //   而"同工作区切会话零请求"那条承诺靠的是快照(snapshot.worktrees)而不是这条调用。
+              loadWorktrees();
+              return done;
+            });
+        }
+
+        /**
+         * 切到某个 worktree(`entry === null` / `entry.main` = 回主仓, 也就是会话自己的工作区)。
+         *
+         * ⚠ 必须**清掉属于上一份仓库的视图状态**: 查看中的分支、聚焦的提交换了仓库就不成立
+         *   (拿另一个仓库的 ref 去查历史只会报错); 详情浮层里的 diff 也是旧仓库的内容, 一并关掉。
+         */
+        function pickWorktree(entry) {
+          setWtMenuOpen(false);
+          var next = entry === null || entry.main === true ? null : entry.path;
+          if (workspaceKey(next) === workspaceKey(worktreePath)) return;
+          setViewedRef('');
+          setFocused(null);
+          setSplitBefore(null);
+          setMsgOpen({});
+          closeOwnedFloat();
+          setHistory(null);
+          setWorktreePath(next);
         }
 
         // 每次渲染都把最新闭包放进 ref, 供 effect / 延时回调取用(避免依赖数组抖动)。
@@ -2949,12 +3049,16 @@ window.__ModuleLoader__.load({
           var key = workspaceKey(info.cwd);
           if (key === null) return;
           var prev = gitData.get(key);
-          if (prev !== undefined && prev.status === status && prev.history === history) return;
+          if (prev !== undefined && prev.status === status && prev.history === history) {
+            // ⚠ 列表变了也要推进 at(否则"新开了 worktree"在新鲜窗口内永远不进快照)。
+            if (prev.worktrees === wtEntries) return;
+          }
           gitData.set(key, {
             cwd: info.cwd,
             info: info,
             status: status,
             history: history,
+            worktrees: wtEntries,
             at: Date.now(),
           });
         }
@@ -2963,6 +3067,7 @@ window.__ModuleLoader__.load({
         React.useEffect(function () {
           gitViews.set(viewKey, {
             cwd: sessionCwd,
+            worktree: worktreePath,
             viewedRef: viewedRef,
             focused: focused,
             splitBefore: splitBefore,
@@ -2993,6 +3098,26 @@ window.__ModuleLoader__.load({
             handlers.current.reload();
           },
           [sessionCwd],
+        );
+
+        // 切换 worktree → 重新取数据。⚠ 挂载那次**不重跑**(由上面那条 sessionCwd effect 负责),
+        // 所以用 ref 记住上一次的值: 否则每次挂载都白发一轮请求。
+        var prevWorktree = React.useRef(worktreePath);
+        React.useEffect(
+          function () {
+            if (prevWorktree.current === worktreePath) return;
+            prevWorktree.current = worktreePath;
+            handlers.current.reload();
+          },
+          [worktreePath],
+        );
+
+        // worktree 菜单一打开就**重取列表**: 新开的 worktree(比如刚 `just wt` 建的)要能立刻看到。
+        React.useEffect(
+          function () {
+            if (wtMenuOpen) loadWorktrees();
+          },
+          [wtMenuOpen],
         );
 
         // 自动刷新: 仅 turn 结束(true→false)触发, 1s 冷却。
@@ -3038,7 +3163,7 @@ window.__ModuleLoader__.load({
         function manualRefresh() {
           if (busy) return;
           setBusy(true);
-          var payload = sessionCwd ? { root: sessionCwd } : {};
+          var payload = dataRoot ? { root: dataRoot } : {};
           var timer = new Promise(function (resolve) {
             window.setTimeout(function () {
               resolve('timeout');
@@ -3058,9 +3183,9 @@ window.__ModuleLoader__.load({
             });
         }
 
-        /** 每次 git 调用都要带的根: repoRoot 由上一次 status 带回, root 是当前工作区。 */
+        /** 每次 git 调用都要带的根: repoRoot 由上一次 status 带回, root 是当前工作区(或选中的 worktree)。 */
         function gitPayload(extra) {
-          var payload = { root: root || undefined };
+          var payload = { root: dataRoot || undefined };
           if (repoRef.current.repoRoot) payload.repoRoot = repoRef.current.repoRoot;
           for (var key in extra) {
             if (Object.prototype.hasOwnProperty.call(extra, key)) payload[key] = extra[key];
@@ -3251,6 +3376,27 @@ window.__ModuleLoader__.load({
         var branchLabel =
           current || (detached ? '(分离 HEAD)' : status && status.initial ? '(无提交)' : '—');
 
+        // ---- worktree 切换器(仓库里真有别的 worktree 时才露面) ----
+        /** 当前正在看的那份工作区: 选中项优先; 没选就是 host 解析出来的仓库根。 */
+        var wtCurrentKey = workspaceKey(worktreePath || (info ? info.repoRoot : null));
+        var wtCurrent = null;
+        for (var wtIdx = 0; wtIdx < wtEntries.length; wtIdx += 1) {
+          if (workspaceKey(wtEntries[wtIdx].path) === wtCurrentKey) {
+            wtCurrent = wtEntries[wtIdx];
+            break;
+          }
+        }
+        var wtAway = wtCurrent !== null && wtCurrent.main !== true;
+        var wtLabel =
+          wtCurrent === null
+            ? worktreePath === null
+              ? '主仓'
+              : 'worktree'
+            : wtCurrent.main === true
+              ? '主仓'
+              : wtCurrent.name;
+        var wtVisible = worktreePath !== null || wtEntries.length > 1;
+
         var head = h(
           'div',
           { className: 'fge-head' },
@@ -3283,8 +3429,32 @@ window.__ModuleLoader__.load({
                 status.behind > 0 ? '↓' + String(status.behind) : null,
               )
             : null,
-          // 这里**不放** `.fge-spacer`: 分支按钮自己就是那个弹性项(flex:1),
-          // 两者并存会把空白平分, 按钮就长不到 ⟳ 前面了。
+          // worktree 切换器: 只有仓库里存在别的 worktree 时才出现(平时头部与以前**一模一样**)。
+          // 看的是"哪份工作区", 与左边那颗"看哪个分支"是两件事, 所以分成两个按钮。
+          wtVisible
+            ? h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'fge-wt',
+                  ref: wtAnchorRef,
+                  'data-away': wtAway ? '1' : undefined,
+                  title: '这份仓库的多个 worktree(工作树): 点一个就**看它**的分支与变更(不动任何 checkout)',
+                  'aria-label': '切换 worktree',
+                  'aria-expanded': wtMenuOpen ? 'true' : 'false',
+                  onClick: function () {
+                    setWtMenuOpen(function (open) {
+                      return !open;
+                    });
+                  },
+                },
+                h(primitives.IconFolderOpenOutline16, { size: 13 }),
+                h('span', { className: 'fge-wt-name' }, wtLabel),
+                h(primitives.IconChevronDownOutline14, { size: 12, className: 'fge-branch-caret' }),
+              )
+            : null,
+          // 这里**不放** `.fge-spacer`, worktree 那颗按钮也**不是**弹性项: 分支按钮自己就是那唯一的
+          // 弹性项(flex:1), 多一个弹性项会把空白平分, 按钮就长不到 ⟳ 前面了。
           // 刷新键: 官方 `IconRefreshOutline14`(SVG) —— 不再用 `⟳` 字形, 也不再在忙时换成 `…`
           // (忙 = `disabled`, 图标由 `.fge-refresh[disabled] svg` 转起来当进度提示)。
           // ⚠ 图标按钮**没有文字**, 所以补一枚 `aria-label`(原来那个 `⟳` 至少还是个字符, 现在什么都没了)。
@@ -3429,6 +3599,64 @@ window.__ModuleLoader__.load({
               },
             },
             menuRows,
+          );
+        }
+
+        // ---- worktree 小浮窗(与分支那个共用菜单样式, 只有触发按钮不同) ----
+        var wtMenu = null;
+        if (wtMenuOpen) {
+          var wtRows = [];
+          wtRows.push(h('div', { key: 'wt:g', className: 'fge-branch-group' }, 'worktree(工作树)'));
+          for (var wr = 0; wr < wtEntries.length; wr += 1) {
+            var wtEntry = wtEntries[wr];
+            // 目录已被删 / prunable 的不列出来: 选了 host 只会从那个不存在的路径向上回落到主仓。
+            if (wtEntry.prunable === true) continue;
+            var wtIsCurrent = workspaceKey(wtEntry.path) === wtCurrentKey;
+            wtRows.push(
+              h(
+                'div',
+                {
+                  key: 'wt:' + wtEntry.path,
+                  className: 'fge-branch-item' + (wtEntry.main === true ? '' : ' fge-branch-sub'),
+                  'data-current': wtIsCurrent ? '1' : undefined,
+                  title: wtEntry.path,
+                  onClick: (function (row) {
+                    return function () {
+                      pickWorktree(row);
+                    };
+                  })(wtEntry),
+                },
+                h('span', { className: 'fge-branch-name' }, wtEntry.main === true ? '主仓' : wtEntry.name),
+                h(
+                  'span',
+                  { className: 'fge-branch-mark' },
+                  wtIsCurrent
+                    ? '当前'
+                    : wtEntry.branch !== null
+                      ? wtEntry.branch
+                      : wtEntry.detached === true
+                        ? '分离 HEAD'
+                        : '',
+                ),
+              ),
+            );
+          }
+          if (wtRows.length === 1) {
+            wtRows.push(h('div', { key: 'wt:none', className: 'fge-branch-item' }, '(只有主仓)'));
+          }
+          wtMenu = h(
+            'div',
+            {
+              className: 'fge-branch-menu',
+              ref: wtMenuRef,
+              role: 'listbox',
+              style: {
+                left: wtMenuPos === null ? 0 : wtMenuPos.left,
+                top: wtMenuPos === null ? 0 : wtMenuPos.top,
+                visibility: wtMenuPos === null ? 'hidden' : 'visible',
+              },
+            },
+            wtRows,
           );
         }
 
@@ -3621,6 +3849,7 @@ window.__ModuleLoader__.load({
           { className: 'fge-root' },
           head,
           branchMenu,
+          wtMenu,
           // 正文 = 上下两栏: 上栏**变更列表 / 当前 diff**(默认 3/4), 下栏**提交历史**。两栏各自滚动。
           h(
             'div',

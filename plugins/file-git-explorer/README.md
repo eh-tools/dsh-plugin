@@ -116,6 +116,15 @@ pnpm --dir plugins/file-git-explorer install
   | `Alt+C`           | **复制终端当前选区**           | 终端平时是"选中即复制",这一按是兜底                        |
   | `Alt`+滚轮        | **详情浮窗横向滚动**           | 只认本插件自己的详情浮窗;到边/没横向余量时照旧竖滚(见下)   |
 
+- **worktree 切换器(主仓 / 各 worktree)**: 仓库里**存在别的 worktree 时**(比如 `.worktrees/<名字>`),
+  头部会多一颗按钮(文件夹图标 + 当前那格的名字, 主仓显示「主仓」)。点它弹出这份仓库的**所有工作树**:
+  主仓排在最前, 其余按 `git worktree list` 的顺序, 每行右侧标出它**检出的是哪个分支**;
+  点一行 → **整个 git 页签切去看它**(分支名、变更列表、提交历史、diff 全跟着走), 按钮变强调色提示
+  "你看的不是主仓"。再选「主仓」即切回来。
+  ⚠ 它**只改"看哪份工作树"**, 不动任何 checkout(和上面「查看分支」同款口径)。
+  ⚠ 目录已被删 / `prunable` 的工作树不会列出来; 选中的那份被删掉之后会自动**回落**到主仓(不会显示一份
+  名字与数据不符的假象)。选中项**按会话记**(切走再回来还是那份)。
+  仓库里没有别的 worktree 时这颗按钮**根本不出现** —— 不用 worktree 的人看到的头部与以前一模一样。
 - **分支小浮窗(查看分支)**: 点头部那颗分支按钮弹出一个小浮窗, 里面是**分支树** ——
   `本地分支` 一组(平铺)+ `远程分支` 一组(先按 remote 名分一层, 分支缩进在下面)。
   点任意一条(本地 / 远程都行)就把「查看分支」切到它, 立刻重取该分支的提交历史; 点文件照样出 diff。
@@ -982,6 +991,9 @@ scrollbar-gutter:stable}` —— 用户口径是"展开后滚动条该出现在�
 > 「详情浮窗的「送回侧栏」按"标题里有本插件的文件名芯片"**限定**藏掉(裸选择器会连别人浮窗的一起藏)」,
 > 「`Alt`+滚轮横向滚动: 挂 `window` 捕获且必须 `passive: false`、只认本插件自己的浮窗、**先判"滚不动"再
 > `preventDefault`**(到边要放行)、只认 Alt 不吃 Ctrl/Meta、卸载摘干净」,
+> 「worktree 切换器: host 注册 `/fge/api/worktrees` 且只能靠 `git worktree list` 列、解析器是纯函数、
+> `dataRoot = 选中的 worktree || 会话工作区`、选中项被删要回落(`setWorktreePath(null)`)、
+> 只有存在别的 worktree 时才露出按钮、按钮不许也是弹性项、选中项按会话记」,
 > 以及 `exports.__pathTree` 上的纯函数断言(目录归类 + **层级线的分段**:末项收到行中 / 祖先收尾后那一列不再出现)。
 > ⚠ 还有一条是**真调用**:`exports.__treeRows` 注入了假的 `h`, 把树跑成行数组, 断言 顺序 / 深度 / `isLast` / `continues` /
 > 目录行自带的引导线 —— 这是补"顶层参数传错位"那次事故的:光 grep `treeRows(` 存在是**拦不住**的(那条分支只在有目录时才走到)。
@@ -1026,10 +1038,57 @@ scrollbar-gutter:stable}` —— 用户口径是"展开后滚动条该出现在�
   `max`(1780) → 到边后再滚一下 `defaultPrevented=false`、页面照常竖滚; 嵌套盒子滚的是内层而外层不动;
   别人的浮窗与页签条都是 0。
 
+### 16. worktree: 为什么需要一颗切换器, 以及数据怎么跟着它走
+
+**问题**: DSH 的「工作区」就是会话的那个目录(`fs.realpath` 后的绝对路径, 与 git 无关), 而本仓库的开发流是
+「主仓开一个会话 + 用 `just wt` 在 `.worktrees/<名字>` 里干活」。于是 git 页签的数据根一直是**主仓** ——
+它显示 `main` 并没有算错(主仓确实在 main 上), 缺的是"能指向正在干活的那份工作树"。
+实测过: 这台机器 50 个会话的 `cwd` **没有一个**落在 worktree 里 —— DSH 不会因为仓库里有 worktree 就把 cwd 换掉。
+
+**做法**: 头部加一颗 worktree 按钮(仓库里存在别的 worktree 时才出现), 选中项决定**数据根**:
+
+- host 多一条 `POST /fge/api/worktrees` → `git worktree list --porcelain`(`lib/git.js` 的纯函数
+  `parseWorktreeList` 解析, 夹具是 Windows git 2.53.0 的真实输出, 含 detached / locked / prunable 三种行)。
+- client 侧只有一个新概念: `dataRoot = 选中的 worktree || 会话工作区`。`info` / `status` / `log` / `diff` / `show`
+  全部走它 —— 于是**切过去就真的是那份工作树的数据**(分支、变更、历史、diff 一起换)。
+  ⚠ **终端抽屉不跟着走**: 它还拿会话的 `root` —— 那是"会话的 shell", 不是"你在看哪份仓库"。
+- 选中项**按会话记**(与 `viewedRef` 同级存进 `gitViews`): 视角属于会话, 数据属于仓库 —— 与 §10 的分键同款。
+
+**几条必须守住的细节**:
+
+- ⚠ **路径不能由客户端说了算**: `root` 虽然一直是客户端给的, 但"哪些路径是**这份仓库的** worktree"必须由
+  host 用 `git worktree list` 判定 —— 所以列表是 host 出的, 客户端只在列表里选。`no-repo` / `invalid-root`
+  两种拒绝也照旧(`info` / `status` 同款栅栏)。
+- ⚠ **worktree 被删之后要能回落**: 目录没了时 `findRepoRoot` 会从那个不存在的路径**向上**找到主仓 ——
+  于是"按钮写着 `.worktrees/x`、数据其实是主仓"这种假象就出现了。修法: `info` 回来的 `repoRoot` 与选中项
+  不一致就**清掉选中项**(`setWorktreePath(null)`)。
+- ⚠ **切换要清掉属于上一份仓库的视图状态**: 正在查看的分支、聚焦的提交、展开的说明, 换了仓库都不成立
+  (拿另一个仓库的 ref 去查历史只会报错); 详情浮层里的 diff 也是旧仓库的内容, 一并关掉。
+- ⚠ **worktree 列表是"工作区数据", 不是每次刷新的附赠**: 它跟在同一轮加载的尾部、**也进快照** ——
+  否则会破坏「同工作区切会话一个请求都不发」那条既有承诺(仓库根那条护栏检查就是这么抓住第一版的:
+  它断言首次挂载的调用序列, 多出来的 `worktrees` 立刻暴露)。菜单**每次打开**再重取一次: 新开的
+  worktree(比如刚 `just wt` 建的)一打开就能看到。
+- 按钮**不是弹性项**: 头部只有分支那颗是 `flex:1`(它要吃掉剩余空间才能长到 ⟳ 前面), 再加一个弹性项
+  会把空白平分。所以 `.fge-wt` 是 `flex:0 0 auto`, 菜单样式与分支那个共用。
+
+**探针**(临时脚本, 复用 `tests/verify.mjs` 的最小脚手架: 真 `node:http` + 真 git, 走插件真实路由, 11 项全过):
+
+```text
+worktrees(主仓)  : {"ok":true,"names":["dsh-plugin","fge-worktree-switch"],"main":[true,false]}
+worktrees(wt)    : {"branches":["main","feat/fge-worktree-switch"]}
+status(主仓)     : {"current":"main","changes":[]}
+status(worktree) : {"current":"feat/fge-worktree-switch","changes":[…,"probe-worktree-status.txt"]}
+worktrees(临时目录): {"ok":false,"error":"no-repo"}
+worktrees(相对路径): {"ok":false,"error":"invalid-root"}
+```
+
+最后两行是这次功能的核心证据: **同一个仓库、同一个 host, 只是把 `root`/`repoRoot` 换成一份 worktree,
+`status` 就从 `main` 变成那份工作树的分支**, 而 worktree 里新建的未跟踪文件也只出现在它那一边。
+
 ## 测试与静态检查
 
 ```bash
-node tests/git.test.mjs      # git 纯函数层(porcelain v2 解析 / 白名单 / diff argv / 统一 diff→hunk)
+node tests/git.test.mjs      # git 纯函数层(porcelain v2 解析 / worktree list 解析 / 白名单 / diff argv / 统一 diff→hunk)
 node tests/address.test.mjs  # 文件地址与「复制内容」纯函数层(芯片逻辑的可执行规约)
 node tests/pty.test.mjs      # 终端纯函数层(shell 绝对路径解析 / 尺寸钳制 / 帧编解码 / 回放缓冲 / LRU)
 node tests/verify.mjs        # host 全链路冒烟: 真实 git + 真实 HTTP 栅栏 + vendor + 真 WS/PTY 端到端
@@ -1126,7 +1185,13 @@ eslint .                     # 仓库统一 lint(client bundle 按惯例忽略)
     `Alt` 滚滚轮 → **内容横向走**, 面板**不上下跳**; 一直滚到最右再滚一下 → 那一下**应该变成普通竖滚**
     (页面跟着竖滚), 不是"滚不动了"; 松开 `Alt` 滚滚轮 → 只竖滚, 不横滚;
     **把详情拖出侧栏之外的地方(别人的浮窗 / 页签条)按住 `Alt` 滚 → 一律不许横滚**。
-13. 全程 DevTools 控制台**零 pageerror**、零插件 `console.error`。
+13. **worktree 切换器**: 仓库里建一份 worktree(`just wt <名字>`)之后刷新页面 →
+    头部**多出一颗** worktree 按钮(没建之前**不该有**这颗); 点它 → 列出主仓 + 那份 worktree,
+    每行右侧是它检出的分支; 点那份 worktree → **分支名/变更列表/提交历史全换成它的**(在它里面新建一个
+    未跟踪文件, 变更列表里应立刻出现、切回主仓则看不到); 按钮变强调色; 再选「主仓」切回来。
+    **切过去不动任何 checkout**(主仓的分支与工作区不受影响); **终端抽屉不跟着走**(还在会话的工作区);
+    把那颗 worktree 目录删掉再刷新 → **自动回落到主仓**(按钮不再写着那个已经不存在的名字)。
+14. 全程 DevTools 控制台**零 pageerror**、零插件 `console.error`。
 
 ## 已知限制(接受, 不是 bug)
 

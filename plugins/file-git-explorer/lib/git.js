@@ -523,3 +523,62 @@ export function parentsFromRevList(text) {
   if (tokens.length === 0) return null;
   return tokens.length - 1;
 }
+
+/**
+ * `git worktree list --porcelain` → 条目数组(见 README「worktree 切换器」)。
+ *
+ * 真实格式(Windows git 2.53.0 实测, 夹具原样抄进 tests/git.test.mjs):
+ *
+ *   worktree E:/repo
+ *   HEAD <oid>
+ *   branch refs/heads/main
+ *   <空行>
+ *   worktree E:/repo/.worktrees/x
+ *   HEAD <oid>
+ *   detached                  ← 分离 HEAD 时**替代** branch 行
+ *   locked                    ← `git worktree lock` 之后多一行(可带原因)
+ *   prunable <原因>            ← 目录没了: 行首 prunable, 后面跟一句原因
+ *
+ * ⚠ 只按**行首关键字**切块, 不做任何路径假设 —— 路径可能有空格, 所以 `worktree ` 之后**整行**都是路径。
+ * ⚠ `locked` / `prunable` 的"原因"是可选的, 一律只认关键字。
+ * ⚠ git 保证**主工作区排第一**(官方文档), 所以 `first` 就是"主仓"判据。
+ */
+export function parseWorktreeList(text) {
+  const entries = [];
+  let cur = null;
+  const flush = () => {
+    if (cur !== null) entries.push(cur);
+    cur = null;
+  };
+  for (const raw of String(text).split('\n')) {
+    const line = raw.replace(/\r$/, '');
+    if (line === '') {
+      flush();
+      continue;
+    }
+    if (line.startsWith('worktree ')) {
+      flush();
+      cur = {
+        path: line.slice('worktree '.length),
+        head: null,
+        branch: null,
+        detached: false,
+        bare: false,
+        locked: false,
+        prunable: false,
+        first: entries.length === 0,
+      };
+      continue;
+    }
+    if (cur === null) continue; // 容错: 还没见到 worktree 行之前的杂音忽略掉
+    if (line.startsWith('HEAD ')) cur.head = line.slice('HEAD '.length);
+    else if (line.startsWith('branch ')) {
+      cur.branch = line.slice('branch '.length).replace(/^refs\/heads\//, '');
+    } else if (line === 'detached') cur.detached = true;
+    else if (line === 'bare') cur.bare = true;
+    else if (line === 'locked' || line.startsWith('locked ')) cur.locked = true;
+    else if (line === 'prunable' || line.startsWith('prunable ')) cur.prunable = true;
+  }
+  flush();
+  return entries;
+}

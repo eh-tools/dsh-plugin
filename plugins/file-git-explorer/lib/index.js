@@ -8,6 +8,7 @@
  *
  *   POST /fge/api/info    { root? }                        → { cwd, repoRoot }       纯 stat, 零 git 子进程
  *   POST /fge/api/status  { root?, repoRoot }              → { current, head, upstream, ahead, behind, branches, changes }
+ *   POST /fge/api/worktrees { root? }                      → { repoRoot, entries }    `git worktree list --porcelain`
  *   POST /fge/api/sync    { root? }                         → { ok }                  fetch --prune; 成功则作废分支缓存
  *   POST /fge/api/diff    { repoRoot, path, status, from? } → { kind:'diff'|'untracked', hunks, text }
  *   POST /fge/api/log     { repoRoot, ref?, skip?, limit? } → { ref, head, commits }   翻页零 rev-parse
@@ -41,6 +42,7 @@ import {
   parentsFromRevList,
   diffArgs,
   parseDiffHunks,
+  parseWorktreeList,
 } from './git.js';
 import {
   resolveShellExecutable,
@@ -321,6 +323,36 @@ export function apply(ctx) {
     return { ok: true, cwd: base, repoRoot };
   }
 
+  /**
+   * worktrees: 这份仓库的**所有工作区**(主仓 + 各 worktree), 供右侧 git 页签的「worktree 切换器」用。
+   *
+   * ⚠ 为什么由 host 出这份数据: 切到一个 worktree 之后, 后续 status / log / diff 都拿它的路径当 `root`
+   *   —— 而 `root` 是客户端给的, 所以"哪些路径是**这份仓库的** worktree"必须由 host 用
+   *   `git worktree list` 判定, 不能任客户端报一个绝对路径就当仓库用。
+   * ⚠ `prunable`(目录已被删)的条目**照原样返回**: 列表里要不要显示它由客户端决定, host 不替它取舍;
+   *   这里也**不**为每个条目去 stat(那会把一条 git 调用摊成 N 次 fs 调用)。
+   */
+  async function handleWorktrees(body) {
+    const base = baseOf(body);
+    if (base === null) return { ok: false, error: 'invalid-root' };
+    const dir = await repoRootFor(base);
+    if (dir === null) return { ok: false, error: 'no-repo' };
+    const r = await runGit(['worktree', 'list', '--porcelain'], { cwd: dir });
+    if (r.exitCode !== 0) return { ok: false, error: 'git-failed', stderr: r.stderr.slice(0, 400) };
+    const entries = parseWorktreeList(r.stdout).map((e, i) => ({
+      path: e.path,
+      name: path.basename(e.path) || e.path,
+      head: e.head,
+      branch: e.branch,
+      detached: e.detached,
+      bare: e.bare,
+      locked: e.locked === true,
+      prunable: e.prunable === true,
+      main: i === 0, // git 保证主工作区排第一
+    }));
+    return { ok: true, repoRoot: dir, entries };
+  }
+
   /** status: 一条命令拿全 (分支 + 上游 + ahead/behind + 变更)。 */
   async function handleStatus(body) {
     const base = baseOf(body);
@@ -474,6 +506,7 @@ export function apply(ctx) {
   const HANDLERS = {
     info: handleInfo,
     status: handleStatus,
+    worktrees: handleWorktrees,
     sync: handleSync,
     diff: handleDiff,
     log: handleLog,
