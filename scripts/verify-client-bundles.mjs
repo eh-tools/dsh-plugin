@@ -1661,6 +1661,143 @@ check('fge: 右栏页签 Alt+J / Alt+L 切换(到边不环绕)', () => {
     assert.match(source, /data-rightbar-collapsed/, '右栏收起时不切(切了也看不见)');
 });
 
+check('fge: Alt+Ctrl+R 刷新 git 树(与 ⟳ 同一条)+ 打开抽屉自动聚焦终端', () => {
+    const source = readFileSync(join(ROOT, 'plugins/file-git-explorer/lib/client.js'), 'utf8');
+
+    // —— Alt+Ctrl+R: 一个动作只有一个入口 ——
+    // 快捷键必须与页签上那枚 `⟳` 指向**同一个** manualRefresh, 不是另写一套刷新逻辑。
+    assert.match(
+        source,
+        /var gitRefresh = \{ current: null \};/,
+        '要有模块级的刷新回调位(apply 那条全局 keydown 才够得着页签体里的 manualRefresh)',
+    );
+    assert.match(
+        source,
+        /gitRefresh\.current = manualRefresh;/,
+        'Alt+Ctrl+R 与 `⟳` 必须是同一个 manualRefresh',
+    );
+    assert.ok(
+        !/gitRefresh\.current = busy \? null/.test(source),
+        '不许因为 busy 就不注册 —— "按了完全没反应"比"按了但忙"更难排查(manualRefresh 自己会早退)',
+    );
+    assert.match(
+        source,
+        /gitRefresh\.current = null;[\s\S]{0,80}\n {8}\}\);/,
+        '卸载时要清掉 —— 留着陈旧闭包会把上一个会话的工作区再刷一遍',
+    );
+    // 取 Alt+Ctrl+R 那一段(注释到 effect 标签之间就是整个 effect), 逐条按它的边界断言。
+    const from = source.indexOf('// git 树刷新: **Alt+Ctrl+R**');
+    assert.ok(from > 0, '应有 Alt+Ctrl+R 的刷新快捷键');
+    const hotkey = source.slice(from, source.indexOf("'fge: alt+ctrl+r refresh git tree'", from));
+    assert.ok(hotkey.length > 0, 'Alt+Ctrl+R 的 ctx.effect 要有标签');
+    assert.match(
+        hotkey,
+        /if \(!ev\.altKey \|\| !ev\.ctrlKey \|\| ev\.metaKey \|\| ev\.shiftKey\) return;/,
+        '必须是 Alt+Ctrl, 且不带 meta/shift',
+    );
+    assert.match(
+        hotkey,
+        /ev\.key === 'r' \|\| ev\.key === 'R' \|\| ev\.code === 'KeyR'/,
+        '要认 r/R/KeyR',
+    );
+    assert.match(
+        hotkey,
+        /window\.addEventListener\('keydown', onKey, true\)/,
+        '要挂 window 的**捕获**阶段(官方快捷键也在捕获; window 比 document 更靠前)',
+    );
+    assert.match(hotkey, /ev\.preventDefault\(\);/, '认下了就要吃掉这次按键');
+    assert.match(
+        hotkey,
+        /ev\.stopPropagation\(\);/,
+        '还要拦住传播 —— 否则这一按会落到 xterm 变成发给 PTY 的字节(它现在连终端焦点也不放过)',
+    );
+    assert.ok(
+        !/fge-term-host/.test(hotkey),
+        'Alt+Ctrl+R **不再**让给终端: 终端侧没有这组绑定, 加 Ctrl 就是为了能从任何焦点触发',
+    );
+    assert.match(
+        hotkey,
+        /gitRefreshPending\.current = true;[\s\S]{0,200}ctx\.sidebarRight\.focus\(GIT_ID\)/,
+        '页签体没挂载时: 记一笔 + 切到 Git 页签, 别干等',
+    );
+    assert.match(
+        source,
+        /gitRefreshPending\.current = false;[\s\S]{0,40}manualRefresh\(\);/,
+        '挂载时要把那一笔兑现(一次性), 否则快捷键只在"正看着 git"时才灵',
+    );
+
+    // —— 打开抽屉自动聚焦终端 ——
+    // 位置很关键: xterm 的 focus() 是打到它自己那个隐藏 textarea 上的, `open()` 之前调等于没调。
+    const openAt = source.indexOf('term.open(hostRef.current);');
+    const focusAt = source.indexOf('term.focus();');
+    assert.ok(openAt > 0, '终端要 open');
+    assert.ok(focusAt > openAt, 'focus() 必须在 open() **之后**(元素没挂上就没有焦点可给)');
+    assert.equal(
+        source.split('term.focus();').length - 1,
+        1,
+        '只该聚焦一次(不要在每次渲染里抢焦点 —— 用户点去 composer 打字后不该被抢回来)',
+    );
+    assert.match(
+        source.slice(focusAt, focusAt + 220),
+        /catch \(e\)/,
+        '拿不到焦点要吞掉, 不能让整个终端挂掉',
+    );
+});
+
+check('fge: 详情标题加长 + 文件名点击复制', () => {
+    const source = readFileSync(join(ROOT, 'plugins/file-git-explorer/lib/client.js'), 'utf8');
+
+    // —— 详情标题的宽度: 真因是页面签被官方钉死, 不是标题 ——
+    // 官方 `._tab_…{min-width:80px;max-width:170px}`; 浮窗头部那个标题**就是同一个页签元素**
+    // (多挂 `_floatTitle_` 变体), 所以半屏宽的浮窗里文件名也只有 170px。
+    // ⚠ 标题自己(`[data-dockkit-tab-title]`)没有 max-width —— 第一版改它是**空操作**, 这里留一道反向锁。
+    assert.match(
+        source,
+        /'\[data-dockkit-tab\]\[class\*="_floatTitle_"\]\{max-width:none!important\}'/,
+        '要放开**浮窗里**那个页签的 max-width(=170px), 这才是文件名被截的真因',
+    );
+    assert.ok(
+        !/\{max-width:none!important;min-width:0;flex:1 1 auto\}/.test(source),
+        '标题元素本来就没有 max-width, 别再给它加那条空操作(真因在页签上)',
+    );
+    assert.match(
+        source,
+        /\.fge-chip-label\{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap\}/,
+        'diff 芯片也不许自己钉 max-width(22em)—— 浮窗有地方时它会把路径先截掉',
+    );
+    assert.ok(!/\.fge-chip-label\{[^}]*max-width/.test(source), '同样的病不要在另一条路径上留着');
+
+    // —— 文件名点击复制 ——
+    // 复制的必须是**文件名本身**; 而且**不许吃掉这次点击**: 这个标题同时出现在页签条与浮窗头部,
+    // 在页签条里点击还要继续走到官方那层去"选中这个页签"。
+    assert.match(
+        source,
+        /h\(DocName, \{ name: title \}\)/,
+        '影子页签(文档详情)里的文件名要走 DocName(不是裸字符串)',
+    );
+    assert.match(
+        source,
+        /h\('span', \{ className: 'fge-chip-label', title: label \}, h\(DocName, \{ name: label \}\)\)/,
+        'diff 详情那条路径(显示的是路径)也要能给点击复制',
+    );
+    const fnAt = source.indexOf('function DocName(props)');
+    assert.ok(fnAt > 0, '应有 DocName');
+    const body = source.slice(fnAt, source.indexOf('function FileCopyButton(', fnAt));
+    assert.match(body, /primitives\.writeClipboard\(name\)/, '点击要复制**文件名**');
+    assert.ok(
+        !/stopPropagation|preventDefault/.test(body),
+        '不许吃掉这次点击 —— 页签条里那一下还要用来选中页签(复制只是搭便车)',
+    );
+    assert.match(body, /className: 'fge-doc-name'/, '要有自己的类名(样式与护栏都按它找)');
+    assert.match(body, /'data-s': state/, '反馈沿用 data-s = done / failed');
+    assert.match(body, /setState\(ok === false \? 'failed' : 'done'\)/, '写入失败要能反馈(failed)');
+    assert.match(
+        source,
+        /\.fge-doc-name\[data-s="done"\]\{color:#3fa34d\}/,
+        '成功反馈只染色, 不换文字(换成"已复制"就看不见自己点的是哪个文件了)',
+    );
+});
+
 console.log('');
 if (failures.length > 0) {
     console.error('client bundle 装配: ' + String(failures.length) + ' 项失败');
