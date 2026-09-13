@@ -812,14 +812,10 @@ check('fge: git 头部 38px(与会话头部对齐) + 拖柄不再隐藏 + 终端
         !/\[data-side="rightbar"\]\{display:none\}/.test(source),
         '右栏拖柄不能再被 hiding —— 隐藏就没法拖',
     );
-    // 右栏 chrome 的按钮: 「分栏」隐藏, 「进全屏」**必须留着**(用户点名要回来)。
-    // ⚠ 「进全屏」与「退出全屏」是**同一个**按钮: 非全屏时带 data-sidebar-right-mode="fullscreen",
-    //    全屏时才变成 "push" —— 所以藏掉它 = 非全屏时永远进不去。
+    // 右栏 chrome 的按钮: 「分栏」与「进全屏」都藏。
+    // ⚠ 「进全屏」曾放回来过一轮, 用户随后指出**位置放错了** —— 全屏要落在详情浮窗上, 不是右栏页签条这格。
+    //    它的细则(以及本插件自己加的那枚浮窗全屏开关)由下面那条 `详情浮窗的「全屏」开关` 守。
     assert.match(source, /'\[data-dockkit-split-button\]\{display:none\}'/, '「分栏」按钮仍然隐藏');
-    assert.ok(
-        !/'\[data-sidebar-right-mode="fullscreen"\]\{display:none\}'/.test(source),
-        '「进全屏」按钮要放回来(它是非全屏时唯一能进全屏的入口)',
-    );
     // 详情浮窗头上的「送回侧栏」藏掉(用户口径): 它把详情变回右栏页签, 与"详情只以浮层出现"相反。
     // ⚠ 但**必须**限定在"我们的浮窗"里 —— 官方浮动宿主是所有页签共用的, 别的页签被浮起来
     //    (拖页签 / 页签菜单)时也长着同一个按钮, 裸选择器会把人家一起藏了。
@@ -1863,6 +1859,56 @@ check('fge: 详情标题加长 + 文件名点击复制', () => {
         /\.fge-doc-name\[data-s="done"\]\{color:#3fa34d\}/,
         '成功反馈只染色, 不换文字(换成"已复制"就看不见自己点的是哪个文件了)',
     );
+});
+
+check('fge: 详情浮窗的「全屏」开关(右栏页签条那枚仍然藏)', () => {
+    const source = readFileSync(join(ROOT, 'plugins/file-git-explorer/lib/client.js'), 'utf8');
+
+    // 右栏页签条那枚「进全屏」: 位置放错过一轮 —— 用户要的是**详情面板**全屏, 不是右栏那一格。现在仍然藏。
+    assert.match(
+        source,
+        /'\[data-sidebar-right-mode="fullscreen"\]\{display:none\}'/,
+        '右栏页签条那枚「进全屏」不出现(全屏落在详情浮窗上)',
+    );
+
+    // 全屏开关只在**浮窗**里露面: 标题槽在页签条与浮窗头部两处都渲染, 所以默认藏、只有浮窗里放开。
+    assert.match(source, /'\.fge-float-full\{display:none;/, '「全屏」按钮默认藏(页签条上不出现)');
+    assert.match(
+        source,
+        /'\[data-dockkit-float\] \.fge-float-full\{display:inline-flex\}'/,
+        '只在浮窗里放开它',
+    );
+    // 全屏几何: 官方没有移动/缩放浮窗的公开接口, 只能给浮窗打标记 + 用 !important 压掉它 inline 的几何。
+    assert.match(
+        source,
+        /'\[data-dockkit-float\]\[data-fge-float-full\]\{inset:0!important;width:auto!important;height:auto!important;border-radius:0!important;z-index:50!important\}'/,
+        '全屏态要 inset:0!important 压过官方 inline 的 left/top/width/height, 并把 20px 圆角归零',
+    );
+    assert.match(
+        source,
+        /'\[data-dockkit-float\]\[data-fge-float-full\] \[data-dockkit-float-resize\]\{display:none\}'/,
+        '全屏时右下角那个缩放手柄没有意义',
+    );
+
+    const fnAt = source.indexOf('function FloatFullButton()');
+    assert.ok(fnAt > 0, '应有 FloatFullButton');
+    const body = source.slice(fnAt, source.indexOf('// ---- diff 页签', fnAt));
+    assert.match(
+        body,
+        /h\(primitives\.IconFullscreenOutline16, \{ size: 14 \}\)/,
+        '要用官方图标, 不自己画',
+    );
+    assert.match(body, /closest\('\[data-dockkit-float\]'\)/, '标记要打在**浮窗元素**上');
+    assert.match(body, /setAttribute\('data-fge-float-full', ''\)/, '全屏 = 打标记');
+    assert.match(body, /removeAttribute\('data-fge-float-full'\)/, '退出全屏 / 卸载要摘掉标记');
+    assert.ok(
+        /stopPropagation/.test(body),
+        '必须吃掉 pointerdown —— 官方整条 header 是拖拽柄, 会 setPointerCapture 把子元素的 click 吞掉',
+    );
+
+    // 两条详情路径(文档详情 / diff 详情)都要有这枚按钮。
+    const n = source.split('h(FloatFullButton, null)').length - 1;
+    assert.ok(n >= 2, '文档详情与 diff 详情两条路径都要有(实际 ' + String(n) + ' 处)');
 });
 
 console.log('');
