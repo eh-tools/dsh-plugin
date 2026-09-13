@@ -2055,6 +2055,18 @@ window.__ModuleLoader__.load({
                 termRef.current = term;
                 fitRef.current = fit;
                 liveTerms.add(term);
+                // **打开抽屉就把焦点给终端**(用户口径: 省掉"再用鼠标点一下终端才能打字"这一步)。
+                // ⚠ 必须放在 `open()` **之后**: xterm 的 focus() 是打到它自己那个隐藏 textarea 上的,
+                //   元素还没挂上去就没有焦点可给(静默失败)。
+                // ⚠ 只在**挂载时**做一次(effect 依赖是 [root, visible], 不是每次渲染) —— 否则用户
+                //   刚点去 composer 打字, 一次无关重渲染就会把焦点抢回来。
+                // ⚠ 副作用要说清: 焦点一进来, **Esc 就归终端了**(与"焦点在终端里"那条分流一致),
+                //   开抽屉后 Esc 不再收起抽屉 —— 想收起点条空白处 / 页签上的 `×`。
+                try {
+                  term.focus();
+                } catch (e) {
+                  // 焦点拿不到就算了(比如容器还不可见), 不影响终端本身
+                }
                 // **选中即复制**(用户口径: 终端里选中就复制, Alt+C 只是兜底; 条右侧那枚开关能关掉自动那条)。
                 // 拖选 / 双击选词 / 三击选行都以 mouseup 收尾, 所以在 mouseup 上读一次选区。
                 // ⚠ 必须在 mouseup **同步**读 + 同步发起写入: 剪贴板 API 要"用户手势",
@@ -2293,6 +2305,24 @@ window.__ModuleLoader__.load({
        * 悬浮面板 → 分支小浮窗 → 聚焦提交 → 都不做(见 §14)。
        */
       var focusEsc = { current: null };
+
+      /**
+       * 「刷新 git」的回调(**Alt+Ctrl+R** 用): GitTabBody 每次渲染写进来, 卸载时清掉 —— 与 `focusEsc` 同款,
+       * 放在模块级是为了让 apply 里那条全局 keydown 够得着页签体内部的 `manualRefresh`。
+       *
+       * ⚠ **卸载必须清空**: 右栏收起 / 切到别的页签时页签体会卸载, 留着一个陈旧闭包会把"上一个会话的
+       *   工作区"再刷一遍(闭包里 captured 的是那时的 cwd 与状态); 清空后快捷键自然变成"什么都不做"。
+       * ⚠ 它指向的就是页签上那枚 `⟳` 的 `manualRefresh`(先 sync 再 info → status → 历史首页),
+       *   不是另写一套刷新逻辑 —— 一个动作只有一个入口。
+       */
+      var gitRefresh = { current: null };
+
+      /**
+       * 「按了 Alt+Ctrl+R, 但页签体还没挂载」这一笔: 右栏收起 / 当前那格不是 Git 时, 快捷键先把这一位置 1
+       * 并切到 Git 页签, 页签体挂载时看到它就立刻刷一次(见 GitTabBody 里注册 `gitRefresh` 的那个 effect)。
+       * 一次性标志, 用完就清 —— 否则之后每次重挂都会莫名其妙刷一遍。
+       */
+      var gitRefreshPending = { current: false };
 
       /**
        * 按目录归类 + 层级线的行数组工厂(见 makeTreeRows 的注释)。
@@ -2665,6 +2695,21 @@ window.__ModuleLoader__.load({
           focusEsc.current = focused === null || menuOpen ? null : exitFocus;
           return function () {
             focusEsc.current = null;
+          };
+        });
+
+        // 把「刷新 git」交给全局 **Alt+Ctrl+R**(与 focusEsc 同款: 每次渲染重写、卸载清掉)。
+        // 注册的是同一个 `manualRefresh` —— 快捷键与页签上那枚 `⟳` 必须是同一条路。
+        // ⚠ 不再因为 `busy` 而不接: `manualRefresh` 自己会早退, 而"按了完全没反应"比"按了但忙"更难排查。
+        // ⚠ 若快捷键是在页签体没挂载时按的(`gitRefreshPending`), 就在这里补刷一次 —— 一次性标志, 清掉即止。
+        React.useEffect(function () {
+          gitRefresh.current = manualRefresh;
+          if (gitRefreshPending.current) {
+            gitRefreshPending.current = false;
+            manualRefresh();
+          }
+          return function () {
+            gitRefresh.current = null;
           };
         });
 
@@ -3784,6 +3829,49 @@ window.__ModuleLoader__.load({
           };
         },
         'fge: alt+j / alt+l switch right sidebar tabs',
+      );
+
+      // git 树刷新: **Alt+Ctrl+R**(用户口径)。与页签上那枚 `⟳` 走**同一条** `manualRefresh`
+      // (先 sync/fetch, 再 info → status → 历史首页), 不是另写一套刷新逻辑。
+      //
+      // 为什么带 Ctrl 而不是光 Alt: 光 Alt+R 在终端里是 readline 的 revert-line, 而**展开抽屉后焦点就在
+      // 终端里**(见「终端自动聚焦」), 那时它会被我们主动让给终端 —— 用户看到的就是"按了没反应"(实测就是这么
+      // 翻的车)。加上 Ctrl 之后终端侧没有对应绑定, 于是这一按可以**从任何焦点**触发, 不再需要那道门。
+      // ⚠ 挂在 **window** 的捕获阶段(不是 document): 官方自己的快捷键也走捕获阶段, window 比 document 更靠前,
+      //   万一官方先把它当别的用了, 我们仍然收得到。
+      // ⚠ 认下就 `preventDefault` + `stopPropagation`: 既不让浏览器/官方再拿它做别的, 也不让它落到 xterm
+      //   变成一串发给 PTY 的字节(它现在连终端焦点也不放过了, 必须自己吃掉)。
+      // ⚠ 输入框里**不禁用**(与 Alt+J/L 同一口径): 这组键不输入任何字符, 而在 composer 里打字时想刷新很常见;
+      //   已确认官方没有 Alt+R / Alt+Ctrl+R 绑定(官方那几个 `altKey: "any"` 全在 ArrowUp / ArrowDown / Enter 上)。
+      // ⚠ **页签体没挂载**(右栏收起 / 当前那格不是 Git)时不干等: 切到 Git 页签 + 记一笔 `gitRefreshPending`,
+      //   它挂载时立刻刷一次 —— 否则这条快捷键只在"正看着 git"时才灵。
+      ctx.effect(
+        function () {
+          function onKey(ev) {
+            if (!ev.altKey || !ev.ctrlKey || ev.metaKey || ev.shiftKey) return;
+            if (!(ev.key === 'r' || ev.key === 'R' || ev.code === 'KeyR')) return;
+            ev.preventDefault();
+            ev.stopPropagation();
+            var run = gitRefresh.current;
+            if (typeof run === 'function') {
+              run();
+              return;
+            }
+            // 页签体没挂载: 记一笔并切过去, 它挂载时自己刷(见 gitRefreshPending)。
+            gitRefreshPending.current = true;
+            try {
+              ctx.sidebarRight.focus(GIT_ID);
+            } catch (err) {
+              // 座位瞬时缺位: 与 restoreUserTab / Alt+J 同款容错, 不影响别的东西。
+            }
+          }
+
+          window.addEventListener('keydown', onKey, true);
+          return function () {
+            window.removeEventListener('keydown', onKey, true);
+          };
+        },
+        'fge: alt+ctrl+r refresh git tree',
       );
 
       // Esc 关掉本插件浮起的详情; 悬浮面板没开时才轮到"从聚焦提交返回列表"。

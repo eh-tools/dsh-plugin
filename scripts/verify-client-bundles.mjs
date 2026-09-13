@@ -1661,6 +1661,89 @@ check('fge: 右栏页签 Alt+J / Alt+L 切换(到边不环绕)', () => {
     assert.match(source, /data-rightbar-collapsed/, '右栏收起时不切(切了也看不见)');
 });
 
+check('fge: Alt+Ctrl+R 刷新 git 树(与 ⟳ 同一条)+ 打开抽屉自动聚焦终端', () => {
+    const source = readFileSync(join(ROOT, 'plugins/file-git-explorer/lib/client.js'), 'utf8');
+
+    // —— Alt+Ctrl+R: 一个动作只有一个入口 ——
+    // 快捷键必须与页签上那枚 `⟳` 指向**同一个** manualRefresh, 不是另写一套刷新逻辑。
+    assert.match(
+        source,
+        /var gitRefresh = \{ current: null \};/,
+        '要有模块级的刷新回调位(apply 那条全局 keydown 才够得着页签体里的 manualRefresh)',
+    );
+    assert.match(
+        source,
+        /gitRefresh\.current = manualRefresh;/,
+        'Alt+Ctrl+R 与 `⟳` 必须是同一个 manualRefresh',
+    );
+    assert.ok(
+        !/gitRefresh\.current = busy \? null/.test(source),
+        '不许因为 busy 就不注册 —— "按了完全没反应"比"按了但忙"更难排查(manualRefresh 自己会早退)',
+    );
+    assert.match(
+        source,
+        /gitRefresh\.current = null;[\s\S]{0,80}\n {8}\}\);/,
+        '卸载时要清掉 —— 留着陈旧闭包会把上一个会话的工作区再刷一遍',
+    );
+    // 取 Alt+Ctrl+R 那一段(注释到 effect 标签之间就是整个 effect), 逐条按它的边界断言。
+    const from = source.indexOf('// git 树刷新: **Alt+Ctrl+R**');
+    assert.ok(from > 0, '应有 Alt+Ctrl+R 的刷新快捷键');
+    const hotkey = source.slice(from, source.indexOf("'fge: alt+ctrl+r refresh git tree'", from));
+    assert.ok(hotkey.length > 0, 'Alt+Ctrl+R 的 ctx.effect 要有标签');
+    assert.match(
+        hotkey,
+        /if \(!ev\.altKey \|\| !ev\.ctrlKey \|\| ev\.metaKey \|\| ev\.shiftKey\) return;/,
+        '必须是 Alt+Ctrl, 且不带 meta/shift',
+    );
+    assert.match(
+        hotkey,
+        /ev\.key === 'r' \|\| ev\.key === 'R' \|\| ev\.code === 'KeyR'/,
+        '要认 r/R/KeyR',
+    );
+    assert.match(
+        hotkey,
+        /window\.addEventListener\('keydown', onKey, true\)/,
+        '要挂 window 的**捕获**阶段(官方快捷键也在捕获; window 比 document 更靠前)',
+    );
+    assert.match(hotkey, /ev\.preventDefault\(\);/, '认下了就要吃掉这次按键');
+    assert.match(
+        hotkey,
+        /ev\.stopPropagation\(\);/,
+        '还要拦住传播 —— 否则这一按会落到 xterm 变成发给 PTY 的字节(它现在连终端焦点也不放过)',
+    );
+    assert.ok(
+        !/fge-term-host/.test(hotkey),
+        'Alt+Ctrl+R **不再**让给终端: 终端侧没有这组绑定, 加 Ctrl 就是为了能从任何焦点触发',
+    );
+    assert.match(
+        hotkey,
+        /gitRefreshPending\.current = true;[\s\S]{0,200}ctx\.sidebarRight\.focus\(GIT_ID\)/,
+        '页签体没挂载时: 记一笔 + 切到 Git 页签, 别干等',
+    );
+    assert.match(
+        source,
+        /gitRefreshPending\.current = false;[\s\S]{0,40}manualRefresh\(\);/,
+        '挂载时要把那一笔兑现(一次性), 否则快捷键只在"正看着 git"时才灵',
+    );
+
+    // —— 打开抽屉自动聚焦终端 ——
+    // 位置很关键: xterm 的 focus() 是打到它自己那个隐藏 textarea 上的, `open()` 之前调等于没调。
+    const openAt = source.indexOf('term.open(hostRef.current);');
+    const focusAt = source.indexOf('term.focus();');
+    assert.ok(openAt > 0, '终端要 open');
+    assert.ok(focusAt > openAt, 'focus() 必须在 open() **之后**(元素没挂上就没有焦点可给)');
+    assert.equal(
+        source.split('term.focus();').length - 1,
+        1,
+        '只该聚焦一次(不要在每次渲染里抢焦点 —— 用户点去 composer 打字后不该被抢回来)',
+    );
+    assert.match(
+        source.slice(focusAt, focusAt + 220),
+        /catch \(e\)/,
+        '拿不到焦点要吞掉, 不能让整个终端挂掉',
+    );
+});
+
 console.log('');
 if (failures.length > 0) {
     console.error('client bundle 装配: ' + String(failures.length) + ' 项失败');
