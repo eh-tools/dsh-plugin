@@ -1063,6 +1063,8 @@ window.__ModuleLoader__.load({
       // 任意 node_modules。改由 host 的白名单路由伺服官方构建产物。
 
       var xtermPromise = null;
+      /** xterm.css 的 `<link>` 是否已插入(重试路径不重复插, 见 ensureXterm)。 */
+      var xtermCssLinked = false;
 
       function loadScript(src) {
         return new Promise(function (resolve, reject) {
@@ -1073,6 +1075,8 @@ window.__ModuleLoader__.load({
             resolve();
           };
           el.onerror = function () {
+            // 加载失败的 <script> 留在 head 里没有意义, 且重试时还会再插一枚 —— 立即摘掉。
+            if (el.parentNode !== null) el.parentNode.removeChild(el);
             reject(new Error('fge: failed to load ' + src));
           };
           document.head.appendChild(el);
@@ -1149,12 +1153,25 @@ window.__ModuleLoader__.load({
         });
       }
 
+      /**
+       * 懒加载 xterm(vendor 白名单路由), 结果缓存在 `xtermPromise`。
+       *
+       * ⚠ **失败不能把拒绝态永久缓存**: vendor 资产缺失(host 返回 503, 例如插件换了目录却
+       * 没跑 `pnpm --dir plugins/file-git-explorer install`)是一次性的环境问题 —— 环境修好后
+       * 应该「重开抽屉」就恢复。若把 rejected promise 缓存住, 用户只能**整页刷新**,
+       * 而界面提示(「终端不可用(检查依赖与 host 日志)」)根本没提要刷新。
+       * 所以失败时把 `xtermPromise` 置回 null, 下次调用重新拉一遍(`<link>` 只插一次,
+       * 失败的 `<script>` 已被 loadScript 摘掉)。
+       */
       function ensureXterm() {
         if (xtermPromise !== null) return xtermPromise;
-        var link = document.createElement('link');
-        link.rel = 'stylesheet';
-        link.href = VENDOR_BASE + '/xterm.css';
-        document.head.appendChild(link);
+        if (!xtermCssLinked) {
+          xtermCssLinked = true;
+          var link = document.createElement('link');
+          link.rel = 'stylesheet';
+          link.href = VENDOR_BASE + '/xterm.css';
+          document.head.appendChild(link);
+        }
         xtermPromise = loadScript(VENDOR_BASE + '/xterm.js')
           .then(function () {
             return loadScript(VENDOR_BASE + '/addon-fit.js');
@@ -1167,6 +1184,10 @@ window.__ModuleLoader__.load({
               throw new Error('fge: xterm 全局未按预期暴露');
             }
             return { Terminal: Terminal, FitAddon: Fit };
+          })
+          .catch(function (err) {
+            xtermPromise = null; // 见上方: 失败不缓存, 允许「重开抽屉」重试
+            throw err;
           });
         return xtermPromise;
       }
