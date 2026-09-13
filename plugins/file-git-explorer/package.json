@@ -1,6 +1,6 @@
 {
   "name": "dsh-file-git-explorer",
-  "version": "0.7.0",
+  "version": "0.3.0",
   "description": "官方右侧栏「git 页签」(变更列表 + 提交历史) + 详情悬浮面板(官方正文与 diff 都由官方 float 承载) + 终端抽屉(真 PTY: node-pty ↔ WebSocket ↔ xterm.js), 静态双半插件",
   "type": "module",
   "main": "lib/index.js",

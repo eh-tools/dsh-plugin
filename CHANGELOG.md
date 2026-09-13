@@ -4,6 +4,57 @@
 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),版本号遵循
 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [0.3.0] - 2026-09-13
+
+### Added
+
+- `browser-operator`:**全新纯 host 插件** —— 复现 / 定位 / 验证 Web bug 用的常驻有头浏览器:
+  9 个工具(`browser_navigate` / `snapshot` / `click` / `fill` / `eval` / `screenshot` /
+  `console` / `network` / `artifacts`);带独立 profile 拉起新进程,与日常 Chrome 并存
+  (不占调试端口、不 taskkill);登录态落在 `$DSH_HOME/browser-operator/profile`,跨轮次与
+  重启复用;截图等产物只写已 ignore 的目录。挂进 **agent preset**(`agent.cordis.yml`),
+  不走 profile bundle
+- `stylevault-localchrome`:**全新插件** —— 读本机 Chrome「自定义外观」用户色,解码成
+  `#RRGGBB` 推导整套调色板,生成可导入上游 StyleVault 的预设 JSON;已装上游并同意后首次启动
+  自动应用,之后可在 Settings 卡片改主意;不挂载也能用 `scripts/build-preset.js` 出预设
+- `file-git-explorer`:**重做为 v0.7** —— 详情改走官方 `float`(文档正文原版渲染、diff 用官方
+  `DiffBlock`),文件树回归官方、不再自绘;新增**真 PTY 终端抽屉**(`node-pty` ↔ WebSocket ↔
+  `xterm.js`,vim / htop / 颜色 / 补全 / Ctrl+C 可用,跨刷新重连回放)
+- `file-git-explorer`:git 页签改**上下两栏**(变更列表 / 提交历史),两份列表按目录归类 + 纵向
+  层级虚线;提交历史改「聚焦提交」——聚焦时下栏只剩该条(说明默认两行、文件清单带 ±行数)
+- `file-git-explorer`:头部**分支树小浮窗**(本地 / 远程分组,点选即换「查看分支」,不动工作区
+  实际分支)+ **worktree 切换器**(有工作树时可切看主仓或任意工作树的分支 / 变更 / 历史 / diff)
+- `file-git-explorer`:详情浮窗增**「全屏」开关**、`Alt`+滚轮横向滚动、文件名点击复制完整名;
+  两份列表的 hash 胶囊点一下复制完整 hash
+- `file-git-explorer`:终端选中即复制(带开关)、展开自动聚焦、标题条(页签 + 红色终止键)、
+  抽屉宽度跟随对话区、高度按工作区记忆
+- `db-console`:SQL 编辑器三级补全(关键字 / 表名 / `表名.` 出列)、`Ctrl/Cmd+Enter` 执行光标
+  所在语句或选区、行尾空白以极淡底色标出
+- `ds-balance`:`DSH_DS_BALANCE_DEMO=1` 演示模式(写死假数据、不联网,仅供伪造演示环境截图)
+- 工具链:`AGENTS.md`(agent 开发约定)、PR 模板与 `commit-msg` 内容完整性门禁、client bundle
+  装配冒烟、安装链预检(含跨插件冲突检查)、`audit` 改扫全部依赖(含 dev)
+- 文档:ADR-0002 / 0003 / 0004 / 0005(file-git-explorer 的实现取舍)
+
+### Changed
+
+- `file-git-explorer`:右栏宽度可拖(**200px ~ 15% 视口**),隐藏官方那两枚「分栏」「进全屏」
+  按钮;手动 `⟳` 刷新带 `git fetch --all --prune`(限时 8s);新增 `Alt+Ctrl+R`(刷新)、
+  `Alt+J` / `Alt+L`(切右栏页签)
+- `file-git-explorer`:切会话不再重读 git —— 同工作区 30s 内一次请求都不发,更久则先铺快照再后台重取
+- `batch-archive`:面板去掉 `backdrop-filter` 毛玻璃、关闭即不挂载主体、行与分组头 `React.memo`,
+  归档改 8 路并发
+- 根 `README.md` 收敛为速览口径(352 → 153 行):插件清单合并为一句一行,使用说明只留功能点,
+  原理与配置表移交插件自身 README;仓库不再内嵌逐插件截图,只保留一张全局全览图
+
+### Fixed
+
+- `file-git-explorer`:仓库根解析不再缓存(修新建仓库后失效);切工作区 shell 输入框不再残留上
+  一个工作区的命令;点文件后 git 页签不再被重置;`xterm` 加载失败不再被永久缓存(重开抽屉可重试);
+  终端选区不再拖进空白区;分支下拉与浮动栏互斥;深层被忽略目录可达;详情文件名不再被提前截断
+- `db-console`:修正 SQL 编辑器光标与高亮文本错位、补全上屏后光标跳回开头、underlay 与输入层
+  尺寸不共享等一组渲染问题;smoke 的 0600 断言改为只在 POSIX 上生效
+- `deps`:`js-yaml` 升到 4.3.2,修 `GHSA-2883-xcg3-v3hh` 高危 DoS
+
 ## [0.2.0] - 2026-08-29
 
 ### Changed
