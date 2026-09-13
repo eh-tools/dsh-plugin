@@ -820,6 +820,18 @@ check('fge: git 头部 38px(与会话头部对齐) + 拖柄不再隐藏 + 终端
         !/'\[data-sidebar-right-mode="fullscreen"\]\{display:none\}'/.test(source),
         '「进全屏」按钮要放回来(它是非全屏时唯一能进全屏的入口)',
     );
+    // 详情浮窗头上的「送回侧栏」藏掉(用户口径): 它把详情变回右栏页签, 与"详情只以浮层出现"相反。
+    // ⚠ 但**必须**限定在"我们的浮窗"里 —— 官方浮动宿主是所有页签共用的, 别的页签被浮起来
+    //    (拖页签 / 页签菜单)时也长着同一个按钮, 裸选择器会把人家一起藏了。
+    assert.match(
+        source,
+        /'\[data-dockkit-float\]:has\(\[data-dockkit-float-title\] \.fge-doc-name\) \[data-dockkit-float-dock\]\{display:none\}'/,
+        '详情浮窗的「送回侧栏」要藏掉, 且按"标题里有本插件的文件名芯片"限定',
+    );
+    assert.ok(
+        !/'\[data-dockkit-float-dock\]\{display:none\}'/.test(source),
+        '不许写成裸的 [data-dockkit-float-dock] —— 会把别的页签浮窗的「送回侧栏」也藏掉',
+    );
     // xterm 只认具体颜色: 传 rgba(0,0,0,0) 会被判无效并回落成它的默认黑,
     // 浅色主题下标题条(白)与终端体(黑)就断开, 看着就是"标题条错位"。
     assert.ok(

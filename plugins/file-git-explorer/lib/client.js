@@ -848,6 +848,14 @@ window.__ModuleLoader__.load({
           //      于是 ① 限宽的 `[data-sidebar-right-panel="push"]` 那条**不适用**, ② 面板是 fixed 覆盖,
           //      grid 那一轨多宽都看不见; 官方此时也不再渲染右栏拖柄(`!layoutInfo.rightbarFullscreen`)。
           '[data-dockkit-split-button]{display:none}',
+          //    「详情浮窗」头上的**「送回侧栏」**(`data-dockkit-float-dock`)也藏掉(用户口径):
+          //    它的效果是把详情变回右栏页签 —— 与"详情只以浮层出现"这条设计相反(误点后还得再点一次
+          //    同一个文件才重新浮起, 见 ADR-0002 / ADR-0003 的影子芯片), 留着只会让人误触。
+          //    ⚠ **必须按"这是不是我们的浮窗"限定**, 不能写成裸的 `[data-dockkit-float-dock]{display:none}`:
+          //      官方浮动宿主是所有页签共用的, 别的插件/官方页签被浮起来时(拖页签 / 页签菜单)也长这个按钮,
+          //      一起藏了人家就送不回侧栏。判据取**标题里的文件名芯片**(本插件两种详情标题都有它:
+          //      文档详情的 `DocName` 与 diff 的 `.fge-chip-label > DocName`)。
+          '[data-dockkit-float]:has([data-dockkit-float-title] .fge-doc-name) [data-dockkit-float-dock]{display:none}',
           // 3) 详情(浮窗)头部的**页签宽度** —— "文件名经常显示不全"的真因在这里, 不在标题上:
           //    官方给页签钉的是 `min-width:80px; max-width:170px`(`._tab_17p4l_156`), 于是半屏宽的浮窗里
           //    文件名可用宽度也只有 **170px**。
@@ -1225,7 +1233,8 @@ window.__ModuleLoader__.load({
        * 把某个页签采纳为唯一的悬浮详情: 关掉上一个(维持单面板), 再把它浮起来。
        *
        * 幂等: 对**已经浮起**的页签, 官方 float() 是 no-op, 所以重复调用是安全的 ——
-       * 这也顺带解决了"用户按了悬浮面板头上的「送回侧栏」之后, 再点同一个文件应当重新浮起"。
+       * 这也顺带解决了"详情被送回右栏页签之后, 再点同一个文件应当重新浮起"(`data-dockkit-float-dock`
+       * 已被本插件藏掉, 见 ensureStyles; 但官方还有拖页签/页签菜单这条路, 所以这条仍要成立)。
        */
       function adoptFloat(tabId, sessionId) {
         if (tabId === null || tabId === undefined) return;
@@ -1317,7 +1326,7 @@ window.__ModuleLoader__.load({
         var title = tab && typeof tab.title === 'string' ? tab.title : '';
         var visible = !!(tab && tab.visible);
         // 每导航到这个页签都会 +1(reveal 已存在的页签也算), 用它把"重新点同一个文件"也
-        // 变成一次采纳 —— 用户在悬浮面板头上按过「送回侧栏」之后, 再点该文件应当重新浮起。
+        // 变成一次采纳 —— 详情被送回右栏页签之后, 再点该文件应当重新浮起。
         var revision = tab && tab.navigation ? tab.navigation.revision : 0;
         var address = tab
           ? typeof tab.contentId === 'string' && tab.contentId !== ''
