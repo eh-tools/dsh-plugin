@@ -698,7 +698,9 @@ window.__ModuleLoader__.load({
           '.fge-copy[data-s="failed"]{color:#d9534f}',
           // 详情标题里的**文件名**: 点一下复制它自己(见 DocName)。
           // ⚠ 不动文字(不换成"已复制") —— 那样就看不见自己点的是哪个文件了, 只**染一下色**当反馈。
-          '.fge-doc-name{cursor:pointer;border-radius:3px;padding:0 2px;margin:0 -2px}',
+          // ⚠ 不能给它 padding/margin —— 官方页签用 scrollWidth>clientWidth 判断"被裁剪",
+          //   那 2px 会给一个**已经完整显示**的文件名点亮右侧渐隐(mask-image)。
+          '.fge-doc-name{cursor:pointer;border-radius:3px}',
           '.fge-doc-name:hover{background:rgba(128,128,128,.18)}',
           '.fge-doc-name[data-s="done"]{color:#3fa34d}',
           '.fge-doc-name[data-s="failed"]{color:#d9534f}',
@@ -843,15 +845,19 @@ window.__ModuleLoader__.load({
           '[data-dockkit-split-button]{display:none}',
           '[data-sidebar-right-mode="fullscreen"]{display:none}',
           // 3) 详情(浮窗)头部的**页签宽度** —— "文件名经常显示不全"的真因在这里, 不在标题上:
-          //    官方给页签钉的是 `min-width:80px; max-width:170px`(`._tab_17p4l_156`), 而**浮窗头部那个标题
-          //    就是同一个页签元素**(只是多挂了一个 `_floatTitle_` 变体, 见 `._float_17p4l_306`) ——
-          //    于是半屏宽的浮窗里, 文件名可用宽度也只有 **170px**。
+          //    官方给页签钉的是 `min-width:80px; max-width:170px`(`._tab_17p4l_156`), 于是半屏宽的浮窗里
+          //    文件名可用宽度也只有 **170px**。
           //    ⚠ 标题自己(`[data-dockkit-tab-title]`)本来就没有 max-width(`flex:1 1 auto; min-width:0;
           //      overflow:hidden` + 裁切时加 `mask-image`), 所以**改它是空操作** —— 这条踩过。
-          //    ⚠ 只放开**浮窗里**那一个: 页签条上那两格还靠官方这套 80/170 维持版式, 不动。
-          //    ⚠ 选择器用的是类名里的**可读段**(`_floatTitle_`)而不是 hash —— hash 每次构建都变;
-          //      真要改名了这条会静默失效(护栏里有断言盯这句存在)。
-          '[data-dockkit-tab][class*="_floatTitle_"]{max-width:none!important}',
+          //    ⚠ **浮窗里那格不带 `data-dockkit-tab`**(实测: 开着详情时 DOM 里只有「文件」「Git」两格带它,
+          //      详情那格已经被搬到浮窗里, 是 `_float_` / `_floatHeader_` 那套另一份渲染) —— 所以第一版按
+          //      `[data-dockkit-tab][class*="_floatTitle_"]` 选**永远匹配不到浮窗**, 名字照旧截断。
+          //      现在两条**各自独立生效**的钩子钉住它: 前者盯着"谁夹着标题"(类名将来变了也还在),
+          //      后者是官方那格自己的类(`Ce(me.tab, me.floatTitle)`; `_floatTitle_` 是 CSS Module 的局部名,
+          //      哈希后缀变了前缀还在)。`:has()` 在官方这套里本来就在用(见 §11 的第三轨规则), 不是新依赖。
+          //    ⚠ 只管**浮窗里**的: 页签条上那两格还靠官方 80/170 维持版式, 不动。
+          '[class*="_float_"] *:has(> [data-dockkit-tab-title]){max-width:none!important}',
+          '[class*="_floatTitle_"]{max-width:none!important}',
         ].join('\n');
         document.head.appendChild(el);
       }
@@ -1355,9 +1361,17 @@ window.__ModuleLoader__.load({
        *
        * - 复制的就是**文件名本身** —— 点的是什么就复制什么; 路径另有出处(地址在 `title` 属性上,
        *   内容复制走旁边那枚「复制内容」芯片)。
-       * - ⚠ **不吃掉这次点击**(不 `preventDefault` / 不 `stopPropagation`): 这个标题**同时出现在
-       *   页签条与浮窗头部**(见 DocTitle 的注释), 在页签条里让点击继续走到官方那层去"选中这个页签"
-       *   才是对的 —— 复制只是搭个便车。
+       * - ⚠ **不能挂 `onClick`**: 这个标题**同时出现在页签条与浮窗头部**(见 DocTitle 的注释),
+       *   而这两处的官方代码都在 `pointerdown` 时对**自己**调 `setPointerCapture` —— 页签是
+       *   `onTabPressed`, 浮窗是带 `data-dockkit-float-grip` 的那条 header。指针一旦被捕获,
+       *   其后的 mouse/click 全部重定向到那个元素: 官方自己的 `onClick`("选中页签")照常触发
+       *   (捕获元素正是它), 而**更深的子元素永远收不到 click** —— 实测 `click` 计数 0,
+       *   连自身的 `pointerup` 也是 0。所以这里改用「按下 → 抬起, 位移未达拖拽阈值」自己判定。
+       *   窗口级的 `pointerup`(捕获阶段)不受该重定向影响, 一定收得到。
+       * - 阈值与官方拖拽起手判据**逐字对齐**(`|dx|>=4 || |dy|>=4` 即官方认定这是拖拽):
+       *   "官方开始拖页签"与"我们不再复制"是同一条线, 拖一次不会顺手复制一个文件名。
+       * - ⚠ **不吃掉这次事件**(不 `preventDefault` / 不 `stopPropagation`): 在页签条里让点击继续走到官方
+       *   那层去"选中这个页签"才是对的 —— 复制只是搭个便车。
        * - 反馈沿用仓库既有的 `data-s`(done / failed, 1.2s), 只**染一下色**: 把文件名换成"已复制"
        *   会让人看不见自己点的是哪个文件。
        */
@@ -1366,6 +1380,7 @@ window.__ModuleLoader__.load({
         var pair = React.useState('idle');
         var state = pair[0];
         var setState = pair[1];
+        var down = React.useRef(null);
 
         React.useEffect(
           function () {
@@ -1380,7 +1395,38 @@ window.__ModuleLoader__.load({
           [state],
         );
 
-        function onClick() {
+        // 抬起时结算: 只有还在我们身上按下、且位移没到拖拽阈值的那一次才算"点击"。
+        // 挂在 window 上(而非本元素)是**必须**的 —— 见上面关于 pointer capture 的注释。
+        React.useEffect(
+          function () {
+            function settle(ev) {
+              var from = down.current;
+              down.current = null;
+              if (from === null || ev.pointerId !== from.id) return;
+              if (ev.type === 'pointercancel') return;
+              if (Math.abs(ev.clientX - from.x) >= 4 || Math.abs(ev.clientY - from.y) >= 4) return;
+              copyName();
+            }
+            window.addEventListener('pointerup', settle, true);
+            window.addEventListener('pointercancel', settle, true);
+            return function () {
+              window.removeEventListener('pointerup', settle, true);
+              window.removeEventListener('pointercancel', settle, true);
+            };
+          },
+          [name],
+        );
+
+        function onPointerDown(ev) {
+          // 只认主指针的左键: 右键/中键抬起, 以及多点触控的第二根手指, 都不该复制。
+          if (ev.button !== 0 || ev.isPrimary === false) {
+            down.current = null;
+            return;
+          }
+          down.current = { x: ev.clientX, y: ev.clientY, id: ev.pointerId };
+        }
+
+        function copyName() {
           if (typeof name !== 'string' || name === '') return;
           try {
             Promise.resolve(primitives.writeClipboard(name))
@@ -1403,7 +1449,7 @@ window.__ModuleLoader__.load({
             className: 'fge-doc-name',
             'data-s': state,
             title: '点击复制文件名',
-            onClick: onClick,
+            onPointerDown: onPointerDown,
           },
           name,
         );

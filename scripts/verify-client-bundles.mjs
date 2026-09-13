@@ -1747,18 +1747,32 @@ check('fge: Alt+Ctrl+R 刷新 git 树(与 ⟳ 同一条)+ 打开抽屉自动聚�
 check('fge: 详情标题加长 + 文件名点击复制', () => {
     const source = readFileSync(join(ROOT, 'plugins/file-git-explorer/lib/client.js'), 'utf8');
 
-    // —— 详情标题的宽度: 真因是页面签被官方钉死, 不是标题 ——
-    // 官方 `._tab_…{min-width:80px;max-width:170px}`; 浮窗头部那个标题**就是同一个页签元素**
-    // (多挂 `_floatTitle_` 变体), 所以半屏宽的浮窗里文件名也只有 170px。
-    // ⚠ 标题自己(`[data-dockkit-tab-title]`)没有 max-width —— 第一版改它是**空操作**, 这里留一道反向锁。
+    // —— 详情标题的宽度: 真因是**夹着标题的那个页签**被官方钉死, 不是标题自己 ——
+    // 官方 `._tab_…{min-width:80px;max-width:170px}`。⚠ 三个都踩过的坑:
+    //   ① 标题 `[data-dockkit-tab-title]` 自己没有 max-width, 改它是**空操作**;
+    //   ② 浮窗里那格**不带 `data-dockkit-tab`**(实测: 开着详情时只有「文件」「Git」两格带它),
+    //      所以按 `[data-dockkit-tab][class*="_floatTitle_"]` 选**匹配不到浮窗**;
+    //   ③ 但浮窗那格**确实**带 `_floatTitle_`(官方是 `Ce(me.tab, me.floatTitle)`), 只是 ② 那个条件多余。
+    //   ⇒ 两条各自独立生效的钩子: "谁夹着标题"(类名变了也还在) + 官方那格自己的类。
     assert.match(
         source,
-        /'\[data-dockkit-tab\]\[class\*="_floatTitle_"\]\{max-width:none!important\}'/,
-        '要放开**浮窗里**那个页签的 max-width(=170px), 这才是文件名被截的真因',
+        /'\[class\*="_float_"\] \*:has\(> \[data-dockkit-tab-title\]\)\{max-width:none!important\}'/,
+        '要按"标题的父元素"放开浮窗里那格(浮窗那格没有 data-dockkit-tab, 按它选会漏)',
+    );
+    assert.match(
+        source,
+        /'\[class\*="_floatTitle_"\]\{max-width:none!important\}'/,
+        '再留一条锚在官方类名上的独立钩子(不依赖 :has)',
+    );
+    assert.ok(
+        !/'\[data-dockkit-tab\]\[class\*="_floatTitle_"\]\{max-width:none!important\}'/.test(
+            source,
+        ),
+        '浮窗那格没有 data-dockkit-tab, 带这个条件的选择器永远匹配不到 —— 别再退回去',
     );
     assert.ok(
         !/\{max-width:none!important;min-width:0;flex:1 1 auto\}/.test(source),
-        '标题元素本来就没有 max-width, 别再给它加那条空操作(真因在页签上)',
+        '标题元素本来就没有 max-width, 别再给它加那条空操作(真因在夹着它的那格上)',
     );
     assert.match(
         source,
@@ -1768,8 +1782,10 @@ check('fge: 详情标题加长 + 文件名点击复制', () => {
     assert.ok(!/\.fge-chip-label\{[^}]*max-width/.test(source), '同样的病不要在另一条路径上留着');
 
     // —— 文件名点击复制 ——
-    // 复制的必须是**文件名本身**; 而且**不许吃掉这次点击**: 这个标题同时出现在页签条与浮窗头部,
-    // 在页签条里点击还要继续走到官方那层去"选中这个页签"。
+    // 复制的必须是**文件名本身**; 判定"这算点击"不能靠 `onClick`: 页签条与浮窗头部都在 pointerdown 时对
+    // **自己** `setPointerCapture`(官方 `onTabPressed` / `data-dockkit-float-grip` 那条 header),
+    // 之后 mouse/click 全被重定向到捕获元素 —— 官方自己的 onClick 照常触发(它就是捕获元素), 而更深的
+    // 子元素**永远收不到**(实测 click 计数 0, 连自身 pointerup 也是 0)。所以只能挂窗口级 pointerup 自己结算。
     assert.match(
         source,
         /h\(DocName, \{ name: title \}\)/,
@@ -1785,12 +1801,43 @@ check('fge: 详情标题加长 + 文件名点击复制', () => {
     const body = source.slice(fnAt, source.indexOf('function FileCopyButton(', fnAt));
     assert.match(body, /primitives\.writeClipboard\(name\)/, '点击要复制**文件名**');
     assert.ok(
+        !/\bonClick\b/.test(body),
+        '不许用 onClick —— 官方那两处 setPointerCapture 会把子元素的 click 吃干净(实测计数 0)',
+    );
+    assert.match(body, /onPointerDown: onPointerDown/, '要自己记下"按下"那一下');
+    assert.match(
+        body,
+        /window\.addEventListener\('pointerup', settle, true\)/,
+        '结算必须挂在窗口(捕获阶段)—— 挂在元素上照样被 pointer capture 改掉目标',
+    );
+    assert.match(
+        body,
+        /window\.addEventListener\('pointercancel', settle, true\)/,
+        '取消也要清掉按下态',
+    );
+    assert.match(
+        body,
+        /Math\.abs\(ev\.clientX - from\.x\) >= 4 \|\| Math\.abs\(ev\.clientY - from\.y\) >= 4/,
+        '位移阈值要与官方拖拽起手判据(4px)逐字对齐, 否则拖页签会顺手复制',
+    );
+    assert.ok(
         !/stopPropagation|preventDefault/.test(body),
         '不许吃掉这次点击 —— 页签条里那一下还要用来选中页签(复制只是搭便车)',
     );
     assert.match(body, /className: 'fge-doc-name'/, '要有自己的类名(样式与护栏都按它找)');
     assert.match(body, /'data-s': state/, '反馈沿用 data-s = done / failed');
     assert.match(body, /setState\(ok === false \? 'failed' : 'done'\)/, '写入失败要能反馈(failed)');
+    // ⚠ padding/margin 会给标题造出 2px 的假溢出, 而官方判断"要不要加右侧渐隐"的容差只有 1px
+    //   (`scrollWidth > clientWidth + 1`)—— 于是**已经完整显示**的文件名会亮起渐隐。
+    assert.match(
+        source,
+        /\.fge-doc-name\{cursor:pointer;border-radius:3px\}/,
+        '文件名芯片不许自己带 padding/margin(会骗过官方那 1px 容差的渐隐判据)',
+    );
+    assert.ok(
+        !/\.fge-doc-name\{[^}]*\b(padding|margin)\b/.test(source),
+        '同上: 别把那条 padding/margin 加回来',
+    );
     assert.match(
         source,
         /\.fge-doc-name\[data-s="done"\]\{color:#3fa34d\}/,
