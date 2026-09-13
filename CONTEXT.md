@@ -118,9 +118,19 @@ _Avoid_: 底部面板、终端页签、fixed 悬浮
 **终端选中即复制(copy-on-select)**:
 终端抽屉里的**默认复制路径** —— 拖选 / 双击选词 / 三击选行一松手(`mouseup`)就把选区写进剪贴板, 不用按键。
 **Alt+C 是兜底**: 内容与自动那次相同时也**强制重写一遍**(自动那次可能被浏览器或权限挡了, 这时内容当然一模一样, 不能跳过)。
-两条路共用同一条 `copySelection(force)`, 都走官方 `primitives.writeClipboard`。
-⚠ 读选区与发起写入在 `mouseup` 里**同步**做完(剪贴板 API 要"用户手势"); 监听挂**终端体**而非 `document`。
-_Avoid_: 自动复制、Alt+C 复制(那只指兜底那一条)、Ctrl+C 复制(那是 SIGINT)
+两条路共用同一条 `copySelection(force, expandTail)`, 都走官方 `primitives.writeClipboard`。
+**终端标题条右侧那枚开关**(`role="switch"`)关掉的是**自动**这条: Alt+C 照旧、选区收敛照旧, 状态记在 `fge-term-copy-v1`(默认开)。
+⚠ 读选区与发起写入在 `mouseup` 里**同步**做完(剪贴板 API 要"用户手势"); 监听挂**终端体**而非 `document`;
+⚠ 它长在"整条可点即收起"的标题条里, 所以点击必须 `stopPropagation`。
+_Avoid_: 自动复制、Alt+C 复制(那只指兜底那一条)、Ctrl+C 复制(那是 SIGINT)、开关=关掉复制(它只关自动那条)
+
+**选区尾巴收敛(selection tail clamp)**:
+指"选区不许漫到**最后一行有内容**之下"这条口径 —— 终端格子是按 `rows × cols` 画的, **光标下面本来就还有一整片空格**,
+放任的话一拖到底就选中一大堆空行、复制出一串换行(用户报的 bug)。三件事:
+**拖拽途中**在 `document` **捕获阶段**吃掉落在"内容下方"的 `mousemove`(xterm 的拖拽监听在冒泡阶段),
+**松手时**把尾巴收到那一行(`clampSelectionTail`), 而**中间的空行照留**(`findLastContentRow` 只找最深那行有内容的)。
+⚠ 只在 `mouseup` / Alt+C 落选区: xterm 的 `setSelection` 会 `_removeMouseDownListeners()`, 拖拽途中调用会把拖拽弄断。
+_Avoid_: 清空尾部、trim(那说的是复制出来的字符串; 这里是**选区本身**)、自动裁剪空格(xterm 自己每行都会右裁)
 
 **终端标题条(terminal title bar)**:
 终端抽屉顶上的那条标题区,外观照 Windows Terminal 的页签栏做 —— 一枚页签(`>_` 字形 + **尾部省略号**截断的工作区路径 + 悬停出现的 `×`),右端一枚 `■`。条里**恒定只有当前工作区这一枚页签**:它长得像页签,但**不是多页签容器**,每工作区仍是一个终端(见「工作区终端」)。点条空白处与点页签上的 `×` 等价(收起抽屉,不杀进程)。页签与 `■` 在**拖柄 + 标题条**这条带子里**垂直居中**(不贴底边那条线)。

@@ -319,6 +319,66 @@ window.__ModuleLoader__.load({
       return next;
     }
 
+
+    /**
+     * 「最后一行有内容」的**纯逻辑**: 从 `from` 往上找第一行有文字的行号(全是空行给 `-1`)。
+     * `readLine(i)` 给第 `i` 行的文本(**已右侧裁剪**), 空行给 `''`。
+     *
+     * ⚠ 只用来收**尾巴**: 中间的空行是内容的一部分(两条命令之间本来就可能是空行), 绝不许动它。
+     *   终端里真正"一个字都没有"的, 只有**最深那行有内容的下方**那一整块。
+     * ⚠ 扫描上界是确定有界的: xterm 的光标之上才是内容, 从底往上最多扫 `rows` 行就撞到光标那行。
+     */
+    function findLastContentRow(readLine, from) {
+      for (var i = from; i >= 0; i--) {
+        var text = readLine(i);
+        if (typeof text === 'string' && text !== '') return i;
+      }
+      return -1;
+    }
+
+    /**
+     * 把选区的**尾端**收到 `lastRow`(最后一行有内容的那行) —— 纯逻辑, 离线可断言。
+     * `range` 是 `term.getSelectionPosition()` 的结果(xterm 给的已经是**归一化**过的, `start` 在前)。
+     * `expandTail` = "这次拖拽被边界挡过"(见 `onMoveCapture` 里那个吃事件的开关)。
+     *
+     * - 尾巴本来就在 `lastRow` 以内 → `null`(这次选区不用动);
+     * - **两端都**在 `lastRow` 以下(整段都拖在空白里) → `{clear:true}` —— 那儿一个字都没有, 不该有选区;
+     * - 尾巴越过 `lastRow`, 或**正好贴在 `lastRow` 但这次被边界挡过** → 补到 `lastRow` 的 `lastCol` 列
+     *   (= **该行文字末尾**)。⚠ 跟 xterm 自己的口径一致 —— 它拖出视口下方时也是把 `selectionEnd[0]`
+     *   直接设成 `cols`(整行), 而不是留着鼠标那一列在那儿拖一片空格底色的假选区。
+     *   ⚠ `expandTail` 不能省: 拖到一半被挡住时, 鼠标那一列已经冻在越界的那一刻了(继续往右拖也收不到
+     *     事件), 不补的话"拖到底"会把最后一行**截断**(实测: `gamma-here` 只选到 `gamma-h`);
+     *     而**没被挡过**的时候绝不能补 —— 那可能是双击选词、或用户就是要选到某一列。
+     *
+     * `length` 是**线性格子数**: xterm 的 `select(col,row,len)` 就是按"起点 + 长度"、用列数折行算终点的。
+     */
+    function clampSelectionTail(range, lastRow, lastCol, cols, expandTail) {
+      if (range === null || typeof range !== 'object' || !range.start || !range.end) return null;
+      if (!(lastRow >= 0) || !(cols > 0)) return null;
+      var start = range.start;
+      var end = range.end;
+      if (end.y < lastRow) return null;
+      if (start.y > lastRow) return { clear: true };
+      var col = Math.min(Math.max(lastCol, 0), cols);
+      if (end.y === lastRow && (expandTail !== true || end.x >= col)) return null;
+      var length = (lastRow - start.y) * cols + (col - start.x);
+      if (!(length > 0)) return { clear: true };
+      return { column: start.x, row: start.y, length: length };
+    }
+
+    /**
+     * 鼠标 y → **绝对行号** —— 纯逻辑, 离线可断言。算法与 xterm 自己的 `getCoords` 同款
+     * (按格高取整 + 夹到 `[1, rows]`, 再换算成绝对行), 所以"内容下方"这条边界跟 xterm 认的边界
+     * 处处对得上: 指针跑到视口下方时它夹到最后一行、上方时夹到第一行。
+     * `-1` = 这次算不出来(容器还没布局、参数不合理), 调用方据此什么都别做。
+     */
+    function mouseRowAt(clientY, rectTop, rectHeight, rows, viewportY) {
+      if (!(rectHeight > 0) || !(rows > 0)) return -1;
+      var row = Math.ceil((clientY - rectTop) / (rectHeight / rows));
+      row = Math.min(Math.max(row, 1), rows);
+      return viewportY + row - 1;
+    }
+
     exports.apply = function (ctx) {
       var slots = ctx.slots;
       var h = React.createElement;
@@ -338,6 +398,11 @@ window.__ModuleLoader__.load({
       var VENDOR_BASE = '/fge/vendor';
       var WS_PATH = '/fge/ws/terminal';
       var TERM_HEIGHT_KEY = 'fge-term-height-v1';
+      /**
+       * 终端「选中即复制」开关的存储键。**默认开**(用户要的就是"选中就复制"), 关掉只停**自动**那一条 ——
+       * Alt+C 兜底不受开关影响。整机一个偏好, 不按工作区/会话分。
+       */
+      var TERM_COPY_KEY = 'fge-term-copy-v1';
       var TERM_MIN_PCT = 20;
       var TERM_MAX_PCT = 70;
       var TERM_DEFAULT_PCT = 40;
@@ -650,6 +715,19 @@ window.__ModuleLoader__.load({
           '.fge-term-glyph{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:18px;padding:0 4px;font-size:14px;line-height:1}',
           '.fge-term-kill{color:var(--dsw-alias-state-error-primary)}',
           '.fge-term-kill:hover{color:var(--dsw-alias-state-error-primary);background:var(--dsw-alias-interactive-bg-hover-danger)}',
+          // 条右端的「选中即复制」开关(用户口径: 做成开关放在 strip 右侧)。
+          // ⚠ 它长在**整条可点即收起**的标题条里, 所以它的 onClick 必须 stopPropagation —— 否则一按开关
+          //   就把抽屉收起来。hover 底色与 `×` / `■` 同款, 提示"这是个控件, 不是条的一部分"。
+          '.fge-term-switch{display:flex;flex:0 0 auto;align-items:center;gap:5px;padding:2px 5px;border:0;border-radius:4px;background:transparent;color:var(--dsw-alias-label-secondary);font-size:11.5px;line-height:1;cursor:pointer}',
+          '.fge-term-switch:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+          '.fge-term-switch:focus-visible{outline:1px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
+          // 轨道 + 滑块: 自己画的(primitives 里没有开关组件, 与 `>_` / `■` 同款做法, 不引依赖)。
+          // 关 = 边框色轨道, 开 = 品牌色轨道(active 态用品牌色是本仓库既有口径)。
+          '.fge-term-switch-track{position:relative;flex:0 0 auto;width:24px;height:13px;border-radius:7px;background:var(--dsw-alias-border-l2);transition:background-color .12s}',
+          '.fge-term-switch-knob{position:absolute;top:2px;left:2px;width:9px;height:9px;border-radius:50%;background:var(--dsw-alias-bg-base,#fff);transition:left .12s}',
+          '.fge-term-switch[aria-checked="true"] .fge-term-switch-track{background:var(--dsw-alias-brand-primary)}',
+          '.fge-term-switch[aria-checked="true"] .fge-term-switch-knob{left:13px}',
+          '.fge-term-switch-label{white-space:nowrap}',
           // ⚠ 拖柄**没有 hover 底色**(用户口径: "想拉伸抽屉时鼠标 hover 到边缘, 看到这条的底色跟旁边不一样") ——
           //   它是一整条 5px 通宽的横带, 一亮就是一整条, 在抽屉边缘上非常扎眼。
           //   可拖的提示交给 `cursor:ns-resize`(悬停时指针就变了), 这里保持完全透明。
@@ -1703,6 +1781,23 @@ window.__ModuleLoader__.load({
         }
       }
 
+      /** 终端「选中即复制」是否开着(默认开)。读写都吞异常: 存不下只是不记忆, 功能照旧。 */
+      function readTermCopy() {
+        try {
+          return window.localStorage.getItem(TERM_COPY_KEY) !== '0';
+        } catch (e) {
+          return true;
+        }
+      }
+
+      function writeTermCopy(on) {
+        try {
+          window.localStorage.setItem(TERM_COPY_KEY, on === true ? '1' : '0');
+        } catch (e) {
+          // localStorage 不可写时只是不记忆, 不影响功能
+        }
+      }
+
       /** git 页签上下两栏的比例(上栏占正文高度的百分比)。 */
       function readGitSplit() {
         try {
@@ -1739,6 +1834,18 @@ window.__ModuleLoader__.load({
         var statePair = React.useState('loading');
         var state = statePair[0];
         var setState = statePair[1];
+        /**
+         * 「选中即复制」开关的当前值。⚠ 终端 effect 只按 `[root, visible]` 重挂(重挂 = 重建终端),
+         * 所以开关**不能**进依赖数组, 只能走 ref 让 mouseup 那条闭包读到最新值。
+         */
+        var copyRef = React.useRef(props.copyOnSelect !== false);
+
+        React.useEffect(
+          function () {
+            copyRef.current = props.copyOnSelect !== false;
+          },
+          [props.copyOnSelect],
+        );
 
         React.useEffect(
           function () {
@@ -1749,19 +1856,123 @@ window.__ModuleLoader__.load({
             var fit = null;
             var ro = null;
             var onData = null;
-            var onMouseUp = null;
-            /** 挂 mouseup 的那个元素 —— **单独记着**: cleanup 时 hostRef.current 可能已经换人/为 null。 */
-            var mouseUpTarget = null;
+            /** 本次挂上去的所有监听 —— `[target, type, fn, capture]`, cleanup 照着这张表逐个摘。 */
+            var listeners = [];
             /** 上一次**已经写进剪贴板**的选区文字, 用来避免同一段被反复重写(见下面的 mouseup)。 */
             var lastCopied = null;
+            /** 这次拖拽是不是**从终端里**开始的 —— 只用来决定要不要吃掉 mousemove(见 onMoveCapture)。 */
+            var dragFromTerm = false;
+            /** 拖拽开始时算好的「最后一行有内容」的绝对行号(mouseup 时会重算一次)。 */
+            var dragLastRow = -1;
+            /** 这次拖拽被"内容下方那条边界"挡过没有 —— 挡过说明用户想拖到底, 松手时尾巴要补到行尾。 */
+            var dragBlocked = false;
+
+            /** 挂一个监听并记账(cleanup 时照表摘, 不用逐个记变量)。 */
+            function listen(target, type, fn, capture) {
+              if (target === null || target === undefined) return;
+              if (typeof target.addEventListener !== 'function') return;
+              target.addEventListener(type, fn, capture === true);
+              listeners.push([target, type, fn, capture === true]);
+            }
+
+            /** 第 `i` 行的文本(右侧裁剪后) —— 空行给 `''`。 */
+            function lineText(i) {
+              if (term === null || i < 0) return '';
+              var buf = term.buffer.active;
+              if (i >= buf.length) return '';
+              var line = buf.getLine(i);
+              if (line === undefined || line === null) return '';
+              if (typeof line.translateToString !== 'function') return '';
+              return line.translateToString(true);
+            }
+
+            /** 当前「最后一行有内容」的绝对行号(整屏都空给 -1)。 */
+            function lastContentRow() {
+              if (term === null) return -1;
+              return findLastContentRow(lineText, term.buffer.active.length - 1);
+            }
+
+            /**
+             * 把选区的**尾巴**收到最后一行有内容的那行 —— 用户报的 "拖到底选中一堆空行, 复制出一串换行"。
+             * 只在 mouseup / Alt+C 这种"这次选区定下来了"的时刻做, 因为 xterm 唯一的公开落选区接口
+             * `select()` 会先 `_removeMouseDownListeners()` —— 拖拽途中调用会把这次拖拽弄断。
+             * @param expandTail 这次拖拽被边界挡过 → 尾巴补到该行文字末尾(见 clampSelectionTail)
+             * @returns 收敛后是否还留着选区
+             */
+            function settleSelection(expandTail) {
+              if (term === null) return false;
+              var row = lastContentRow();
+              if (row < 0) return false;
+              var pos = null;
+              try {
+                pos =
+                  typeof term.getSelectionPosition === 'function' ? term.getSelectionPosition() : null;
+              } catch (e) {
+                pos = null;
+              }
+              if (pos === null || pos === undefined) return false;
+              var plan = clampSelectionTail(pos, row, lineText(row).length, term.cols, expandTail);
+              if (plan === null) return true;
+              try {
+                if (plan.clear === true) term.clearSelection();
+                else term.select(plan.column, plan.row, plan.length);
+              } catch (e) {
+                // 收敛失败就保持原样: 宁可多带几个空行, 也别把用户刚选的那段弄没了
+              }
+              return plan.clear !== true;
+            }
+
+            /** 从终端里按下左键 = 这次拖拽归我们管(抽屉上缘那条拖柄因此完全不受影响)。 */
+            function onMouseDownCapture(ev) {
+              dragFromTerm = ev.button === 0;
+              dragLastRow = dragFromTerm ? lastContentRow() : -1;
+              dragBlocked = false;
+            }
+
+            /**
+             * xterm 允许把选区一路拖到视口里**任何一格**, 包括内容下方那一大片空白 —— 这就是那条 bug。
+             * 做法: 在 **document 捕获阶段**吃掉这次 mousemove。xterm 的拖拽监听挂在 document 的
+             * **冒泡**阶段(捕获一定先跑), 收不到这次移动, 选区就停在最后一行有内容处, 拖蓝也不会漫过去。
+             * ⚠ 三个与门缺一不可: **从终端里开始**的拖拽 + 还按着左键 + 指针落在"内容下方那一块";
+             *   否则别处的拖拽(抽屉高度、git 分栏)或正常移动都会被误吃。
+             * ⚠ 应用开了鼠标上报(全屏 TUI: vim / htop …)时一概不碰 —— 那时鼠标归应用, 不是我们在选字。
+             */
+            function onMoveCapture(ev) {
+              if (disposed || !dragFromTerm) return;
+              if (!ev.buttons) {
+                dragFromTerm = false;
+                return;
+              }
+              if (term === null) return;
+              var modes = term.modes;
+              if (modes === undefined || modes === null) return;
+              if (modes.mouseTrackingMode !== 'none') return;
+              var el = term.element;
+              if (el === null || el === undefined || typeof el.querySelector !== 'function') return;
+              var rect = (el.querySelector('.xterm-screen') || el).getBoundingClientRect();
+              var row = mouseRowAt(
+                ev.clientY,
+                rect.top,
+                rect.height,
+                term.rows,
+                term.buffer.active.viewportY,
+              );
+              if (row >= 0 && row > dragLastRow) {
+                dragBlocked = true;
+                ev.stopPropagation();
+              }
+            }
 
             /**
              * 把终端当前选区写进剪贴板 —— **"选中即复制" 与 Alt+C 共用这一条**, 免得两条路走岔。
              * @param force Alt+C 走 true: 即使与上次复制的内容相同也**重写一遍**(它是"兜底" ——
              *              自动那次没成功时, 内容当然可能一模一样, 这时不能跳过)。
+             * @param expandTail 这次拖拽被内容边界挡过 → 尾巴补到行尾(见 clampSelectionTail)。
              * @returns 是否真的写了
              */
-            function copySelection(force) {
+            function copySelection(force, expandTail) {
+              // 先把尾巴收干净再读文本 —— 两个入口(mouseup / Alt+C)都走这条, 复制出来就不会带空行。
+              settleSelection(expandTail);
               var selected = typeof term.getSelection === 'function' ? term.getSelection() : '';
               if (typeof selected !== 'string' || selected === '') {
                 lastCopied = null; // 选区没了(普通单击清掉) —— 下次重新选同一段要能再复制
@@ -1795,18 +2006,31 @@ window.__ModuleLoader__.load({
                 termRef.current = term;
                 fitRef.current = fit;
                 liveTerms.add(term);
-                // **选中即复制**(用户口径: 终端里选中就复制, Alt+C 只是兜底)。
+                // **选中即复制**(用户口径: 终端里选中就复制, Alt+C 只是兜底; 条右侧那枚开关能关掉自动那条)。
                 // 拖选 / 双击选词 / 三击选行都以 mouseup 收尾, 所以在 mouseup 上读一次选区。
                 // ⚠ 必须在 mouseup **同步**读 + 同步发起写入: 剪贴板 API 要"用户手势",
                 //   挪进 setTimeout 就可能被拒(那时手势已经过期)。
                 // ⚠ 挂在**终端体**上(不是 document): 鼠标在终端外松开时不去动剪贴板。
-                if (typeof hostRef.current.addEventListener === 'function') {
-                  mouseUpTarget = hostRef.current;
-                  onMouseUp = function () {
-                    if (!disposed) copySelection(false);
-                  };
-                  mouseUpTarget.addEventListener('mouseup', onMouseUp);
-                }
+                // ⚠ 开关关着时**也要收选区**(settleSelection) —— 那是选区本身的口径, 与"要不要复制"无关。
+                listen(hostRef.current, 'mouseup', function () {
+                  if (disposed || term === null) return;
+                  // 这次拖拽被边界挡过 → 尾巴补到那行文字末尾("拖到底"就该整行选上, 不许把最后一行截断)
+                  var blocked = dragBlocked;
+                  dragBlocked = false;
+                  if (copyRef.current) copySelection(false, blocked);
+                  else settleSelection(blocked);
+                });
+                // 收尾两件事: 记下"这次拖拽从终端里开始"(供 onMoveCapture 判定), 以及拖拽结束就作废该标记。
+                listen(hostRef.current, 'mousedown', onMouseDownCapture, true);
+                listen(document, 'mousemove', onMoveCapture, true);
+                listen(
+                  document,
+                  'mouseup',
+                  function () {
+                    dragFromTerm = false;
+                  },
+                  true,
+                );
                 // ⚠ Alt+C 仍然保留, 而且是**强制**重写那一条(见 copySelection 的 force): 它就是给
                 // 自动那次没成功时兜底用的, 内容当然可能一样。
                 // 不用 Ctrl+C —— 那是 SIGINT, 必须原样送给 PTY;
@@ -1816,7 +2040,8 @@ window.__ModuleLoader__.load({
                   if (ev.type !== 'keydown') return true;
                   if (!ev.altKey) return true;
                   if (!(ev.key === 'c' || ev.key === 'C' || ev.code === 'KeyC')) return true;
-                  copySelection(true);
+                  // 兜底那条只按当前选区复制, 不做"补到行尾"的推断(那是拖拽手势才有的信息)
+                  copySelection(true, false);
                   return false;
                 });
                 try {
@@ -1913,15 +2138,17 @@ window.__ModuleLoader__.load({
               disposed = true;
               if (ro !== null) ro.disconnect();
               if (onData !== null) onData.dispose();
-              if (
-                onMouseUp !== null &&
-                mouseUpTarget !== null &&
-                typeof mouseUpTarget.removeEventListener === 'function'
-              ) {
-                mouseUpTarget.removeEventListener('mouseup', onMouseUp);
+              // 照登记表逐个摘 —— 包括挂在 document 捕获阶段那两个(不摘就会随着 effect 重跑越挂越多)。
+              for (var li = 0; li < listeners.length; li++) {
+                var rec = listeners[li];
+                if (typeof rec[0].removeEventListener === 'function') {
+                  rec[0].removeEventListener(rec[1], rec[2], rec[3]);
+                }
               }
-              onMouseUp = null;
-              mouseUpTarget = null;
+              listeners = [];
+              dragFromTerm = false;
+              dragLastRow = -1;
+              dragBlocked = false;
               if (ws !== null) {
                 try {
                   ws.close();
@@ -3074,6 +3301,13 @@ window.__ModuleLoader__.load({
         });
         var pct = pctPair[0];
         var setPct = pctPair[1];
+        /**
+         * 「选中即复制」开关(条右侧那枚)。**整机一个偏好**, 不按工作区/会话分 —— 与抽屉高度那种
+         * "每个工作区各记各的"不一样。默认开。
+         */
+        var copyPair = React.useState(readTermCopy);
+        var copyOn = copyPair[0];
+        var setCopyOn = copyPair[1];
 
         React.useEffect(
           function () {
@@ -3193,6 +3427,36 @@ window.__ModuleLoader__.load({
               ),
             ),
             h('span', { className: 'fge-spacer' }),
+            // 「选中即复制」开关: 放在条右侧、`■` 左边(用户口径)。
+            // ⚠ `role="switch"` + `aria-checked` 而不是靠样式表达状态; 关掉只停**自动**那条,
+            //   Alt+C 兜底照旧(它跟开关无关)。
+            h(
+              'button',
+              {
+                type: 'button',
+                className: 'fge-term-switch',
+                role: 'switch',
+                'aria-checked': copyOn ? 'true' : 'false',
+                'aria-label': '终端选中即复制',
+                title: copyOn
+                  ? '选中即复制: 开(选中就把文字放进剪贴板, 点一下关掉)'
+                  : '选中即复制: 关(点一下打开; Alt+C 复制始终可用)',
+                onClick: function (ev) {
+                  ev.stopPropagation();
+                  setCopyOn(function (prev) {
+                    var next = prev !== true;
+                    writeTermCopy(next);
+                    return next;
+                  });
+                },
+              },
+              h(
+                'span',
+                { className: 'fge-term-switch-track' },
+                h('span', { className: 'fge-term-switch-knob' }),
+              ),
+              h('span', { className: 'fge-term-switch-label' }, '选中复制'),
+            ),
             h(
               'button',
               {
@@ -3212,7 +3476,7 @@ window.__ModuleLoader__.load({
             { className: 'fge-term-body', id: 'fge-term-host' },
             root === ''
               ? h('div', { className: 'fge-empty' }, '等待会话工作区…')
-              : h(TerminalView, { root: root, visible: open }),
+              : h(TerminalView, { root: root, visible: open, copyOnSelect: copyOn }),
           ),
         );
       }
@@ -3489,6 +3753,14 @@ window.__ModuleLoader__.load({
     exports.__terminalPalette = terminalPalette;
     /** 右栏页签左右切换的下标计算 —— 离线护栏验它的**不环绕**语义(见 §14)。 */
     exports.__tabNeighbor = tabNeighbor;
+    /**
+     * 终端选区**尾巴收敛**的两个纯函数(见 §13): 找"最后一行有内容" + 把尾巴收到那行。
+     * 离线护栏直接拿假行数据跑 —— 这条 bug("拖到空白区, 复制出一堆空行")就是它们兜住的。
+     */
+    exports.__findLastContentRow = findLastContentRow;
+    exports.__clampSelectionTail = clampSelectionTail;
+    /** 鼠标 y → 绝对行号(与 xterm 的 getCoords 同款算法, 见 §13 的"内容下方"边界)。 */
+    exports.__mouseRowAt = mouseRowAt;
 
     return module.exports;
   },

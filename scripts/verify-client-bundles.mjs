@@ -690,35 +690,182 @@ check(
             '不要占用 Ctrl+Shift+C(那是浏览器/DevTools 的检查元素)',
         );
         assert.match(source, /writeClipboard/, '复制必须走 primitives.writeClipboard');
-        // 终端里的复制: **选中即复制**(mouseup 上读选区) + **Alt+C 兜底**, 两条路共用 copySelection。
+        // 终端里的复制: **选中即复制**(mouseup 上读选区) + **Alt+C 兜底**, 两条路共用 copySelection;
+        // 条右侧那枚开关只停"自动"那条(Alt+C 与开关无关)。
         assert.match(
             source,
-            /addEventListener\('mouseup', onMouseUp\)/,
+            /listen\(hostRef\.current, 'mouseup'/,
             '选中即复制: 必须在终端体上挂 mouseup(拖选 / 双击 / 三击都以 mouseup 收尾)',
         );
         assert.match(
             source,
-            /removeEventListener\('mouseup', onMouseUp\)/,
-            'mouseup 监听要在 cleanup 里摘掉(visible 抖动会让 effect 重跑, 否则越挂越多)',
+            /function listen\(target, type, fn, capture\)/,
+            '监听要走登记表挂 —— 挂在 document 上的那几个(捕获阶段)也必须在 cleanup 里摘干净',
         );
         assert.match(
             source,
-            /mouseUpTarget = hostRef\.current/,
-            'cleanup 要摘的是**当初挂上去那个元素** —— cleanup 时 hostRef.current 可能已换人/为 null',
+            /rec\[0\]\.removeEventListener\(rec\[1\], rec\[2\], rec\[3\]\)/,
+            'cleanup 要照登记表逐个摘(visible 抖动会让 effect 重跑, 不摘就越挂越多)',
         );
         assert.match(
             source,
-            /function copySelection\(force\)/,
+            /function copySelection\(force, expandTail\)/,
             '选中即复制与 Alt+C 必须共用同一条 copySelection',
         );
-        assert.match(source, /copySelection\(false\)/, 'mouseup 那条走非强制(同一段不重复写)');
         assert.match(
             source,
-            /copySelection\(true\)/,
-            'Alt+C 必须走强制 —— 它是兜底, 内容当然可能跟自动那次一样',
+            /copySelection\(false, blocked\)/,
+            'mouseup 那条走非强制(同一段不重复写)',
+        );
+        assert.match(
+            source,
+            /copySelection\(true, false\)/,
+            'Alt+C 必须走强制, 但不做"补到行尾"的推断(那是拖拽手势才有的信息)',
+        );
+        assert.match(
+            source,
+            /TERM_COPY_KEY = 'fge-term-copy-v1'/,
+            '开关状态要有存储键(整机一个偏好)',
+        );
+        assert.match(source, /function readTermCopy\(\)/, '开关要能读回上次的状态(默认开)');
+        assert.match(source, /function writeTermCopy\(on\)/, '开关切换要记下来');
+        // 开关: role=switch + aria-checked 表状态; 长在"整条可点即收起"的标题条里, 所以必须 stopPropagation。
+        const sw = /className: 'fge-term-switch'[\s\S]{0,1600}?'选中复制'/.exec(source);
+        assert.ok(sw !== null, '标题条里应有 .fge-term-switch 这枚开关(含文字标签)');
+        assert.match(sw[0], /role: 'switch'/, '开关要声明 role=switch');
+        assert.match(
+            sw[0],
+            /'aria-checked': copyOn \? 'true' : 'false'/,
+            '开关状态走 aria-checked',
+        );
+        assert.match(sw[0], /ev\.stopPropagation\(\)/, '点开关不许连带收起抽屉(条本身可点即收起)');
+        assert.match(sw[0], /writeTermCopy\(next\)/, '开关切换要落盘');
+        assert.match(sw[0], /'选中复制'/, '开关要有文字标签(光一个轨道看不出是什么)');
+        assert.match(
+            source,
+            /h\(TerminalView, \{ root: root, visible: open, copyOnSelect: copyOn \}\)/,
+            '开关的值要传给终端视图(否则开关只是个装饰)',
+        );
+        // ⚠ 拖拽途中**不许**落选区: xterm 的 setSelection 会先 `_removeMouseDownListeners()`,
+        //   拖到一半调用会把这次拖拽直接弄断(它就再也收不到 mousemove 了)。
+        const mcFrom = source.indexOf('function onMoveCapture(ev)');
+        assert.ok(mcFrom > 0, '应有 onMoveCapture(内容下方那条边界)');
+        const mcBody = source.slice(mcFrom, source.indexOf('function copySelection(', mcFrom));
+        assert.ok(
+            !/\.select\(|clearSelection\(/.test(mcBody),
+            '拖拽途中的边界处理只能"吃掉事件", 不许调用 select()/clearSelection()(那会弄断拖拽)',
+        );
+        assert.match(
+            mcBody,
+            /ev\.stopPropagation\(\)/,
+            '内容下方那条边界靠捕获阶段 stopPropagation 实现(xterm 的拖拽监听在 document 冒泡阶段)',
+        );
+        assert.match(
+            source,
+            /listen\(document, 'mousemove', onMoveCapture, true\)/,
+            '边界要挂在 document 的**捕获**阶段 —— 挂冒泡会被 xterm 的拖拽先吃掉',
+        );
+        assert.match(
+            mcBody,
+            /modes\.mouseTrackingMode !== 'none'/,
+            '应用开了鼠标上报(全屏 TUI)时一概不碰: 那时鼠标归应用',
+        );
+        assert.match(
+            source,
+            /dragBlocked = true/,
+            '被边界挡过要记下来 —— 松手时尾巴要补到那行文字末尾, 不许把最后一行截断',
         );
     },
 );
+
+check('fge: 终端选区尾巴收敛(纯函数: 最后一行有内容 / 收到那行 / 行号算法)', () => {
+    const styles = [];
+    const b = loadBundle('plugins/file-git-explorer/lib/client.js', {
+        documentOverrides: {
+            createElement: () => ({ style: { setProperty: () => {} } }),
+            head: { appendChild: () => {} },
+            getElementById: () => null,
+        },
+    });
+    assert.equal(
+        typeof b.exports.__findLastContentRow,
+        'function',
+        '选区的两个纯函数必须递出来给离线护栏跑',
+    );
+
+    const { __findLastContentRow: findLast, __clampSelectionTail: clamp } = b.exports;
+
+    // —— 最后一行有内容: 空行不算, 中间的空行也不算"尾巴"(它只是被跳过了) ——
+    const rows = ['alpha', 'beta', '', 'gamma-here', '', ''];
+    const reader = (i) => rows[i];
+    assert.equal(findLast(reader, rows.length - 1), 3, '第 3 行才是最后一行有内容');
+    assert.equal(findLast(reader, 2), 1, '从第 2 行往上找: 第 2 行空, 落到第 1 行');
+    assert.equal(
+        findLast(() => '', 9),
+        -1,
+        '整屏都空 → -1(调用方据此什么都别做)',
+    );
+    assert.equal(
+        findLast((i) => (i === 0 ? 'x' : ''), 5),
+        0,
+        '一路扫到第 0 行也要能找到',
+    );
+
+    // —— 尾巴收敛: 只动尾巴, 中间的空行与起点都不许动 ——
+    const cols = 40;
+    const beyond = { start: { x: 2, y: 0 }, end: { x: 20, y: 12 } };
+    assert.deepEqual(
+        clamp(beyond, 3, 10, cols, false),
+        { column: 2, row: 0, length: 3 * cols + (10 - 2) },
+        '尾巴越过内容底 → 收到第 3 行文字末尾(起点与行号都不变)',
+    );
+    assert.equal(
+        clamp({ start: { x: 2, y: 0 }, end: { x: 7, y: 2 } }, 3, 10, cols, false),
+        null,
+        '尾巴本来就在内容里 → 不动(用户自己选的)',
+    );
+    assert.deepEqual(
+        clamp({ start: { x: 3, y: 8 }, end: { x: 20, y: 13 } }, 3, 10, cols, false),
+        { clear: true },
+        '整段都拖在空白里 → 清掉(那儿一个字都没有)',
+    );
+    assert.equal(
+        clamp({ start: { x: 2, y: 0 }, end: { x: 5, y: 3 } }, 3, 10, cols, false),
+        null,
+        '尾巴**正好贴**在内容底但没被挡过 → 不许补(那是双击选词 / 用户就要选到这一列)',
+    );
+    assert.deepEqual(
+        clamp({ start: { x: 2, y: 0 }, end: { x: 5, y: 3 } }, 3, 10, cols, true),
+        { column: 2, row: 0, length: 3 * cols + (10 - 2) },
+        '被边界挡过时同样贴在那儿 → 补到文字末尾(实测: 不补会把 gamma-here 截成 gamma-h)',
+    );
+    assert.equal(
+        clamp({ start: { x: 2, y: 0 }, end: { x: 10, y: 3 } }, 3, 10, cols, true),
+        null,
+        '已经到文字末尾了就不用再补',
+    );
+    assert.equal(clamp(beyond, -1, 10, cols, false), null, '一行内容都没有时不动选区');
+    assert.equal(clamp(beyond, 3, 10, 0, false), null, 'cols 不合理时不动选区');
+    assert.equal(clamp(null, 3, 10, cols, false), null, '没有选区时不动');
+
+    // —— 行号算法: 必须与 xterm 的 getCoords 同款(1 基 + 越界夹住), 否则"内容下方"这条边界会错半行 ——
+    const { __mouseRowAt: rowAt } = b.exports;
+    assert.equal(rowAt(100, 100, 160, 16, 0), 0, '正好压在上边缘 = 第 0 行');
+    assert.equal(rowAt(109, 100, 160, 16, 0), 0, '第 0 行里任意位置都是第 0 行');
+    assert.equal(
+        rowAt(110, 100, 160, 16, 0),
+        0,
+        '正好压在两行交界上仍算上一行(xterm 用 ceil, 边界归上面那行)',
+    );
+    assert.equal(rowAt(110.5, 100, 160, 16, 0), 1, '越过交界才跨行');
+    assert.equal(rowAt(100 + 160 + 50, 100, 160, 16, 0), 15, '拖到容器外面 → 夹到最后一行');
+    assert.equal(rowAt(0, 100, 160, 16, 0), 0, '拖到容器上面 → 夹到第一行');
+    assert.equal(rowAt(109, 100, 160, 16, 300), 300, '滚动过的视口: 第 0 行 = viewportY');
+    assert.equal(rowAt(110.5, 100, 160, 16, 300), 301, '滚动过的视口要加上 viewportY(绝对行号)');
+    assert.equal(rowAt(110, 100, 0, 16, 0), -1, '容器没布局 → -1(调用方什么都别做)');
+    assert.equal(rowAt(110, 100, 160, 0, 0), -1, 'rows 不合理 → -1');
+    assert.ok(styles.length === 0, '这里不需要注入样式');
+});
 
 check('fge: git 页签上下两栏(上栏 3/4)+ 按目录归类 + 提交说明折叠两行', () => {
     const source = readFileSync(join(ROOT, 'plugins/file-git-explorer/lib/client.js'), 'utf8');
