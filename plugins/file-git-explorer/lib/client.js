@@ -839,11 +839,15 @@ window.__ModuleLoader__.load({
           //    并把光标钉成 col-resize —— 指针滑出那 8px 手柄时也还在拖。
           '[data-fge-resizing]{transition:none!important}',
           '[data-fge-resizing],[data-fge-resizing] *{cursor:col-resize!important}',
-          // 2) 隐藏右栏 chrome 的「分栏」与「进全屏」按钮(「收起」保留)。
-          //    `data-sidebar-right-mode` 的值是**下一个**模式, 所以只命中"当前不是全屏"时的进全屏按钮;
-          //    真到了全屏, 那个按钮(退出全屏)还在, 不会把人关在全屏里出不来。
+          // 2) 隐藏右栏 chrome 的「分栏」按钮(「收起」「+ 新页签」「进全屏」保留)。
+          //    ⚠ 「进全屏」原来一并藏了, 已按用户要求**放回来**: 它和「退出全屏」是**同一个**按钮 ——
+          //      非全屏时带 `data-sidebar-right-mode="fullscreen"`(图标/aria 是"进全屏"), 进了全屏才变成
+          //      `"push"`。所以藏掉它 = 非全屏时**永远进不去**(原来那条注释只说对了一半)。
+          //    ⚠ 放它回来不会跟上面那两条宽度规则打架: 官方面板全屏时自己换成
+          //      `data-sidebar-right-panel="fullscreen"` + `position:fixed;inset:0`(width:100%),
+          //      于是 ① 限宽的 `[data-sidebar-right-panel="push"]` 那条**不适用**, ② 面板是 fixed 覆盖,
+          //      grid 那一轨多宽都看不见; 官方此时也不再渲染右栏拖柄(`!layoutInfo.rightbarFullscreen`)。
           '[data-dockkit-split-button]{display:none}',
-          '[data-sidebar-right-mode="fullscreen"]{display:none}',
           // 3) 详情(浮窗)头部的**页签宽度** —— "文件名经常显示不全"的真因在这里, 不在标题上:
           //    官方给页签钉的是 `min-width:80px; max-width:170px`(`._tab_17p4l_156`), 于是半屏宽的浮窗里
           //    文件名可用宽度也只有 **170px**。

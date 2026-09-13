@@ -812,6 +812,14 @@ check('fge: git 头部 38px(与会话头部对齐) + 拖柄不再隐藏 + 终端
         !/\[data-side="rightbar"\]\{display:none\}/.test(source),
         '右栏拖柄不能再被 hiding —— 隐藏就没法拖',
     );
+    // 右栏 chrome 的按钮: 「分栏」隐藏, 「进全屏」**必须留着**(用户点名要回来)。
+    // ⚠ 「进全屏」与「退出全屏」是**同一个**按钮: 非全屏时带 data-sidebar-right-mode="fullscreen",
+    //    全屏时才变成 "push" —— 所以藏掉它 = 非全屏时永远进不去。
+    assert.match(source, /'\[data-dockkit-split-button\]\{display:none\}'/, '「分栏」按钮仍然隐藏');
+    assert.ok(
+        !/'\[data-sidebar-right-mode="fullscreen"\]\{display:none\}'/.test(source),
+        '「进全屏」按钮要放回来(它是非全屏时唯一能进全屏的入口)',
+    );
     // xterm 只认具体颜色: 传 rgba(0,0,0,0) 会被判无效并回落成它的默认黑,
     // 浅色主题下标题条(白)与终端体(黑)就断开, 看着就是"标题条错位"。
     assert.ok(
