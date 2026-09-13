@@ -641,6 +641,117 @@ check(
     },
 );
 
+check('fge: git 页签上下两栏(上栏 3/4)+ 按目录归类 + 提交说明折叠两行', () => {
+    const source = readFileSync(join(ROOT, 'plugins/file-git-explorer/lib/client.js'), 'utf8');
+    // 上栏(变更列表 / 当前 diff)默认占正文 3/4 —— 常量是唯一出处, 别在别处再写一个 75。
+    assert.match(source, /GIT_SPLIT_DEFAULT = 75/, '上栏默认占比必须是 3/4(75)');
+
+    // 两栏各滚各的 + 中间一条可拖的拖柄(直接看**注入出去的 CSS**, 拼法绕不过去)。
+    const styles = [];
+    const b = loadBundle('plugins/file-git-explorer/lib/client.js', {
+        documentOverrides: {
+            getElementById: () => null,
+            createElement: (tag) =>
+                tag === 'style'
+                    ? { id: '', textContent: '', setAttribute: () => {}, appendChild: () => {} }
+                    : { style: {}, setAttribute: () => {}, appendChild: () => {} },
+            head: { appendChild: (el) => styles.push(String(el.textContent || '')) },
+        },
+    });
+    const css = styles.join('\n');
+    assert.match(
+        css,
+        /\.fge-body\{[^}]*display:flex[^}]*flex-direction:column/,
+        '.fge-body 应是上下两栏的竖排 flex 容器',
+    );
+    assert.match(css, /\.fge-pane\{[^}]*overflow:auto/, '两栏要各自滚动(不能再是一个大滚动容器)');
+    assert.match(css, /\.fge-grip\{[^}]*cursor:ns-resize/, '中间要有可拖的分栏拖柄');
+    assert.match(css, /\.fge-dir\{/, '目录行样式缺了');
+
+    // 提交说明: 折叠态**只两行**, 放不下才有「展开 / 收起」(不然一段多行 message 能占掉半屏)。
+    assert.match(
+        css,
+        /\.fge-msg-text\[data-clamp="1"\]\{[^}]*-webkit-line-clamp:2/,
+        '提交说明折叠态必须夹在两行',
+    );
+    assert.match(css, /\.fge-msg-toggle\{/, '放不下时要给「展开 / 收起」');
+    assert.ok(
+        /scrollHeight > el\.clientHeight/.test(source),
+        '「放不下」要**量**出来, 不能按行数猜(一行很长的 subject 折行后同样得给出口)',
+    );
+    // 开关画在**文字上方**: 展开后原地不动, 不用拉滚动条去找「收起」(用户口径)。
+    const barAt = source.indexOf("className: 'fge-msg-bar'");
+    const textAt = source.indexOf("className: 'fge-msg-text'");
+    assert.ok(barAt !== -1 && textAt !== -1, '说明块应同时有 .fge-msg-bar 与 .fge-msg-text');
+    assert.ok(
+        barAt < textAt,
+        '「展开 / 收起」必须在说明文字**之前**渲染 —— 否则展开后按钮跑到最底下',
+    );
+    // 下栏(提交历史)最多 60% ⇒ 上栏下限必须抬到 40(往**上**拉也不能把变更列表挤没)。
+    assert.match(source, /GIT_SPLIT_MIN = 40/, '下栏最多占 60%: 上栏拖拽下限应为 40');
+
+    // 两份列表都得真的**走**这棵树上屏 —— 只定义不接线是最容易漏的一步。
+    assert.ok(
+        /changeRows = treeRows\(/.test(source),
+        '变更列表要经 treeRows 上屏(不是原来的平铺循环)',
+    );
+    assert.ok(
+        /historyRows = historyRows\.concat\(\s*treeRows\(/.test(source),
+        '提交展开的文件清单要经 treeRows 上屏',
+    );
+
+    // 按目录归类: 纯函数(见 exports.__pathTree —— 浏览器 bundle 不能 require 本包的模块)。
+    const tree = b.exports.__pathTree;
+    assert.ok(tree !== undefined, '应暴露 __pathTree 供离线校验');
+    const built = tree.compact(tree.build(['a/a1.txt', 'a/a2.txt', 'a/deep/x/y.txt'], (p) => p));
+    // `a/` 只出现一次目录行, 两个文件是它的 basename —— 不是平铺 a/a1.txt、a/a2.txt。
+    assert.deepEqual(
+        built.dirs.map((d) => d.name),
+        ['a'],
+    );
+    assert.deepEqual(
+        built.dirs[0].files.map((f) => f.name),
+        ['a1.txt', 'a2.txt'],
+    );
+    assert.deepEqual(
+        built.dirs[0].files.map((f) => f.path),
+        ['a/a1.txt', 'a/a2.txt'],
+        '完整路径要留着(diff 请求与 key 都用它)',
+    );
+    // 单链目录压成一行: a/deep/x/y.txt → 目录行 `deep/x`(否则一个文件白吃三行)。
+    assert.deepEqual(
+        built.dirs[0].dirs.map((d) => d.name),
+        ['deep/x'],
+    );
+    assert.deepEqual(
+        built.dirs[0].dirs[0].files.map((f) => f.name),
+        ['y.txt'],
+    );
+    // 根下的散文件不缩进, 且排在目录之后(目录在前、文件在后)。
+    const flat = tree.compact(tree.build(['b.txt', 'a/a1.txt'], (p) => p));
+    assert.deepEqual(
+        flat.files.map((f) => f.name),
+        ['b.txt'],
+    );
+    assert.deepEqual(
+        flat.dirs.map((d) => d.name),
+        ['a'],
+    );
+});
+
+check('fge: 右侧栏默认铺「文件」+「Git」两格, Git 是活动那格', () => {
+    const source = readFileSync(join(ROOT, 'plugins/file-git-explorer/lib/client.js'), 'utf8');
+    // 用户口径: **git 侧栏也像文件侧栏一样默认打开**。一次 seed 里先开官方「工作区文件」、
+    // 再开本插件的「Git」—— 后开的那格成为活动页签, 于是打开右栏直接是变更列表。
+    // (带 params 的 `openTab(DIFF_KIND, {...})` 用的是逗号, 不会被这条正则收进来。)
+    const calls = [...source.matchAll(/ctx\.sidebarRight\.openTab\(([A-Z_]+)\)/g)].map((m) => m[1]);
+    assert.deepEqual(
+        calls,
+        ['FILES_KIND', 'GIT_KIND'],
+        '默认页签应恰好铺「文件」+「Git」这一对, 且 Git 在后(= 活动格)',
+    );
+});
+
 console.log('');
 if (failures.length > 0) {
     console.error('client bundle 装配: ' + String(failures.length) + ' 项失败');

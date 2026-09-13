@@ -40,6 +40,79 @@ window.__ModuleLoader__.load({
     /** 官方右侧栏注册表 / 槽位注册表 / 悬浮面板控制面。 */
     exports.inject = ['slots', 'sidebarRightTabs', 'sidebarRight'];
 
+    // ---- 按目录归类(纯函数) ----
+    //
+    // 变更列表与提交展开出来的文件列表**共用**这一套: 一批路径折成一棵目录树, 同一目录只出现一次
+    // 目录行、文件名缩进列在下面 —— 而不是每个文件都把完整路径从头平铺一遍
+    // (`a/a1` + `a/a2` → `a/` 底下 `a1`、`a2`)。
+    //
+    // ⚠ 放在 apply 外面是为了让 `scripts/verify-client-bundles.mjs` 能离线直接跑这两个函数
+    //   (浏览器 bundle 不能 require 本包自己的模块), 见 exports.__pathTree。
+
+    /** 目录树节点: `name` 是本段目录名, `path` 是根到这里的完整路径(做 React key 用)。 */
+    function newDirNode(name, path) {
+      return { name: name, path: path, dirs: [], files: [] };
+    }
+
+    /**
+     * 一批带路径的东西 → 目录树。`pathOf(item)` 取路径, 结果挂在 `files[].item` 上原样带回。
+     * 顺序: 目录在前(首次出现的次序, 即 host 排好的路径序), 文件跟在后面。
+     */
+    function buildPathTree(items, pathOf) {
+      var root = newDirNode('', '');
+      for (var i = 0; i < items.length; i += 1) {
+        var item = items[i];
+        var path = String(pathOf(item) || '');
+        var segs = path.split('/');
+        var node = root;
+        for (var s = 0; s < segs.length - 1; s += 1) {
+          var next = null;
+          for (var d = 0; d < node.dirs.length; d += 1) {
+            if (node.dirs[d].name === segs[s]) {
+              next = node.dirs[d];
+              break;
+            }
+          }
+          if (next === null) {
+            next = newDirNode(segs[s], node.path === '' ? segs[s] : node.path + '/' + segs[s]);
+            node.dirs.push(next);
+          }
+          node = next;
+        }
+        node.files.push({ name: segs[segs.length - 1], path: path, item: item });
+      }
+      return root;
+    }
+
+    /**
+     * 单链目录压缩: `plugins` → `file-git-explorer` → `lib` 这种**自己没文件、又只套着一个目录**
+     * 的链并成一行 `plugins/file-git-explorer/lib` —— 否则一个文件的深路径要白吃三行。
+     */
+    function compactDirNode(node) {
+      var name = node.name;
+      var cur = node;
+      while (cur.files.length === 0 && cur.dirs.length === 1) {
+        cur = cur.dirs[0];
+        name = name + '/' + cur.name;
+      }
+      var out = newDirNode(name, cur.path);
+      out.files = cur.files;
+      for (var i = 0; i < cur.dirs.length; i += 1) {
+        out.dirs.push(compactDirNode(cur.dirs[i]));
+      }
+      return out;
+    }
+
+    /** 整棵树的入口: 根自己不是一行, 只把它的直接子目录逐个压一遍。 */
+    function compactPathTree(root) {
+      var out = newDirNode('', '');
+      out.files = root.files;
+      for (var i = 0; i < root.dirs.length; i += 1) {
+        out.dirs.push(compactDirNode(root.dirs[i]));
+      }
+      return out;
+    }
+
     exports.apply = function (ctx) {
       var slots = ctx.slots;
       var h = React.createElement;
@@ -64,6 +137,20 @@ window.__ModuleLoader__.load({
       var TERM_DEFAULT_PCT = 40;
       var COMMIT_PAGE = 50;
       var DIFF_KEEP = 8;
+      /**
+       * git 页签正文的**上下两栏**分栏比例: 上栏 = 变更列表(当前 diff), 下栏 = 提交历史。
+       *
+       * 上栏默认占正文的 **3/4**(用户口径); 中间那条 5px 拖柄可以拖, 拖过的值记在 `localStorage`
+       * (与终端抽屉高度同款), 双击拖柄回到 75。比例是**整个页签**的偏好, 不按会话分。
+       *
+       * 可拖区间 `[40, 90]` —— 上限是"下栏至少留一条", **下限是"下栏最多 60%"**(用户口径: 往上拉别把
+       * 变更列表挤没)。正文高度 = 整页高度减页签头那 38px, 所以"下栏 ≤ 60% 正文"一定 ≤ 60% 页面高度,
+       * 不需要再去量视口 —— 这个常量就是那条约束。
+       */
+      var GIT_SPLIT_KEY = 'fge-git-split-v1';
+      var GIT_SPLIT_DEFAULT = 75;
+      var GIT_SPLIT_MIN = 40;
+      var GIT_SPLIT_MAX = 90;
       /** 右侧栏最大宽度(视口百分比)。官方的首开宽度是 45%、上限 70%, 这里按用户要求压到 15。 */
       var RIGHTBAR_MAX_VW = 15;
       /**
@@ -175,22 +262,42 @@ window.__ModuleLoader__.load({
           '.fge-branch-mark{margin-left:auto;font-size:10px;color:var(--dsw-alias-label-tertiary)}',
           '.fge-ab{display:inline-flex;gap:4px;font-variant-numeric:tabular-nums;opacity:.85}',
           '.fge-spacer{flex:1 1 auto}',
-          '.fge-body{flex:1 1 auto;min-height:0;overflow:auto;padding:0 0 6px}',
+          // git 页签正文 = **上下两栏**(上 = 变更列表 / 当前 diff, 默认 3/4; 下 = 提交历史),
+          // 两栏**各自滚动**、各自吸顶, 中间一条 5px 拖柄调占比(见 GIT_SPLIT_*)。
+          // 上栏的 flex-basis 由行内样式给(拖动/记忆都在 GitTabBody 里), 这里只管排布。
+          '.fge-body{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;padding:0}',
+          '.fge-pane{min-height:0;overflow:auto;padding:0 0 6px}',
+          '.fge-pane-bottom{flex:1 1 auto}',
+          '.fge-grip{flex:0 0 auto;box-sizing:border-box;height:5px;cursor:ns-resize;border-top:1px solid var(--dsw-alias-border-l3);background:transparent}',
+          '.fge-grip:hover{background:var(--dsw-alias-interactive-bg-hover)}',
           '.fge-section{display:flex;align-items:center;gap:6px;position:sticky;top:0;z-index:1;padding:4px 9px;font-size:11px;font-weight:600;letter-spacing:.02em;opacity:.72;background:var(--dsw-alias-bg-base,rgba(0,0,0,.18));border-bottom:1px solid rgba(128,128,128,.16)}',
           '.fge-row{display:flex;align-items:center;gap:6px;padding:3px 9px;cursor:pointer;white-space:nowrap}',
           '.fge-row:hover{background:rgba(128,128,128,.16)}',
-          '.fge-indent{padding-left:22px}',
+          // 目录行(按目录归类): 比文件行重一档, 只出现一次目录名, 文件名缩进在它下面。
+          '.fge-dir{display:flex;align-items:center;gap:5px;padding:3px 9px;font-weight:600;opacity:.82;white-space:nowrap}',
+          '.fge-dir-glyph{flex:0 0 auto;color:var(--dsw-alias-label-tertiary)}',
+          // 文件名只出 basename(完整路径在 title 里), 长名尾部省略 —— min-width:0 是 flex 行里能截断的前提。
+          '.fge-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
           '.fge-badge{flex:0 0 auto;width:1.15em;text-align:center;font-weight:700;border-radius:3px;font-size:11px;background:rgba(128,128,128,.2)}',
           '.fge-badge[data-b="M"]{color:#c9822b}.fge-badge[data-b="A"]{color:#3fa34d}.fge-badge[data-b="D"]{color:#d9534f}',
           '.fge-badge[data-b="R"]{color:#4a7fd9}.fge-badge[data-b="C"]{color:#4a7fd9}.fge-badge[data-b="U"]{color:#d9534f}',
-          '.fge-path{overflow:hidden;text-overflow:ellipsis;direction:rtl;text-align:left}',
           '.fge-empty{padding:14px 10px;opacity:.65;text-align:center}',
           '.fge-dl-add{color:#3fa34d}.fge-dl-del{color:#d9534f}',
           '.fge-commit{display:flex;flex-direction:column;gap:1px;padding:4px 9px;cursor:pointer;border-bottom:1px solid rgba(128,128,128,.14)}',
           '.fge-commit:hover{background:rgba(128,128,128,.16)}',
           '.fge-commit-sub{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
           '.fge-commit-meta{opacity:.6;font-size:11px}',
-          '.fge-msg{margin:0;padding:6px 9px;white-space:pre-wrap;font-family:inherit;font-size:12px;line-height:1.5;border-bottom:1px solid rgba(128,128,128,.16)}',
+          // 提交说明(展开一条提交后最上面那块): **折叠态只显示两行**, 放不下才出现「展开 / 收起」。
+          // 右栏最窄 200px, 一段带 body 的 message 直接铺开会占掉半屏 —— 展开文件清单都看不见了。
+          // ⚠ 用 `-webkit-box` + `-webkit-line-clamp` 折行截断, 是否放得下**量** `scrollHeight > clientHeight`
+          //   (Chromium 实测: 5 行 → clientHeight 36 / scrollHeight 90; 正好两行 → 两边都是 36, 不误报)。
+          // ⚠ 开关(`.fge-msg-bar`)画在**文字上方**: 展开后它原地不动, 不用拉滚动条去找「收起」(用户口径)。
+          '.fge-msg{margin:0;padding:6px 9px 4px;border-bottom:1px solid rgba(128,128,128,.16)}',
+          '.fge-msg-bar{margin:0 0 2px;text-align:right;line-height:1}',
+          '.fge-msg-text{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font-family:inherit;font-size:12px;line-height:1.5}',
+          '.fge-msg-text[data-clamp="1"]{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}',
+          '.fge-msg-toggle{padding:0;border:0;background:transparent;color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));font:inherit;font-size:11px;line-height:1.4;cursor:pointer}',
+          '.fge-msg-toggle:hover{color:var(--dsw-alias-label-primary)}',
           '.fge-numstat{flex:0 0 auto;display:flex;gap:6px;align-items:baseline;font-size:11px;font-variant-numeric:tabular-nums}',
           // diff 悬浮面板的正文: 官方 FloatLayer 的 body 自己会滚, 这里只管排布与留白。
           '.fge-diff{padding:6px 8px 10px}',
@@ -1000,16 +1107,20 @@ window.__ModuleLoader__.load({
       var seededSessions = new Set();
 
       /**
-       * 右侧栏的默认页签。
+       * 右侧栏的默认页签 —— 铺**两格**: 官方「工作区文件」+ 本插件的「Git」, 且 **Git 是活动的那一格**。
        *
        * 官方 `defaultSeed` 的规则是: **guide 里恰好只有一条时**, 默认页签就是那一条; 有两条及以上
        * 就落回 guide 列表页。本插件自己也带一条 guide 条目(少了它 git 页签就没有入口), 于是默认
-       * 变成列表页 —— 这里补一步, 把它还原成「默认就是工作区文件」:
-       * 右栏还是空的 / 只有 guide 时, 打开「工作区文件」, 顺手把 guide 占位页收掉(此时它不是
-       * 唯一页签, `canCloseTab` 允许关)。
+       * 变成列表页 —— 这里补一步, 把它还原成"打开右栏就有东西看": 右栏还是空的 / 只有 guide 时,
+       * 先开官方的「工作区文件」, 再开本插件的「Git」(后开的这格成为活动页签), 顺手把 guide 占位页收掉
+       * (此时它不是唯一页签, `canCloseTab` 允许关)。
        *
-       * 不抢用户已经打开的页签: 每次尝试前都看一眼当前活动页签的 kind。失败(座位还没挂上 /
-       * 没有 files 类型)按次数退避重试, 用尽就静默放弃 —— 这只是锦上添花, 不该影响别的功能。
+       * 用户口径: **git 侧栏也像文件侧栏一样默认打开** —— 两格都在页签条上, 打开右栏直接是变更列表,
+       * 官方的文件树就在左边一格。想让「文件」当默认那一格, 把两次 `openTab` 调过来即可。
+       *
+       * 不抢用户已经打开的页签: 每次尝试前都看一眼当前活动页签的 kind(用户开的既不是 guide、
+       * 就已经是本插件铺好的那两格)。失败(座位还没挂上 / 类型还没到位)按次数退避重试,
+       * 用尽就静默放弃 —— 这只是锦上添花, 不该影响别的功能。
        */
       function seedRightbar(sessionId) {
         if (seededSessions.has(sessionId)) return;
@@ -1027,6 +1138,7 @@ window.__ModuleLoader__.load({
         if (active !== undefined && active.kind !== GUIDE_KIND) return; // 用户已经开了别的页签
         try {
           ctx.sidebarRight.openTab(FILES_KIND);
+          ctx.sidebarRight.openTab(GIT_KIND);
         } catch (err) {
           if (attempt < SEED_ATTEMPTS) {
             window.setTimeout(function () {
@@ -1237,6 +1349,26 @@ window.__ModuleLoader__.load({
           var map = raw ? JSON.parse(raw) : {};
           map[key] = pct;
           window.localStorage.setItem(TERM_HEIGHT_KEY, JSON.stringify(map));
+        } catch (e) {
+          // localStorage 不可写时只是不记忆, 不影响功能
+        }
+      }
+
+      /** git 页签上下两栏的比例(上栏占正文高度的百分比)。 */
+      function readGitSplit() {
+        try {
+          var raw = window.localStorage.getItem(GIT_SPLIT_KEY);
+          var pct = raw === null || raw === '' ? NaN : Number(raw);
+          if (!isFinite(pct)) return GIT_SPLIT_DEFAULT;
+          return Math.min(GIT_SPLIT_MAX, Math.max(GIT_SPLIT_MIN, pct));
+        } catch (e) {
+          return GIT_SPLIT_DEFAULT;
+        }
+      }
+
+      function writeGitSplit(pct) {
+        try {
+          window.localStorage.setItem(GIT_SPLIT_KEY, String(pct));
         } catch (e) {
           // localStorage 不可写时只是不记忆, 不影响功能
         }
@@ -1470,6 +1602,109 @@ window.__ModuleLoader__.load({
       /** 按会话缓存的 git 页签视图状态(见 GitTabBody 顶部注释)。 */
       var gitViews = new Map();
 
+      /** 行缩进: 9px 是 .fge-row / .fge-dir 的左右内边距, 每深一层再加 12px。 */
+      function indentPx(depth) {
+        return String(9 + depth * 12) + 'px';
+      }
+
+      /**
+       * 目录树 → 行数组。目录行在前(带一枚文件夹图标 + 压缩过的目录名), 文件行缩进跟在它后面;
+       * `makeFileRow(file, depth)` 由两份列表各自给(变更行带徽标, 提交里的文件行带 ±行数)。
+       */
+      function treeRows(node, depth, keyPrefix, makeFileRow) {
+        var rows = [];
+        for (var d = 0; d < node.dirs.length; d += 1) {
+          var dir = node.dirs[d];
+          rows.push(
+            h(
+              'div',
+              {
+                key: keyPrefix + 'd:' + dir.path,
+                className: 'fge-dir',
+                style: { paddingLeft: indentPx(depth) },
+                title: dir.path,
+              },
+              h(primitives.IconFolderClose16, { size: 12, className: 'fge-dir-glyph' }),
+              h('span', { className: 'fge-name' }, dir.name),
+            ),
+          );
+          rows = rows.concat(treeRows(dir, depth + 1, keyPrefix, makeFileRow));
+        }
+        for (var f = 0; f < node.files.length; f += 1) {
+          rows.push(makeFileRow(node.files[f], depth));
+        }
+        return rows;
+      }
+
+      /**
+       * 一条提交的**说明块**: 折叠态只显示**两行**, 放不下才给「展开 / 收起」。
+       *
+       * ⚠ 「放不下」是**量出来的**(`scrollHeight > clientHeight`, 见 .fge-msg CSS 注释), 不按行数猜 ——
+       *   一行很长的 subject 折行后同样得给出口, 猜短了就是把内容永久藏起来。
+       * ⚠ 只在**折叠态**量: 展开态 `scrollHeight === clientHeight`, 量了会让「收起」自己消失。
+       * ⚠ 开关画在**文字上方**: 展开后它不会跟着内容跑到最底下, 不用再拉滚动条去找「收起」(用户口径)。
+       * ⚠ 用 `useLayoutEffect` 而不是 `useEffect`: 按钮在**同一帧**就位, 下面的文件清单不会先跳一下。
+       * ⚠ 还盯一个 `ResizeObserver`: 右栏宽度可拖, 变宽可能就放得下了 —— 不重量的话「展开」会一直挂着;
+       *   反过来变窄时更糟(没按钮 = 内容被永久藏住)。
+       * 展开态本身**不放在这里** —— 与 `expanded` 同款, 按会话缓存在 GitTabBody 里(见 §10)。
+       */
+      function CommitMessage(props) {
+        var open = props.open === true;
+        var ref = React.useRef(null);
+        var overPair = React.useState(false);
+        var over = overPair[0];
+        var setOver = overPair[1];
+        React.useLayoutEffect(
+          function () {
+            var el = ref.current;
+            if (el === null) return undefined;
+            function measure() {
+              if (open) return; // 展开态量不出真话(两者相等)
+              if (el.scrollHeight > el.clientHeight + 1) setOver(true);
+              else setOver(false);
+            }
+            measure();
+            if (typeof ResizeObserver !== 'function') return undefined;
+            var observer = new ResizeObserver(measure);
+            observer.observe(el);
+            return function () {
+              observer.disconnect();
+            };
+          },
+          [open, props.text],
+        );
+        return h(
+          'div',
+          { className: 'fge-msg' },
+          over === true
+            ? h(
+                'div',
+                { className: 'fge-msg-bar' },
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'fge-msg-toggle',
+                    'aria-expanded': open ? 'true' : 'false',
+                    onClick: props.onToggle,
+                  },
+                  open ? '收起' : '展开',
+                ),
+              )
+            : null,
+          h(
+            'pre',
+            {
+              ref: ref,
+              className: 'fge-msg-text',
+              // 折叠态一律挂 data-clamp: 放不下时**首帧就是两行**, 不会先闪一下全文。
+              'data-clamp': open ? undefined : '1',
+            },
+            props.text,
+          ),
+        );
+      }
+
       /**
        * 本插件的常驻 git 页签。
        *
@@ -1521,9 +1756,18 @@ window.__ModuleLoader__.load({
         var expPair = React.useState(restored === null ? {} : restored.expanded);
         var expanded = expPair[0];
         var setExpanded = expPair[1];
+        // 提交说明的「展开全文」表(键 = commit hash)。跟 expanded 同款按会话缓存, 重挂后还在。
+        var msgPair = React.useState(restored === null ? {} : restored.msgOpen || {});
+        var msgOpen = msgPair[0];
+        var setMsgOpen = msgPair[1];
         var menuPair = React.useState(false);
         var menuOpen = menuPair[0];
         var setMenuOpen = menuPair[1];
+        // 上下两栏的比例(上栏 = 变更列表), 与终端抽屉高度同款: 拖过就记, 没拖过就是 3/4。
+        var splitPair = React.useState(readGitSplit);
+        var split = splitPair[0];
+        var setSplit = splitPair[1];
+        var bodyRef = React.useRef(null);
 
         // 分支小浮窗的锚点(头部那颗分支按钮)与面板; 定位与"点外面关掉"都用官方原语:
         // useAnchoredPosition 给视口坐标 + 视口内钳制, useDismissOnOutsidePointer 管外部 pointerdown。
@@ -1663,6 +1907,7 @@ window.__ModuleLoader__.load({
             viewedRef: viewedRef,
             history: history,
             expanded: expanded,
+            msgOpen: msgOpen,
           });
         });
 
@@ -1672,6 +1917,7 @@ window.__ModuleLoader__.load({
             if (restored !== null) return;
             setViewedRef('');
             setExpanded({});
+            setMsgOpen({});
             setHistory(null);
             closeOwnedFloat(); // 切工作区: 详情悬浮面板关掉
             handlers.current.reload();
@@ -1829,12 +2075,61 @@ window.__ModuleLoader__.load({
             });
         }
 
+        /**
+         * 展开 / 收起一条提交的**说明全文**(折叠态只给两行, 见 CommitMessage)。
+         * 只影响这一条提交, 跟「展开这条提交」是两件事。
+         */
+        function toggleMessage(hash) {
+          setMsgOpen(function (prev) {
+            var next = {};
+            for (var key in prev) {
+              if (Object.prototype.hasOwnProperty.call(prev, key)) next[key] = prev[key];
+            }
+            if (prev[hash] === true) delete next[hash];
+            else next[hash] = true;
+            return next;
+          });
+        }
+
         /** 切「查看分支」: 只决定看哪个分支的历史, 不动工作区的实际分支。 */
         function pickBranch(name) {
           setMenuOpen(false);
           setViewedRef(name);
           setHistory(null);
           loadHistory(name, 0);
+        }
+
+        /**
+         * 拖中间那条拖柄调整上下两栏的比例(做法与终端抽屉的上缘拖柄一致: move/up 挂 document)。
+         * 比例按正文容器的实际高度算, 所以右栏宽度、窗口高度变化都不影响手感。
+         */
+        function onSplitDown(ev) {
+          var el = bodyRef.current;
+          if (el === null) return;
+          ev.preventDefault();
+          var rect = el.getBoundingClientRect();
+          var final = null;
+          function onMove(e) {
+            if (rect.height <= 0) return;
+            final = Math.min(
+              GIT_SPLIT_MAX,
+              Math.max(GIT_SPLIT_MIN, ((e.clientY - rect.top) / rect.height) * 100),
+            );
+            setSplit(final);
+          }
+          function onUp() {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            if (final !== null) writeGitSplit(final);
+          }
+          document.addEventListener('mousemove', onMove);
+          document.addEventListener('mouseup', onUp);
+        }
+
+        /** 双击拖柄: 回到默认的 3/4。 */
+        function resetSplit() {
+          setSplit(GIT_SPLIT_DEFAULT);
+          writeGitSplit(GIT_SPLIT_DEFAULT);
         }
 
         // ---- 头部 ----
@@ -1888,7 +2183,7 @@ window.__ModuleLoader__.load({
           ),
         );
 
-        // ---- 变更列表 ----
+        // ---- 变更列表(按目录归类) ----
         var changes = status ? status.changes : [];
         var changeRows = [];
         if (status === null) {
@@ -1896,27 +2191,32 @@ window.__ModuleLoader__.load({
         } else if (changes.length === 0) {
           changeRows.push(h('div', { key: 'clean', className: 'fge-empty' }, '(工作区干净)'));
         } else {
-          for (var ci = 0; ci < changes.length; ci += 1) {
-            changeRows.push(
-              h(
+          changeRows = treeRows(
+            compactPathTree(
+              buildPathTree(changes, function (change) {
+                return change.path;
+              }),
+            ),
+            0,
+            'c:',
+            function (file, depth) {
+              var change = file.item;
+              return h(
                 'div',
                 {
-                  key: 'c:' + changes[ci].kind + ':' + changes[ci].path,
+                  key: 'c:f:' + file.path,
                   className: 'fge-row',
-                  title: changes[ci].origPath
-                    ? changes[ci].path + ' ← ' + changes[ci].origPath
-                    : changes[ci].path,
-                  onClick: (function (change) {
-                    return function () {
-                      openChangeDiff(change);
-                    };
-                  })(changes[ci]),
+                  style: { paddingLeft: indentPx(depth) },
+                  title: change.origPath ? change.path + ' ← ' + change.origPath : change.path,
+                  onClick: function () {
+                    openChangeDiff(change);
+                  },
                 },
-                h('span', { className: 'fge-badge', 'data-b': changes[ci].badge }, changes[ci].badge),
-                h('span', { className: 'fge-path' }, changes[ci].path),
-              ),
-            );
-          }
+                h('span', { className: 'fge-badge', 'data-b': change.badge }, change.badge),
+                h('span', { className: 'fge-name' }, file.name),
+              );
+            },
+          );
         }
 
         var changesSection = h(
@@ -2070,14 +2370,19 @@ window.__ModuleLoader__.load({
               );
               continue;
             }
-            // 展开态: 一次提交详情(host `show` 的返回)。
+            // 展开态: 一次提交详情(host `show` 的返回)。说明块默认折成两行, 放不下才有「展开」。
             var detail = row.detail;
             historyRows.push(
-              h(
-                'pre',
-                { key: 'h:' + commit.hash + ':m', className: 'fge-msg' },
-                detail.message || '(无提交说明)',
-              ),
+              h(CommitMessage, {
+                key: 'h:' + commit.hash + ':m',
+                text: detail.message || '(无提交说明)',
+                open: msgOpen[commit.hash] === true,
+                onToggle: (function (hash) {
+                  return function () {
+                    toggleMessage(hash);
+                  };
+                })(commit.hash),
+              }),
             );
             if (detail.kind === 'merge') {
               historyRows.push(
@@ -2096,31 +2401,50 @@ window.__ModuleLoader__.load({
               );
               continue;
             }
-            for (var fi = 0; fi < files.length; fi += 1) {
-              historyRows.push(
-                h(
-                  'div',
-                  {
-                    key: 'h:' + commit.hash + ':f' + String(fi),
-                    className: 'fge-row fge-indent',
-                    title: files[fi].path,
-                    onClick: (function (hash, filePath) {
-                      return function (ev) {
-                        ev.stopPropagation();
-                        openCommitFileDiff(hash, filePath);
-                      };
-                    })(commit.hash, files[fi].path),
-                  },
-                  h(
-                    'span',
-                    { className: 'fge-numstat' },
-                    h('b', { className: 'fge-dl-add' }, files[fi].adds === null ? '·' : '+' + String(files[fi].adds)),
-                    h('b', { className: 'fge-dl-del' }, files[fi].dels === null ? '·' : '−' + String(files[fi].dels)),
-                  ),
-                  h('span', { className: 'fge-path' }, files[fi].path),
+            // 文件清单也按目录归类(缩进从 1 起, 与原来的 .fge-indent 同档)。
+            historyRows = historyRows.concat(
+              treeRows(
+                compactPathTree(
+                  buildPathTree(files, function (file) {
+                    return file.path;
+                  }),
                 ),
-              );
-            }
+                1,
+                'h:' + commit.hash + ':',
+                function (file, depth) {
+                  var entry = file.item;
+                  var hash = commit.hash;
+                  return h(
+                    'div',
+                    {
+                      key: 'h:' + hash + ':f:' + file.path,
+                      className: 'fge-row',
+                      style: { paddingLeft: indentPx(depth) },
+                      title: entry.path,
+                      onClick: function (ev) {
+                        ev.stopPropagation();
+                        openCommitFileDiff(hash, entry.path);
+                      },
+                    },
+                    h(
+                      'span',
+                      { className: 'fge-numstat' },
+                      h(
+                        'b',
+                        { className: 'fge-dl-add' },
+                        entry.adds === null ? '·' : '+' + String(entry.adds),
+                      ),
+                      h(
+                        'b',
+                        { className: 'fge-dl-del' },
+                        entry.dels === null ? '·' : '−' + String(entry.dels),
+                      ),
+                    ),
+                    h('span', { className: 'fge-name' }, file.name),
+                  );
+                },
+              ),
+            );
           }
           if (history.done === false) {
             historyRows.push(
@@ -2160,7 +2484,30 @@ window.__ModuleLoader__.load({
           { className: 'fge-root' },
           head,
           branchMenu,
-          h('div', { className: 'fge-body' }, changesSection, historySection),
+          // 正文 = 上下两栏: 上栏**变更列表 / 当前 diff**(默认 3/4), 下栏**提交历史**。两栏各自滚动。
+          h(
+            'div',
+            { className: 'fge-body', ref: bodyRef },
+            h(
+              'div',
+              {
+                className: 'fge-pane',
+                style: {
+                  flexBasis: String(split) + '%',
+                  flexGrow: 0,
+                  flexShrink: 0,
+                },
+              },
+              changesSection,
+            ),
+            h('div', {
+              className: 'fge-grip',
+              title: '拖动调整两栏高度(双击回到 3/4)',
+              onMouseDown: onSplitDown,
+              onDoubleClick: resetSplit,
+            }),
+            h('div', { className: 'fge-pane fge-pane-bottom' }, historySection),
+          ),
         );
       }
 
@@ -2517,6 +2864,10 @@ window.__ModuleLoader__.load({
 
       console.info('[fge] ready — 右侧栏「git 页签」+ 详情悬浮面板, composer 下的终端抽屉');
     };
+
+    // 离线校验出口: `scripts/verify-client-bundles.mjs` 直接跑这两个**纯函数**验「按目录归类」
+    // (浏览器 bundle 不能 require 本包的模块, 所以只能这样递出去)。不是插件契约的一部分。
+    exports.__pathTree = { build: buildPathTree, compact: compactPathTree };
 
     return module.exports;
   },
