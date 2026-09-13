@@ -84,14 +84,14 @@ type: feat | fix | docs | style | refactor | perf | test | build | ci | chore | 
 | ---------- | --------------------------------------------------------------------------- |
 | commit     | prettier + eslint(自动修复)、密钥扫描(gitleaks)、YAML/JSON 校验、主分支拦截 |
 | commit-msg | Conventional Commits 格式校验 + `fix`/`perf`/`refactor` body 内容完整性     |
-| pre-push   | `node --check` 语法检查 + tool-vision 冒烟测试 + `pnpm audit --prod`        |
+| pre-push   | `node --check` 语法检查 + tool-vision 冒烟测试 + `pnpm audit`(全量, 含 dev) |
 
 手动等价命令:
 
 ```sh
 just lint    # eslint --fix + prettier --write
 just test    # 冒烟测试(无需真实模型/网络)
-just audit   # pnpm audit --prod
+just audit   # pnpm audit(全量, 含 dev —— 与 Dependabot 同口径)
 just check   # lint + test + audit
 ```
 

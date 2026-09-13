@@ -92,8 +92,9 @@ repos:
         pass_filenames: false
         always_run: true
       - id: pnpm-audit
-        name: pnpm audit 依赖审计
-        entry: pnpm audit --prod
+        name: pnpm audit 依赖审计(全量, 含 dev)
+        # ⚠ 不带 `--prod`: dev / 传递依赖里的高危同样要拦(js-yaml 那条就是这么漏过去的)
+        entry: pnpm audit
         language: system
         stages: [pre-push]
         pass_filenames: false
