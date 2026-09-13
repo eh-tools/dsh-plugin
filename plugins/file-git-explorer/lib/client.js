@@ -4123,6 +4123,63 @@ window.__ModuleLoader__.load({
         'fge: close float on Escape',
       );
 
+      // 详情浮窗里 **Alt + 滚轮 = 横向滚动**(用户口径: "代替横向滚动条")。
+      // 面板只有半屏宽, 长行(代码 / diff / 宽表格)要想看右边那段, 只能去够面板最下面那条横向滚动条 ——
+      // 它离指针太远, 所以给一条手势。
+      // ⚠ 必须 `{ capture: true, passive: false }`: 被动监听里的 `preventDefault()` 会被忽略(还可能在
+      //   console 里报一句), 那样横滚的同时竖滚也会发生。
+      // ⚠ 只认**本插件自己的详情浮窗** —— 判据同「送回侧栏」那条: 标题里有我们的文件名芯片。
+      //   官方浮动宿主是所有页签共用的, 不去改别人的浮窗行为。
+      // ⚠ **滚不动的那一下不吃**: 横向已经到边、或这个浮窗里根本没有能横滚的盒子时直接放行 ——
+      //   于是 Alt+滚轮在没横向余量时还是普通竖滚, 不会变成"滚轮失灵"。
+      // ⚠ 只认 Alt: 不带 Alt 的竖滚、带 Ctrl/Meta 的(浏览器缩放 / 系统手势)一概不碰。
+      ctx.effect(
+        function () {
+          /**
+           * 从事件目标往上找**第一个真的能横滚**的盒子(含浮窗体本身):
+           * 有横向溢出 + `overflow-x` 是 auto/scroll(官方的浮窗体是 `overflow:auto`,
+           * 代码块 / diff 内部还可能有自己的一层, 就近滚那一层更符合直觉)。
+           */
+          function horizontalBox(from, float) {
+            var node = from;
+            while (node !== null && node.nodeType === 1) {
+              if (node.scrollWidth > node.clientWidth + 1) {
+                var overflowX = window.getComputedStyle(node).overflowX;
+                if (overflowX === 'auto' || overflowX === 'scroll') return node;
+              }
+              if (node === float) break;
+              node = node.parentElement;
+            }
+            return null;
+          }
+
+          function onWheel(ev) {
+            if (ev.altKey !== true || ev.ctrlKey === true || ev.metaKey === true) return;
+            var target = ev.target;
+            if (target === null || typeof target.closest !== 'function') return;
+            var float = target.closest('[data-dockkit-float]');
+            if (float === null) return;
+            if (float.querySelector('[data-dockkit-float-title] .fge-doc-name') === null) return;
+            var box = horizontalBox(target, float);
+            if (box === null) return;
+            // deltaMode=1 是"行", 换算成像素; 纯横向滚轮(deltaY=0)交给浏览器自己那条路。
+            var step = ev.deltaMode === 1 ? ev.deltaY * 16 : ev.deltaY;
+            if (step === 0) return;
+            var max = box.scrollWidth - box.clientWidth;
+            var next = Math.max(0, Math.min(max, box.scrollLeft + step));
+            if (next === box.scrollLeft) return;
+            ev.preventDefault();
+            box.scrollLeft = next;
+          }
+
+          window.addEventListener('wheel', onWheel, { capture: true, passive: false });
+          return function () {
+            window.removeEventListener('wheel', onWheel, { capture: true });
+          };
+        },
+        'fge: alt+wheel scrolls the float sideways',
+      );
+
       // 右栏折叠 → 关掉本插件浮起的详情: 悬浮面板在 document.body 上的一个 fixed portal 里
       // (z-index 60), 不随右栏一起滑走, 所以必须显式关。
       ctx.effect(

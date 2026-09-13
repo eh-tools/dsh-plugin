@@ -1911,6 +1911,42 @@ check('fge: 详情浮窗的「全屏」开关(右栏页签条那枚仍然藏)', 
     assert.ok(n >= 2, '文档详情与 diff 详情两条路径都要有(实际 ' + String(n) + ' 处)');
 });
 
+check('fge: 详情浮窗 Alt+滚轮 = 横向滚动', () => {
+    const source = readFileSync(join(ROOT, 'plugins/file-git-explorer/lib/client.js'), 'utf8');
+    const at = source.indexOf('fge: alt+wheel scrolls the float sideways');
+    assert.ok(at > 0, '应注册这条 effect');
+    const body = source.slice(source.lastIndexOf('ctx.effect(', at), at);
+
+    // ⚠ 被动监听里 preventDefault 会被忽略 —— 那样横滚的同时竖滚也会发生。
+    assert.match(
+        body,
+        /window\.addEventListener\('wheel', onWheel, \{ capture: true, passive: false \}\)/,
+        'wheel 监听必须显式 `passive: false`(否则 preventDefault 无效)',
+    );
+    assert.match(
+        body,
+        /if \(ev\.altKey !== true \|\| ev\.ctrlKey === true \|\| ev\.metaKey === true\) return;/,
+        '只认 Alt; 带 Ctrl/Meta 的(浏览器缩放 / 系统手势)一概不碰',
+    );
+    assert.match(
+        body,
+        /float\.querySelector\('\[data-dockkit-float-title\] \.fge-doc-name'\) === null\) return;/,
+        '只认本插件自己的详情浮窗(官方浮动宿主是所有页签共用的)',
+    );
+    assert.match(body, /box\.scrollLeft = next;/, '横滚要落到那个盒子上');
+    // 先判"滚不动"再 preventDefault: 到边 / 无处可滚时放行, 否则滚轮会"失灵"。
+    assert.match(
+        body,
+        /if \(next === box\.scrollLeft\) return;[\s\S]{0,120}ev\.preventDefault\(\)/,
+        '要先判"滚不动"再 preventDefault(到边时放行给普通竖滚)',
+    );
+    assert.match(
+        body,
+        /window\.removeEventListener\('wheel', onWheel, \{ capture: true \}\)/,
+        '卸载要摘干净',
+    );
+});
+
 console.log('');
 if (failures.length > 0) {
     console.error('client bundle 装配: ' + String(failures.length) + ' 项失败');
