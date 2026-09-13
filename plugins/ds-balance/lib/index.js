@@ -62,6 +62,11 @@ export function apply(ctx) {
   // node 绝对路径回退(scrubbed PATH 可能不含 node), 可用环境变量覆盖。
   // 直接复用当前 host 进程的 node, 天然跨平台且不依赖 PATH。
   const NODE_BIN = process.env.DSH_DS_BALANCE_NODE_BIN ?? process.execPath;
+  // 虚构演示环境(伪造的 dsh web 截图用): DSH_DS_BALANCE_DEMO=1 时直接返回一份
+  // 固定快照, 不解析凭证、不发起任何网络请求。默认关闭, 真实环境行为完全不变。
+  // 存在的理由: 演示环境的 mock LLM 端点必然不是 api.deepseek.com, 会被下面的
+  // "非官方隐藏"整行挡掉, 而全览截图需要那一行。
+  const DEMO = process.env.DSH_DS_BALANCE_DEMO === '1';
 
   // 在全局 node_modules 下定位可用的 playwright 模块。npm 有时会把
   // playwright 提升到顶层, 有时嵌套在 @playwright/test/node_modules 下,
@@ -326,7 +331,35 @@ export function apply(ctx) {
     return parsed;
   }
 
+  // 演示快照: 数值固定, 只供截图, 不代表任何真实账号; 也永远不会真的联网。
+  function demoAccount() {
+    const bucket = (requests, hit, miss, response) => ({
+      requests,
+      promptCacheHit: hit,
+      promptCacheMiss: miss,
+      response,
+    });
+    return {
+      ok: true,
+      official: true,
+      demo: true,
+      base: DEFAULT_BASE_URL,
+      hasToken: true,
+      currency: 'CNY',
+      total: 31.93,
+      granted: 4.48,
+      toppedUp: 27.45,
+      isAvailable: true,
+      usage: {
+        today: bucket(954, 168000000, 41000000, 5000000),
+        month: bucket(27158, 1600000000, 420000000, 58000000),
+      },
+      at: Date.now(),
+    };
+  }
+
   async function queryAccount() {
+    if (DEMO) return demoAccount();
     const key = await resolveCredential('DEEPSEEK_API_KEY');
     if (key === undefined) return { ok: false, error: 'no-key' };
     // 平台用量接口需要网页登录态 userToken; 未配置则只显示余额。
