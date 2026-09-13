@@ -103,6 +103,75 @@ function makeDocumentStub(overrides = {}) {
 }
 
 /**
+ * 一个**只带 hooks 语义、不画 UI** 的最小 React —— 给"组件级"的离线回归用。
+ *
+ * 真渲染(`react-dom`)与真 DOM 由浏览器里那段负责; 这里要验的是**挂载决策**:
+ * 同一个工作区换个会话把组件挂第二遍时, 它到底还发不发 git 请求。那取决于 `useState` 的**初值**
+ * 与那条 mount effect, 不取决于 DOM —— 所以够用的 hook 语义足矣, 多写了反而是自欺。
+ *
+ * 语义: hook 顺序稳定(每次渲染从 0 数)、状态 / ref 跨渲染保持、effect 按依赖数组决定跑不跑
+ * (无依赖数组 = 每次渲染都跑, 挂载必跑)。`remount()` = 换一个组件实例(旧实例的状态不回来),
+ * 正是「切会话」在 hook 层的样子。
+ */
+function makeHookReact() {
+    const hooks = [];
+    let cursor = 0;
+    let queued = [];
+    const react = {
+        createElement: (type, props, ...children) => ({ type, props: props || {}, children }),
+        useState: (init) => {
+            const at = cursor++;
+            if (!(at in hooks)) hooks[at] = typeof init === 'function' ? init() : init;
+            const set = (value) => {
+                hooks[at] = typeof value === 'function' ? value(hooks[at]) : value;
+            };
+            return [hooks[at], set];
+        },
+        useRef: (init) => {
+            const at = cursor++;
+            if (!(at in hooks)) hooks[at] = { current: init };
+            return hooks[at];
+        },
+        useMemo: (fn) => fn(),
+        useCallback: (fn) => fn(),
+        useEffect: (fn, deps) => {
+            const at = cursor++;
+            const prev = hooks[at];
+            const same =
+                prev !== undefined &&
+                prev.deps !== undefined &&
+                deps !== undefined &&
+                deps.length === prev.deps.length &&
+                deps.every((dep, i) => Object.is(dep, prev.deps[i]));
+            hooks[at] = { deps: deps === undefined ? undefined : deps.slice() };
+            if (!same) queued.push(fn);
+        },
+        useLayoutEffect: (...args) => react.useEffect(...args),
+        /** 渲染一次: 重置 hook 游标, 并收下这次要跑的 effect(由调用方 flush)。 */
+        render(component, props) {
+            cursor = 0;
+            queued = [];
+            const tree = component(props);
+            return { tree, effects: queued };
+        },
+        /** 换一个组件实例(卸载重挂) —— hook 清零。 */
+        remount() {
+            hooks.length = 0;
+        },
+    };
+    return react;
+}
+
+/** 把一棵 `createElement` 树里的**文本子节点**收成一个串(断言"屏上有什么"用)。 */
+function treeText(node) {
+    if (node === null || node === undefined || node === true || node === false) return '';
+    if (typeof node === 'string' || typeof node === 'number') return String(node);
+    if (Array.isArray(node)) return node.map(treeText).join('');
+    if (typeof node === 'object' && Array.isArray(node.children)) return treeText(node.children);
+    return '';
+}
+
+/**
  * 在 stub 环境里加载一个 client bundle 并执行 apply()。
  * @param {string} relPath bundle 相对仓库根的路径
  * @param {object} [options] 需要更真的环境时给的覆盖项:
@@ -315,6 +384,210 @@ const OFFICIAL_TEXT_ID = '@deepseek-ai/dsh-client-ui-sidebar-documentpreview';
         }
     });
 }
+
+// ---- fge: 同一个工作区切会话**不许**再读一遍 git(§10 回归锁) ----
+//
+// 复现的 bug: 数据快照原先与"视图状态"一起挂在**会话 id** 上, 于是同一个工作区换个会话就被当成
+// 全新工作区, `info → status → log` 又走一遍(真 boot 实测: 每次切换固定这三条, 200–730ms),
+// 面板先白成「读取中… / 读取历史…」再回填 —— 使用者口径就是"切个会话又要等它读一遍"。
+//
+// 判据(纯函数)与**真实组件**各验一遍: 前者锁规则, 后者锁"组件真的按这条规则在跑"
+// (把 `gitDataDecision` 退回"同工作区也永远重新取"的旧规则, 这一条立刻变红)。
+
+{
+    const b = loadBundle('plugins/file-git-explorer/lib/client.js');
+
+    check('fge: 工作区键归一化(盘符 / 反斜杠 / 尾斜杠 / 大小写)', () => {
+        const key = b.exports.__workspaceKey;
+        assert.equal(typeof key, 'function', 'bundle 应导出 __workspaceKey');
+        assert.equal(key('E:\\repo\\'), 'e:/repo', '盘符折大小写、反斜杠折 /、去掉尾斜杠');
+        assert.equal(key('e:/repo'), key('E:\\repo\\'), '同一目录的不同写法是同一个工作区');
+        assert.equal(key('//server/share/Repo/'), '//server/share/repo');
+        assert.equal(key('/home/u/repo/'), '/home/u/repo', '非盘符路径不折大小写');
+        assert.equal(key('/home/u/REPO'), '/home/u/REPO', 'POSIX 大小写敏感, 不许折');
+        assert.equal(key(''), null, '空 = 没有工作区');
+        assert.equal(key('   '), null);
+        assert.equal(key(undefined), null);
+        assert.equal(key(null), null);
+    });
+
+    check('fge: 复用判据 —— 同工作区新鲜则 skip, 旧了 revalidate, 别的仓库 load', () => {
+        const decide = b.exports.__gitDataDecision;
+        assert.equal(typeof decide, 'function', 'bundle 应导出 __gitDataDecision');
+        const snap = { cwd: 'E:\\repo', at: 1000 };
+        assert.equal(
+            decide(snap, 'E:\\repo', 1000 + 29_000, 30_000),
+            'skip',
+            '同工作区 + 新鲜 → skip',
+        );
+        assert.equal(
+            decide(snap, 'e:/repo', 1000 + 1, 30_000),
+            'skip',
+            '同一目录的另一种写法也算同工作区',
+        );
+        assert.equal(
+            decide(snap, 'E:\\repo', 1000 + 31_000, 30_000),
+            'revalidate',
+            '同工作区但旧了 → 快照照铺, 后台重取',
+        );
+        assert.equal(decide(snap, 'E:\\other', 1000 + 1, 30_000), 'load', '换工作区 → 从头取');
+        assert.equal(decide(undefined, 'E:\\repo', 1000, 30_000), 'load', '没有快照 → 从头取');
+        assert.equal(
+            decide(snap, null, 1000, 30_000),
+            'load',
+            '工作区还不知道 → 从头取, 不许拿别的仓库的数据顶上',
+        );
+        assert.equal(decide(snap, '', 1000, 30_000), 'load', '空 cwd 同上');
+    });
+
+    check('fge: 上下两栏之间只剩那条 1px 分界线(拖柄不再撑出空隙)', () => {
+        // 直接看**注入出去的 CSS**(与终端那几条同款手法): 这几条是字符串拼出来的, 读源码文本会被拼法绕过去。
+        const styles = [];
+        loadBundle('plugins/file-git-explorer/lib/client.js', {
+            documentOverrides: {
+                getElementById: () => null,
+                createElement: (tag) =>
+                    tag === 'style'
+                        ? { id: '', textContent: '', setAttribute: () => {}, appendChild: () => {} }
+                        : { style: {}, setAttribute: () => {}, appendChild: () => {} },
+                head: { appendChild: (el) => styles.push(String(el.textContent || '')) },
+            },
+        });
+        const css = styles.join('\n');
+        const rule = (selector) => {
+            const at = css.indexOf(selector + '{');
+            assert.ok(at >= 0, '应注入 ' + selector + ' 规则');
+            return css.slice(at + selector.length + 1, css.indexOf('}', at));
+        };
+        // 用户报的"空隙": 上栏 `padding-bottom:6px` + 5px 实体拖柄 = 两栏之间约 11px 的空白带。
+        assert.ok(
+            !/(^|;)\s*padding[^;]*6px/.test(rule('.fge-pane')),
+            '上栏不许再留底部内边距 —— 那 6px 与拖柄叠起来就是两栏之间那块空白带',
+        );
+        assert.match(rule('.fge-pane-bottom'), /padding:0 0 6px/, '留白只留给下栏最底缘');
+        // 拖柄 = 那条分界线本身: 布局高度 1px, 热区由伪元素压上去(不再占出 4px 空隙)。
+        assert.match(rule('.fge-grip'), /height:1px/, '拖柄布局高度必须是 1px(就是那条分界线)');
+        assert.match(
+            rule('.fge-grip'),
+            /z-index:2/,
+            '热区要压过 sticky 标题栏的 z-index:1, 否则线那一带会被标题栏抢走、按不动',
+        );
+        assert.match(
+            rule('.fge-grip::after'),
+            /top:-4px/,
+            '热区交给 ::after 压上去, 不许再用实体盒子占高度',
+        );
+        assert.match(
+            rule('.fge-grip::after'),
+            /height:5px/,
+            '热区仍是 5px, 与原来那条实体拖柄一样好拖',
+        );
+    });
+}
+
+await checkAsync('fge: 同工作区切会话 —— 第二个会话一次 git 请求都不发, 数据直接上屏', async () => {
+    const CWD = 'E:\\repo';
+    const responses = {
+        info: { ok: true, cwd: CWD, repoRoot: CWD },
+        status: {
+            ok: true,
+            repoRoot: CWD,
+            current: 'main',
+            head: 'head-1',
+            upstream: null,
+            ahead: 0,
+            behind: 0,
+            initial: false,
+            detached: false,
+            branches: [],
+            changes: [{ path: 'a.txt', badge: 'M' }],
+        },
+        log: {
+            ok: true,
+            repoRoot: CWD,
+            ref: null,
+            head: 'head-1',
+            commits: [
+                { hash: 'c0ffee', short: 'c0ffe', author: 'ann', at: 1, subject: '工作区里的提交' },
+            ],
+        },
+    };
+    const calls = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+        const method = String(url).slice(String(url).lastIndexOf('/') + 1);
+        calls.push(method);
+        return { ok: true, status: 200, json: async () => responses[method] };
+    };
+    /** 让出足够多拍, 把 fetch 的整条 promise 链(info → status → log)跑完。 */
+    const settle = async () => {
+        for (let i = 0; i < 8; i += 1) await Promise.resolve();
+        await new Promise((resolve) => setImmediate(resolve));
+    };
+    try {
+        const react = makeHookReact();
+        const b = loadBundle('plugins/file-git-explorer/lib/client.js', {
+            requireOverrides: {
+                react,
+                // git 页签体只用到这两个官方 hook 与两个图标; 它们与本回归无关, 给空实现即可。
+                '@deepseek-ai/dsh-client-ui-primitives': {
+                    useAnchoredPosition: () => null,
+                    useDismissOnOutsidePointer: () => {},
+                    IconBranchOutline16: () => null,
+                    IconChevronDownOutline14: () => null,
+                },
+            },
+        });
+        const git = b.slots.find(
+            (s) =>
+                s.options.name === 'sidebar.right.pane.tab' &&
+                s.options.key === 'dsh-file-git-explorer/git',
+        );
+        assert.ok(git !== undefined, 'git 页签体应注册在 sidebar.right.pane.tab');
+        /** 会话快照: 两个会话 id, **同一个工作区**(这就是复现条件)。 */
+        const propsFor = (id) => ({
+            sessionId: id,
+            useTabInfo: () => ({
+                tab: {
+                    id: 'tab-git',
+                    kind: 'fge-git',
+                    title: 'Git',
+                    visible: true,
+                    navigation: { revision: 1, params: {} },
+                },
+            }),
+            useSessions: (selector) =>
+                selector({ current: id, byId: { [id]: { cwd: CWD, running: false } } }),
+        });
+        const flush = (rendered) => {
+            for (const fn of rendered.effects) fn();
+        };
+
+        // 1) 第一个会话: 没有快照 ⇒ 老老实实 info → status → log。
+        flush(react.render(git.component, propsFor('session-a')));
+        await settle();
+        assert.deepEqual(calls, ['info', 'status', 'log'], '首次挂载应取一遍 git 数据');
+        // 真实 React 在 setState 后会重渲染; 这里手动重渲染一次, 让那份数据落进快照
+        // (落盘在"每次渲染后"的那条 effect 里)。
+        flush(react.render(git.component, propsFor('session-a')));
+
+        // 2) 第二个会话, **同一个工作区**: 一次请求都不该发, 数据直接上屏(不白、不等)。
+        const before = calls.length;
+        react.remount(); // 切会话 = 组件换实例
+        const second = react.render(git.component, propsFor('session-b'));
+        flush(second);
+        await settle();
+        assert.deepEqual(calls.slice(before), [], '同工作区切会话不得再发 git 请求');
+        const text = treeText(second.tree);
+        assert.ok(text.includes('变更列表'), '上栏标题应在屏上');
+        assert.ok(text.includes('a.txt'), '变更列表应直接是那份快照(不再等一次 status)');
+        assert.ok(text.includes('工作区里的提交'), '提交历史也应直接是快照里那一页');
+        assert.ok(!text.includes('读取中'), '快照在手时不该出现「读取中…」');
+        assert.ok(!text.includes('读取历史'), '快照在手时不该出现「读取历史…」');
+    } finally {
+        globalThis.fetch = realFetch;
+    }
+});
 
 // ---- fge: 详情浮起的两条硬约束(页签条"闪一下" / 右栏自己跳回 git 树) ----
 //
@@ -553,7 +826,7 @@ check('fge: git 头部 38px(与会话头部对齐) + 拖柄不再隐藏 + 终端
 });
 
 check(
-    'fge: 终端表面 code-block + 抽屉/舌跟对话区同宽 + 条无底色 + 滚动条 6px 圆角 + Alt+C 复制',
+    'fge: 终端表面 code-block + 抽屉/舌跟对话区同宽 + 条无底色 + 滚动条 6px 圆角 + 选中即复制(mouseup) / Alt+C 兜底',
     () => {
         // 直接看**注入出去的 CSS**: 这几条规则是字符串拼出来的, 读源码文本容易被拼法绕过去。
         const styles = [];
@@ -588,17 +861,36 @@ check(
         );
         // 标题条**不要自己的底色**(用户口径: 把那块色去掉) —— 透出抽屉表面, 分界靠下面那条 border。
         assert.match(css, /\.fge-term-strip\{[^}]*background:none/, '标题条不应再有自己的底色');
-        // 抽屉 / 抽屉舌的宽度 = 上方对话区宽度(`--dsh-chat-content-width`, 即 wSkVaW_widthHandle 拖出来的那个);
-        // 座位本身是整条中栏, 不给 max-width 就会比 composer 卡片宽出一截。
+        // 抽屉 / 抽屉舌的宽度 = **composer 卡片(uV2eYG_card)的宽度**, 不是正文那一列。
+        // 官方: `--dsh-composer-card-max-width = calc(chat-content-width + 32px)`、`side-clearance = 16px`,
+        // 卡片自己 = `min(容器宽 - 2*side-clearance, card-max-width)`。只写 `max-width:chat-content-width`
+        // 会比卡片**窄 32px**(左右各 16)—— 用户报的"宽度跟卡片不一致"; 座位本身是整条中栏, 所以还要自己减 clearance。
         assert.match(
             css,
-            /\.fge-term\{[^}]*max-width:var\(--dsh-chat-content-width,100%\)[^}]*margin-inline:auto/,
-            '终端抽屉宽度要跟对话区一致(居中)',
+            /\.fge-term\{[^}]*width:calc\(100% - var\(--dsh-composer-side-clearance,0px\) - var\(--dsh-composer-side-clearance,0px\)\)/,
+            '抽屉宽度要减掉 composer 的左右 clearance(座位是整条中栏)',
         );
         assert.match(
             css,
-            /\.fge-tongue\{[^}]*max-width:var\(--dsh-chat-content-width,100%\)/,
-            '抽屉舌也要跟对话区同宽',
+            /\.fge-term\{[^}]*max-width:var\(--dsh-composer-card-max-width,var\(--dsh-chat-content-width,100%\)\)[^}]*margin-inline:auto/,
+            '抽屉上限要用 composer 卡片的上限(居中)',
+        );
+        // 左右两侧都要有描边: 原来只有 border-top, 标题条那一段自己不带底色, 接缝就只剩下面那条分隔线,
+        // 于是 grip 与 body 之间"断了一截"(用户口径的断层感)。官方 composer 座的横条就是四周描边的。
+        assert.match(
+            css,
+            /\.fge-term\{[^}]*border:1px solid var\(--dsw-alias-border-l2\);border-bottom:0/,
+            '抽屉左右两侧要有描边(下边贴座位底, 不画)',
+        );
+        assert.match(
+            css,
+            /\.fge-tongue\{[^}]*width:calc\(100% - var\(--dsh-composer-side-clearance,0px\)/,
+            '抽屉舌也要跟抽屉同一列(同一个宽度公式)',
+        );
+        assert.match(
+            css,
+            /\.fge-tongue\{[^}]*max-width:var\(--dsh-composer-card-max-width/,
+            '抽屉舌的上限也要跟卡片一致',
         );
         // 滚动条: 6px + 两端圆角(参考 dsh 自己的滚动条)。
         assert.match(
@@ -618,6 +910,80 @@ check(
             !/box-shadow/.test(tab[0]),
             '页签不得再用 1px 投影盖住 strip 的底边(用户要求这条线在页签下面也连续)',
         );
+        // 页签与终止键要落在**拖柄 + 标题条**这条带子的垂直中心(用户口径)。
+        // 做法: 条里 `align-items:center` + 下内边距比上边多 `拖柄高 - 分隔线高` —— 拖柄在条上面、
+        // 分隔线在条下面, 两者把带子的中心往上推了 2px, 用下内边距补回来。真机量过: 页签 / 终止键 /
+        // 带子三者中心都在 19.5px(偏差 0)。
+        const strip = /\.fge-term-strip\{[^}]*\}/.exec(css);
+        assert.ok(strip !== null, '应有 .fge-term-strip 规则');
+        assert.match(strip[0], /align-items:center/, '标题条里要垂直居中(原来贴底 flex-end)');
+        assert.match(
+            strip[0],
+            /padding:3px 8px calc\(3px \+ var\(--fge-term-grip,5px\) - 1px\)/,
+            '标题条的下内边距要抵掉拖柄与分隔线的偏心(拖柄高 - 分隔线高)',
+        );
+        assert.match(tab[0], /align-self:center/, '页签自己声明居中, 不靠条的默认对齐');
+        assert.match(
+            css,
+            /--fge-term-grip:5px/,
+            '拖柄高要在 .fge-term 上声明一次, 拖柄与下内边距共用它',
+        );
+        assert.match(
+            css,
+            /\.fge-term-grip\{height:var\(--fge-term-grip,5px\)/,
+            '拖柄高度读同一个变量',
+        );
+        // 拖柄不许有 hover 底色(用户口径: hover 到边缘时那一整条 5px 的底色跟旁边不一样, 很扎眼)。
+        // 可拖的提示交给 `cursor:ns-resize`。
+        assert.ok(
+            !/\.fge-term-grip:hover/.test(css),
+            '终端抽屉的上缘拖柄不许有 hover 底色(用户口径)',
+        );
+        assert.ok(
+            !/\.fge-term-glyph\{[^}]*margin-bottom/.test(css),
+            '终止键不再自己贴底(margin-bottom), 跟着条一起居中',
+        );
+        // 终止键里的图标必须是**官方 SVG**, 不许退回文字字形 `■`: 同一个码位在不同平台/字体回退下
+        // 大小与粗细都不一样(与刷新键那个 `⟳` 同一个毛病)。取色走 currentColor, 由 .fge-term-kill 给危险色。
+        const source = readFileSync(join(ROOT, 'plugins/file-git-explorer/lib/client.js'), 'utf8');
+        assert.match(
+            source,
+            /h\(primitives\.IconStopFill16, \{ size: 12 \}\)/,
+            '终止键要换成官方 SVG 图标 IconStopFill16(尺寸 12)',
+        );
+        assert.ok(!/'■'/.test(source), '终止键不许再退回文字字形 ■(注释里提历史可以, 字面量不行)');
+        assert.match(
+            css,
+            /\.fge-term-glyph\{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:18px;padding:0 4px\}/,
+            '图标按钮的盒子里不要再有 font-size/line-height(那是给文字字形的)',
+        );
+        // 开关的**尺寸全套取偶数**(盒子 18 与终止键一致 / 轨道 12 / 滑块 8 / 文字行盒 12)。
+        // 条里内容行高是奇数(页签 21px), 控件自己若是 17 / 轨道 13 / 行盒 11.5, 居中就落在 .5px 上 ——
+        // 相邻元素的**文字与几何各自吸到不同的半像素**, 用户看到的就是"文字和开关垂直没对齐"。
+        // 真机量: 修前 轨道 top=13.000 而文字行盒 top=13.750(不同相位); 修后两者都是 13.500 ✓
+        const switchRule = /\.fge-term-switch\{[^}]*\}/.exec(css);
+        assert.ok(switchRule !== null, '应有 .fge-term-switch 规则');
+        assert.match(switchRule[0], /height:18px/, '开关盒子高 18(与终止键一致, 居中不留半像素)');
+        assert.match(
+            css,
+            /\.fge-term-switch-track\{position:relative;flex:0 0 auto;width:24px;height:12px;border-radius:6px/,
+            '轨道 24×12、圆角 6(半高, 偶数)',
+        );
+        assert.match(
+            css,
+            /\.fge-term-switch-knob\{position:absolute;top:2px;left:2px;width:8px;height:8px;border-radius:50%/,
+            '滑块 8×8、四角整数留 2px',
+        );
+        assert.match(
+            css,
+            /\.fge-term-switch\[aria-checked="true"\] \.fge-term-switch-knob\{left:14px\}/,
+            '开的滑块位置 = 24−8−2 = 14(整数 px, 不做百分比)',
+        );
+        assert.match(
+            css,
+            /\.fge-term-switch-label\{white-space:nowrap;line-height:12px\}/,
+            '文字行盒 12px(偶数且与轨道同高) —— 它和轨道共一条中心线、同一个像素相位',
+        );
         // xterm 自带滚动条 14px 且宽高是内联样式, 必须 !important 收到 6px。
         assert.match(
             css,
@@ -629,8 +995,7 @@ check(
             /\.xterm-scrollable-element > \.scrollbar\.vertical > \.slider\{width:100%!important/,
             '滑块要跟着轨道收窄(否则滑块比轨道宽)',
         );
-        // Alt+C = 复制终端选区(终端里原生复制不可用; Ctrl+C 必须留给 SIGINT, 所以走 Alt+C)。
-        const source = readFileSync(join(ROOT, 'plugins/file-git-explorer/lib/client.js'), 'utf8');
+        // 终端里的复制: 选中即复制(终端不吃系统复制快捷键 —— Ctrl+C 必须留给 SIGINT, 所以拖选后靠 mouseup)。
         assert.match(source, /attachCustomKeyEventHandler/, '终端要挂自定义键处理(Alt+C 复制)');
         assert.match(source, /ev\.altKey/, 'Alt+C 复制要判 Alt 修饰键');
         assert.ok(
@@ -638,8 +1003,663 @@ check(
             '不要占用 Ctrl+Shift+C(那是浏览器/DevTools 的检查元素)',
         );
         assert.match(source, /writeClipboard/, '复制必须走 primitives.writeClipboard');
+        // 终端里的复制: **选中即复制**(mouseup 上读选区) + **Alt+C 兜底**, 两条路共用 copySelection;
+        // 条右侧那枚开关只停"自动"那条(Alt+C 与开关无关)。
+        assert.match(
+            source,
+            /listen\(hostRef\.current, 'mouseup'/,
+            '选中即复制: 必须在终端体上挂 mouseup(拖选 / 双击 / 三击都以 mouseup 收尾)',
+        );
+        assert.match(
+            source,
+            /function listen\(target, type, fn, capture\)/,
+            '监听要走登记表挂 —— 挂在 document 上的那几个(捕获阶段)也必须在 cleanup 里摘干净',
+        );
+        assert.match(
+            source,
+            /rec\[0\]\.removeEventListener\(rec\[1\], rec\[2\], rec\[3\]\)/,
+            'cleanup 要照登记表逐个摘(visible 抖动会让 effect 重跑, 不摘就越挂越多)',
+        );
+        assert.match(
+            source,
+            /function copySelection\(force, expandTail\)/,
+            '选中即复制与 Alt+C 必须共用同一条 copySelection',
+        );
+        assert.match(
+            source,
+            /copySelection\(false, blocked\)/,
+            'mouseup 那条走非强制(同一段不重复写)',
+        );
+        assert.match(
+            source,
+            /copySelection\(true, false\)/,
+            'Alt+C 必须走强制, 但不做"补到行尾"的推断(那是拖拽手势才有的信息)',
+        );
+        assert.match(
+            source,
+            /TERM_COPY_KEY = 'fge-term-copy-v1'/,
+            '开关状态要有存储键(整机一个偏好)',
+        );
+        assert.match(source, /function readTermCopy\(\)/, '开关要能读回上次的状态(默认开)');
+        assert.match(source, /function writeTermCopy\(on\)/, '开关切换要记下来');
+        // 开关: role=switch + aria-checked 表状态; 长在"整条可点即收起"的标题条里, 所以必须 stopPropagation。
+        const sw = /className: 'fge-term-switch'[\s\S]{0,1600}?'选中复制'/.exec(source);
+        assert.ok(sw !== null, '标题条里应有 .fge-term-switch 这枚开关(含文字标签)');
+        assert.match(sw[0], /role: 'switch'/, '开关要声明 role=switch');
+        assert.match(
+            sw[0],
+            /'aria-checked': copyOn \? 'true' : 'false'/,
+            '开关状态走 aria-checked',
+        );
+        assert.match(sw[0], /ev\.stopPropagation\(\)/, '点开关不许连带收起抽屉(条本身可点即收起)');
+        assert.match(sw[0], /writeTermCopy\(next\)/, '开关切换要落盘');
+        assert.match(sw[0], /'选中复制'/, '开关要有文字标签(光一个轨道看不出是什么)');
+        assert.match(
+            source,
+            /h\(TerminalView, \{ root: root, visible: open, copyOnSelect: copyOn \}\)/,
+            '开关的值要传给终端视图(否则开关只是个装饰)',
+        );
+        // ⚠ 拖拽途中**不许**落选区: xterm 的 setSelection 会先 `_removeMouseDownListeners()`,
+        //   拖到一半调用会把这次拖拽直接弄断(它就再也收不到 mousemove 了)。
+        const mcFrom = source.indexOf('function onMoveCapture(ev)');
+        assert.ok(mcFrom > 0, '应有 onMoveCapture(内容下方那条边界)');
+        const mcBody = source.slice(mcFrom, source.indexOf('function copySelection(', mcFrom));
+        assert.ok(
+            !/\.select\(|clearSelection\(/.test(mcBody),
+            '拖拽途中的边界处理只能"吃掉事件", 不许调用 select()/clearSelection()(那会弄断拖拽)',
+        );
+        assert.match(
+            mcBody,
+            /ev\.stopPropagation\(\)/,
+            '内容下方那条边界靠捕获阶段 stopPropagation 实现(xterm 的拖拽监听在 document 冒泡阶段)',
+        );
+        assert.match(
+            source,
+            /listen\(document, 'mousemove', onMoveCapture, true\)/,
+            '边界要挂在 document 的**捕获**阶段 —— 挂冒泡会被 xterm 的拖拽先吃掉',
+        );
+        assert.match(
+            mcBody,
+            /modes\.mouseTrackingMode !== 'none'/,
+            '应用开了鼠标上报(全屏 TUI)时一概不碰: 那时鼠标归应用',
+        );
+        assert.match(
+            source,
+            /dragBlocked = true/,
+            '被边界挡过要记下来 —— 松手时尾巴要补到那行文字末尾, 不许把最后一行截断',
+        );
     },
 );
+
+check('fge: 终端选区尾巴收敛(纯函数: 最后一行有内容 / 收到那行 / 行号算法)', () => {
+    const styles = [];
+    const b = loadBundle('plugins/file-git-explorer/lib/client.js', {
+        documentOverrides: {
+            createElement: () => ({ style: { setProperty: () => {} } }),
+            head: { appendChild: () => {} },
+            getElementById: () => null,
+        },
+    });
+    assert.equal(
+        typeof b.exports.__findLastContentRow,
+        'function',
+        '选区的两个纯函数必须递出来给离线护栏跑',
+    );
+
+    const { __findLastContentRow: findLast, __clampSelectionTail: clamp } = b.exports;
+
+    // —— 最后一行有内容: 空行不算, 中间的空行也不算"尾巴"(它只是被跳过了) ——
+    const rows = ['alpha', 'beta', '', 'gamma-here', '', ''];
+    const reader = (i) => rows[i];
+    assert.equal(findLast(reader, rows.length - 1), 3, '第 3 行才是最后一行有内容');
+    assert.equal(findLast(reader, 2), 1, '从第 2 行往上找: 第 2 行空, 落到第 1 行');
+    assert.equal(
+        findLast(() => '', 9),
+        -1,
+        '整屏都空 → -1(调用方据此什么都别做)',
+    );
+    assert.equal(
+        findLast((i) => (i === 0 ? 'x' : ''), 5),
+        0,
+        '一路扫到第 0 行也要能找到',
+    );
+
+    // —— 尾巴收敛: 只动尾巴, 中间的空行与起点都不许动 ——
+    const cols = 40;
+    const beyond = { start: { x: 2, y: 0 }, end: { x: 20, y: 12 } };
+    assert.deepEqual(
+        clamp(beyond, 3, 10, cols, false),
+        { column: 2, row: 0, length: 3 * cols + (10 - 2) },
+        '尾巴越过内容底 → 收到第 3 行文字末尾(起点与行号都不变)',
+    );
+    assert.equal(
+        clamp({ start: { x: 2, y: 0 }, end: { x: 7, y: 2 } }, 3, 10, cols, false),
+        null,
+        '尾巴本来就在内容里 → 不动(用户自己选的)',
+    );
+    assert.deepEqual(
+        clamp({ start: { x: 3, y: 8 }, end: { x: 20, y: 13 } }, 3, 10, cols, false),
+        { clear: true },
+        '整段都拖在空白里 → 清掉(那儿一个字都没有)',
+    );
+    assert.equal(
+        clamp({ start: { x: 2, y: 0 }, end: { x: 5, y: 3 } }, 3, 10, cols, false),
+        null,
+        '尾巴**正好贴**在内容底但没被挡过 → 不许补(那是双击选词 / 用户就要选到这一列)',
+    );
+    assert.deepEqual(
+        clamp({ start: { x: 2, y: 0 }, end: { x: 5, y: 3 } }, 3, 10, cols, true),
+        { column: 2, row: 0, length: 3 * cols + (10 - 2) },
+        '被边界挡过时同样贴在那儿 → 补到文字末尾(实测: 不补会把 gamma-here 截成 gamma-h)',
+    );
+    assert.equal(
+        clamp({ start: { x: 2, y: 0 }, end: { x: 10, y: 3 } }, 3, 10, cols, true),
+        null,
+        '已经到文字末尾了就不用再补',
+    );
+    assert.equal(clamp(beyond, -1, 10, cols, false), null, '一行内容都没有时不动选区');
+    assert.equal(clamp(beyond, 3, 10, 0, false), null, 'cols 不合理时不动选区');
+    assert.equal(clamp(null, 3, 10, cols, false), null, '没有选区时不动');
+
+    // —— 行号算法: 必须与 xterm 的 getCoords 同款(1 基 + 越界夹住), 否则"内容下方"这条边界会错半行 ——
+    const { __mouseRowAt: rowAt } = b.exports;
+    assert.equal(rowAt(100, 100, 160, 16, 0), 0, '正好压在上边缘 = 第 0 行');
+    assert.equal(rowAt(109, 100, 160, 16, 0), 0, '第 0 行里任意位置都是第 0 行');
+    assert.equal(
+        rowAt(110, 100, 160, 16, 0),
+        0,
+        '正好压在两行交界上仍算上一行(xterm 用 ceil, 边界归上面那行)',
+    );
+    assert.equal(rowAt(110.5, 100, 160, 16, 0), 1, '越过交界才跨行');
+    assert.equal(rowAt(100 + 160 + 50, 100, 160, 16, 0), 15, '拖到容器外面 → 夹到最后一行');
+    assert.equal(rowAt(0, 100, 160, 16, 0), 0, '拖到容器上面 → 夹到第一行');
+    assert.equal(rowAt(109, 100, 160, 16, 300), 300, '滚动过的视口: 第 0 行 = viewportY');
+    assert.equal(rowAt(110.5, 100, 160, 16, 300), 301, '滚动过的视口要加上 viewportY(绝对行号)');
+    assert.equal(rowAt(110, 100, 0, 16, 0), -1, '容器没布局 → -1(调用方什么都别做)');
+    assert.equal(rowAt(110, 100, 160, 0, 0), -1, 'rows 不合理 → -1');
+    assert.ok(styles.length === 0, '这里不需要注入样式');
+});
+
+check('fge: git 页签上下两栏(上栏 3/4)+ 按目录归类 + 提交说明折叠两行', () => {
+    const source = readFileSync(join(ROOT, 'plugins/file-git-explorer/lib/client.js'), 'utf8');
+    // 上栏(变更列表 / 当前 diff)默认占正文 3/4 —— 常量是唯一出处, 别在别处再写一个 75。
+    assert.match(source, /GIT_SPLIT_DEFAULT = 75/, '上栏默认占比必须是 3/4(75)');
+
+    // 两栏各滚各的 + 中间一条可拖的拖柄(直接看**注入出去的 CSS**, 拼法绕不过去)。
+    const styles = [];
+    const b = loadBundle('plugins/file-git-explorer/lib/client.js', {
+        documentOverrides: {
+            getElementById: () => null,
+            createElement: (tag) =>
+                tag === 'style'
+                    ? { id: '', textContent: '', setAttribute: () => {}, appendChild: () => {} }
+                    : { style: {}, setAttribute: () => {}, appendChild: () => {} },
+            head: { appendChild: (el) => styles.push(String(el.textContent || '')) },
+        },
+    });
+    const css = styles.join('\n');
+    assert.match(
+        css,
+        /\.fge-body\{[^}]*display:flex[^}]*flex-direction:column/,
+        '.fge-body 应是上下两栏的竖排 flex 容器',
+    );
+    assert.match(css, /\.fge-pane\{[^}]*overflow:auto/, '两栏要各自滚动(不能再是一个大滚动容器)');
+    assert.match(css, /\.fge-grip\{[^}]*cursor:ns-resize/, '中间要有可拖的分栏拖柄');
+    // 分栏拖柄与终端抽屉上缘那条**同一口径**: 不许有 hover 底色。它也是一整条 5px 通宽横带, 一亮就是
+    // 一整条, 而这里夹在两块长得很像的列表之间, 变色会被读成"这条跟别处不是一个颜色"。
+    // 可拖的提示交给 `cursor:ns-resize`; 底色必须显式常驻 `transparent`。
+    assert.ok(!/\.fge-grip:hover/.test(css), '分栏拖柄不许有 hover 底色(与终端上缘拖柄同口径)');
+    assert.match(css, /\.fge-grip\{[^}]*background:transparent/, '分栏拖柄底色应恒为 transparent');
+    assert.match(css, /\.fge-dir\{/, '目录行样式缺了');
+
+    // ---- 滚动条不许造成"形变" ----
+    // 两栏各自滚动 ⇒ 滚动条一出现就挤掉内容宽度, 整栏抽一下(用户口径的"形变")。
+    // 用户口径的最终形态是**两栏都不显示滚动条**: 于是滚动条从不占位、内容宽度恒定,
+    // 形变从根上没了, 当初那条 `scrollbar-gutter:stable` 留白也就成了死代码(它本来就是给滚动条占位的)。
+    // ⚠ 只能**两条一起**隐藏: 只藏一条会让两栏内容宽度差 8px, 两个列表的右缘 / 截断点当场错开。
+    assert.match(
+        css,
+        /\.fge-pane\{[^}]*scrollbar-width:none/,
+        '两栏都不显示滚动条(标准属性那条路)',
+    );
+    assert.match(
+        css,
+        /\.fge-pane::-webkit-scrollbar\{display:none\}/,
+        'Chromium 走的是 ::-webkit-scrollbar 那条路, 两行都要写',
+    );
+    assert.ok(
+        !/\.fge-pane\{[^}]*scrollbar-gutter:stable/.test(css),
+        '两栏已经没有滚动条, 留白是死代码, 应当去掉',
+    );
+    // 展开态的说明**自己那条**要留着: 那是"该滚的那一条"(用户口径: 滚动条出现在这一段里)。
+    assert.match(
+        css,
+        /\.fge-msg-text:not\(\[data-clamp="1"\]\)\{[^}]*max-height:[^}]*overflow:auto/,
+        '展开态的说明要**自己滚**(限高), 不能把整栏撑长',
+    );
+    assert.match(
+        css,
+        /\.fge-msg-text:not\(\[data-clamp="1"\]\)\{[^}]*scrollbar-gutter:stable/,
+        '说明自己出滚动条时, 里面的文字宽度也不许变',
+    );
+    // 开关左对齐 = 它的 x 与容器宽度无关(右对齐会随滚动条 / 右栏拖宽漂移)。
+    assert.match(css, /\.fge-msg-bar\{[^}]*text-align:left/, '开关左对齐, 位置才与容器宽度无关');
+
+    // ---- 分支按钮撑满到 ⟳ 之前 ----
+    assert.match(css, /\.fge-branch\{[^}]*flex:1 1 auto/, '分支按钮要吃掉头部剩余空间');
+    assert.ok(
+        !/\.fge-branch\{[^}]*max-width:11em/.test(css),
+        '分支按钮不再卡 max-width(用户口径: 加长到 fge-btn 前面)',
+    );
+    assert.match(css, /\.fge-branch-name\{[^}]*min-width:0/, '按钮里那格名字要能省略号');
+
+    // ---- 刷新键 = 官方 SVG 图标, 不再是 `⟳` 文字字形 ----
+    // 同一个码位在不同平台 / 字体回退下画出来的粗细和大小都不一样(Windows 上明显偏细偏小),
+    // 与旁边那些官方图标(分支 / 上下游箭头)不是一个画风 —— 换成 `primitives.IconRefreshOutline14`。
+    assert.match(
+        source,
+        /IconRefreshOutline14/,
+        '刷新键要用官方 SVG 图标(primitives.IconRefreshOutline14)',
+    );
+    assert.ok(
+        !/['"]⟳['"]/.test(source),
+        '刷新键不许再退回 `⟳` 字形(平台字体回退画出来不一样, 与官方图标不搭)',
+    );
+    // 忙时的进度提示: 按钮在 busy 时本就是 `disabled`, 图标借这个状态自转 —— 原来那个 `…` 不能再和图标并存。
+    assert.match(
+        css,
+        /\.fge-refresh\[disabled\] svg\{animation:fge-spin 1s linear infinite\}/,
+        'busy(disabled)时图标要转起来当"正在 fetch"的提示',
+    );
+    assert.match(
+        css,
+        /@keyframes fge-spin\{to\{transform:rotate\(360deg\)\}\}/,
+        '要有那段 keyframes, 否则上面那条动画名是空的',
+    );
+
+    assert.equal(
+        (source.match(/className: 'fge-spacer'/g) || []).length,
+        1,
+        '头部不再放 .fge-spacer(只剩终端标题条那一处), 否则会和弹性按钮平分空白',
+    );
+
+    // 提交说明: 折叠态**只两行**, 放不下才有「展开 / 收起」(不然一段多行 message 能占掉半屏)。
+    assert.match(
+        css,
+        /\.fge-msg-text\[data-clamp="1"\]\{[^}]*-webkit-line-clamp:2/,
+        '提交说明折叠态必须夹在两行',
+    );
+    assert.match(css, /\.fge-msg-toggle\{/, '放不下时要给「展开 / 收起」');
+    assert.ok(
+        /scrollHeight > el\.clientHeight/.test(source),
+        '「放不下」要**量**出来, 不能按行数猜(一行很长的 subject 折行后同样得给出口)',
+    );
+    // 开关画在**文字上方**: 展开后原地不动, 不用拉滚动条去找「收起」(用户口径)。
+    const barAt = source.indexOf("className: 'fge-msg-bar'");
+    const textAt = source.indexOf("className: 'fge-msg-text'");
+    assert.ok(barAt !== -1 && textAt !== -1, '说明块应同时有 .fge-msg-bar 与 .fge-msg-text');
+    assert.ok(
+        barAt < textAt,
+        '「展开 / 收起」必须在说明文字**之前**渲染 —— 否则展开后按钮跑到最底下',
+    );
+    // 下栏(提交历史 / 聚焦提交)最多 60% ⇒ 上栏的下限由这个上限反推(100 - 60 = 40)。
+    assert.match(source, /GIT_SPLIT_BOTTOM_MAX = 60/, '下栏最多占 60%(用户口径)');
+    assert.match(
+        source,
+        /GIT_SPLIT_MIN = 100 - GIT_SPLIT_BOTTOM_MAX/,
+        '上栏下限要从 60% 反推, 不要写死两个互相打架的数',
+    );
+
+    // 标题栏: 去 opacity + 换实色底 —— 浅色下 `bg-base` 就是面板自己的纯白, 再叠 0.72 的不透明度,
+    // 滚上来的行就透过去了(用户报的"文字内容会出现在 fge-section 下层")。
+    assert.ok(
+        !/\.fge-section\{[^}]*opacity:/.test(css),
+        '标题栏不得再用 opacity(会把下面滚动的行透出来)',
+    );
+    assert.match(
+        css,
+        /\.fge-section\{[^}]*border-bottom:\.5px solid var\(--dsw-alias-border-l3\)/,
+        '标题栏下边线用官方那套 .5px border-l3(明暗自动翻转)',
+    );
+    // ⚠ 不透明契约(实测教训): `--dsw-alias-markdown-tag` 是**标签/芯片的填充色**, 语义上就是一层淡强调色 ——
+    //   官方两套主题恰好定成实色, 但由强调色派生的主题会把它做成半透明(本机 Sage Mist 就是
+    //   `rgba(135,186,129,0.14)`)。直接拿它当 background, 横条就是透的, 滚上来的行照样穿过去。
+    //   所以: 底座只能是实色的**面**(bg-base), 强调色只许作为 background-image 叠在它上面。
+    const sectionRule = (css.match(/\.fge-section\{[^}]*\}/) || [''])[0];
+    assert.match(
+        sectionRule,
+        /background-color:var\(--dsw-alias-bg-base/,
+        '横条底座要用面板自己的实色(bg-base)—— 它按构造一定不透明',
+    );
+    assert.match(
+        sectionRule,
+        /background-image:linear-gradient\(var\(--dsw-alias-markdown-tag/,
+        '强调色只能作为叠加层(background-image), 这样它半透明也不影响挡不挡得住',
+    );
+    assert.ok(
+        !/background:var\(--dsw-alias-markdown-tag/.test(sectionRule),
+        '不要直接把强调色当 background —— 主题可以把它定成半透明',
+    );
+    // 热重载时旧 <style> 必须被换掉: 直接 return 会把旧 CSS 留在页面上, 改样式的人会以为"没生效"。
+    assert.match(
+        source,
+        /getElementById\(id\)[\s\S]{0,140}?old\.remove\(\)/,
+        'ensureStyles 要换掉旧 <style>(热重载不刷新页面时, 直接 return 会留旧 CSS)',
+    );
+    assert.ok(
+        !/\.fge-section\{[^}]*rgba\(128,128,128/.test(css),
+        '标题栏不要再写死 rgba(128,128,128,…)',
+    );
+
+    // 层级线: 1px 虚线(官方没有先例, 最近的 subagent 树是 .5px 实线; 而 .5px 虚线会碎成看不见)。
+    assert.match(
+        css,
+        /\.fge-guide\{[^}]*border-left:1px dashed var\(--dsw-alias-border-l2\)/,
+        '层级线应是 1px 虚线 + border-l2',
+    );
+    assert.match(css, /\.fge-guide\[data-part="top"\]\{bottom:50%\}/, '最后一个子项那一列收到行中');
+    assert.match(
+        css,
+        /\.fge-guide\[data-part="bottom"\]\{top:50%\}/,
+        '有子项的目录那一列从行中起头',
+    );
+    assert.match(
+        css,
+        /\.fge-row\{[^}]*position:relative/,
+        '行要 position:relative, 层级线才挂得住',
+    );
+
+    // 聚焦提交: 下栏接管 + 容器感 + 返回键 + Esc 分层。
+    assert.match(
+        css,
+        /\.fge-pane-bottom\[data-focus="1"\]\{background:color-mix\(in srgb, var\(--dsw-alias-brand-primary\)/,
+        '聚焦态整栏要有一层极淡的品牌色底(容器感)',
+    );
+    // 聚焦态下栏的滚动条由 `.fge-pane` 那条统一处理(两栏都不显示), 这里不再有单独的规则。
+    assert.match(css, /\.fge-hash\{/, 'hash 胶囊样式缺了');
+    assert.ok(/focusCommit\(/.test(source), '点提交应当**聚焦**(下栏接管), 不再就地展开');
+    assert.ok(!/toggleCommit/.test(source), '就地展开那套(toggleCommit)应已退场');
+    assert.ok(!/withExpanded/.test(source), '就地展开那套(withExpanded)应已退场');
+    assert.match(source, /fge-back/, '聚焦视图要有返回键');
+    assert.match(source, /focusEsc/, 'Esc 返回要接进 apply 里那条唯一的 keydown 分层');
+    assert.match(
+        source,
+        /scrollBefore\.current = pane === null \? 0 : pane\.scrollTop/,
+        '进聚焦前要记下列表的滚动位置(用户口径: 返回别丢你翻到哪儿了)',
+    );
+    assert.match(
+        source,
+        /restoreScroll\.current = true/,
+        '返回时还原滚动位置 —— 且只在"刚返回"那一次(重挂不该按陈旧值把列表跳走)',
+    );
+
+    // hash 胶囊: 复制的是**完整** hash, 且必须先 stopPropagation(否则连带进聚焦)。
+    const chipAt = source.indexOf('function HashChip');
+    const chip = chipAt === -1 ? '' : source.slice(chipAt, chipAt + 1600);
+    assert.ok(chip !== '', '应有 HashChip 组件');
+    assert.ok(
+        /stopPropagation\(\)[\s\S]{0,120}writeClipboard\(props\.hash\)/.test(chip),
+        'hash 胶囊的点击必须先 stopPropagation、再复制**完整** hash',
+    );
+
+    // 按目录归类: 纯函数(见 exports.__pathTree —— 浏览器 bundle 不能 require 本包的模块)。
+    const tree = b.exports.__pathTree;
+    assert.ok(tree !== undefined, '应暴露 __pathTree 供离线校验');
+    const built = tree.compact(tree.build(['a/a1.txt', 'a/a2.txt', 'a/deep/x/y.txt'], (p) => p));
+    // `a/` 只出现一次目录行, 两个文件是它的 basename —— 不是平铺 a/a1.txt、a/a2.txt。
+    assert.deepEqual(
+        built.dirs.map((d) => d.name),
+        ['a'],
+    );
+    assert.deepEqual(
+        built.dirs[0].files.map((f) => f.name),
+        ['a1.txt', 'a2.txt'],
+    );
+    assert.deepEqual(
+        built.dirs[0].files.map((f) => f.path),
+        ['a/a1.txt', 'a/a2.txt'],
+        '完整路径要留着(diff 请求与 key 都用它)',
+    );
+    // 单链目录压成一行: a/deep/x/y.txt → 目录行 `deep/x`(否则一个文件白吃三行)。
+    assert.deepEqual(
+        built.dirs[0].dirs.map((d) => d.name),
+        ['deep/x'],
+    );
+    assert.deepEqual(
+        built.dirs[0].dirs[0].files.map((f) => f.name),
+        ['y.txt'],
+    );
+    // 根下的散文件不缩进, 且排在目录之后(目录在前、文件在后)。
+    const flat = tree.compact(tree.build(['b.txt', 'a/a1.txt'], (p) => p));
+    assert.deepEqual(
+        flat.files.map((f) => f.name),
+        ['b.txt'],
+    );
+    assert.deepEqual(
+        flat.dirs.map((d) => d.name),
+        ['a'],
+    );
+
+    // ---- 层级线(纵向虚线): 一格一格算出来的, 最容易差一位 ----
+    const guides = tree.guides;
+    assert.equal(typeof guides, 'function', '应暴露 guides 纯函数供离线校验');
+    const hs = (depth, continues, isLast, kids) =>
+        guides({ depth, isLast, continues }, kids).map((s) => s.part);
+    const xs = (depth, continues, isLast, kids) =>
+        guides({ depth, isLast, continues }, kids).map((s) => s.x);
+    // 顶层没有"父那一列"; 顶层文件一条线都没有。
+    assert.deepEqual(hs(0, [], true, false), []);
+    // 有子项的目录: 自己那一列从**行中**起头(从文件夹图标连下去); x 落在图标中心(15 = 9 + 12/2)。
+    assert.deepEqual(hs(0, [], false, true), ['bottom']);
+    assert.deepEqual(xs(0, [], false, true), [15]);
+    // 深度 1: 父那一列由"我是不是最后一个子项"决定; 自己还有子项再加下半格。
+    assert.deepEqual(hs(1, [], false, true), ['full', 'bottom']);
+    assert.deepEqual(xs(1, [], false, true), [15, 27]);
+    assert.deepEqual(hs(1, [], true, false), ['top']);
+    // 深度 2: continues[0] 说的是"第 1 层祖先还有后续兄弟" → 那一列要继续贯穿本行。
+    assert.deepEqual(hs(2, [true], true, false), ['full', 'top']);
+    assert.deepEqual(xs(2, [true], true, false), [15, 27]);
+    // 反过来: 祖先已经是最后一个子项 → 那一列早就收住了, 本行不该再出现。
+    assert.deepEqual(hs(2, [false], true, false), ['top']);
+    assert.deepEqual(xs(2, [false], true, false), [27]);
+
+    // ---- 真跑一遍整棵树(不是 grep 源码)----
+    //
+    // ⚠ 这一条是补事故的: 上一版的顶层调用把 `[]` 传进了 `makeFileRow` 那一格, 而"按目录归类"只在
+    //   **有目录**时才走到那条分支, 于是 grep 式护栏完全没拦住 —— 真渲染时直接 TypeError。
+    //   现在顶层只有 `treeRows.root(tree, keyPrefix, makeFileRow)` 三个参数, 并在这里**真的调用**。
+    const buildTreeRows = b.exports.__treeRows;
+    assert.equal(typeof buildTreeRows, 'function', '应暴露 __treeRows(注入 h 的行数组工厂)');
+    const rows = buildTreeRows((type, props, ...kids) => ({ type, props, kids }));
+    const flattened = rows.root(
+        tree.compact(tree.build(['a/a1.txt', 'b/b1.txt', 'z.txt'], (p) => p)),
+        'c:',
+        (file, pos) => ({
+            kind: 'file',
+            name: file.name,
+            depth: pos.depth,
+            isLast: pos.isLast,
+            continues: pos.continues.slice(),
+        }),
+    );
+    const shape = flattened.map((row) =>
+        row.kind === 'file' ? row.name : 'dir:' + row.props.title,
+    );
+    assert.deepEqual(
+        shape,
+        ['dir:a', 'a1.txt', 'dir:b', 'b1.txt', 'z.txt'],
+        '目录在前、文件在后, 且每个目录的子项紧跟它',
+    );
+    assert.deepEqual(
+        flattened.filter((r) => r.kind === 'file').map((r) => [r.name, r.depth, r.isLast]),
+        [
+            ['a1.txt', 1, true],
+            ['b1.txt', 1, true],
+            ['z.txt', 0, true],
+        ],
+        '文件行的深度 / 是不是最后一个子项',
+    );
+    assert.deepEqual(
+        flattened.filter((r) => r.kind === 'file').map((r) => r.continues),
+        [[true], [true], []],
+        'a / b 都还有兄弟 ⇒ 它们那一列要继续贯穿下去; 顶层没有祖先列',
+    );
+    // 有子项的目录自带一段"下半格"引导线, 线就吊在文件夹图标下面。
+    const dirRow = flattened[0];
+    const dirGuides = dirRow.kids[0];
+    assert.equal(dirRow.props.className, 'fge-dir');
+    assert.equal(dirRow.props.style.paddingLeft, '9px', '顶层目录不缩进');
+    assert.deepEqual(
+        dirGuides.map((g) => [g.props['data-part'], g.props.style.left]),
+        [['bottom', '15px']],
+        '目录行自己那一列从行中起头、x 落在文件夹图标中心',
+    );
+
+    // 两个顶层调用点都必须走三参数的 `root` —— 老的 4/5 位置参数写法一个都不许留。
+    assert.match(source, /changeRows = treeRows\.root\(/, '变更列表要走 treeRows.root(三参数)');
+    assert.match(
+        source,
+        /focusRows = focusRows\.concat\(\s*treeRows\.root\(/,
+        '聚焦提交里的文件清单要走 treeRows.root',
+    );
+    assert.ok(
+        !/treeRows\(/.test(source),
+        '不许再出现 `treeRows(...)` 的位置参数写法(顶层一律 treeRows.root)',
+    );
+    assert.equal(
+        (source.match(/treeRows\.root\(/g) || []).length,
+        2,
+        '顶层恰好两处: 变更列表 + 聚焦提交里的文件清单(多一份列表就得在这里显式加一条)',
+    );
+});
+
+check('fge: 右侧栏默认铺「文件」+「Git」两格, Git 是活动那格', () => {
+    const source = readFileSync(join(ROOT, 'plugins/file-git-explorer/lib/client.js'), 'utf8');
+    // 用户口径: **git 侧栏也像文件侧栏一样默认打开**。一次 seed 里先开官方「工作区文件」、
+    // 再开本插件的「Git」—— 后开的那格成为活动页签, 于是打开右栏直接是变更列表。
+    // (带 params 的 `openTab(DIFF_KIND, {...})` 用的是逗号, 不会被这条正则收进来。)
+    const calls = [...source.matchAll(/ctx\.sidebarRight\.openTab\(([A-Z_]+)\)/g)].map((m) => m[1]);
+    assert.deepEqual(
+        calls,
+        ['FILES_KIND', 'GIT_KIND'],
+        '默认页签应恰好铺「文件」+「Git」这一对, 且 Git 在后(= 活动格)',
+    );
+});
+
+// ---- 终端 16 色 ANSI 调色板: 与终端面的**对比度**(纯计算, 不用浏览器) ----
+//
+// 补的是这起事故: 只设 `background` / `foreground` 时, xterm 会用**内置的默认调色板**, 而那是为**深色背景**
+// 设计的 —— 亮白 `#ffffff` / 亮黄 `#ffff00` 落到浅色终端面上几乎看不见(用户报的"字体高亮导致看不清");
+// 更糟的是 `drawBoldTextInBrightColors` 默认开着, **加粗**的字会切到那排亮色上。所以调色板必须自己给,
+// 并且在这里逐个颜色算对比度 —— 这是"看得清"唯一可离线度量的判据。
+function srgbChannel(v) {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+}
+function luminance(hex) {
+    const m = /^#?([0-9a-f]{6})$/i.exec(String(hex).trim());
+    if (m === null) throw new Error('不是 6 位 hex: ' + String(hex));
+    const n = parseInt(m[1], 16);
+    return (
+        0.2126 * srgbChannel((n >> 16) & 255) +
+        0.7152 * srgbChannel((n >> 8) & 255) +
+        0.0722 * srgbChannel(n & 255)
+    );
+}
+/** WCAG 对比度: (亮的 + .05) / (暗的 + .05)。 */
+function contrast(a, b) {
+    const la = luminance(a);
+    const lb = luminance(b);
+    return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+}
+
+check('fge: 终端 16 色 ANSI 调色板与终端面的对比度达标(看得清)', () => {
+    const b = loadBundle('plugins/file-git-explorer/lib/client.js');
+    const palette = b.exports.__terminalPalette;
+    assert.equal(typeof palette, 'function', '应暴露 __terminalPalette 供离线校验');
+    // 真机上出现过的三种终端面: 官方浅色 / 本机主题(Sage Mist)浅色 / 官方深色。
+    const surfaces = [
+        { label: '官方浅色', hex: '#f9fafb', dark: false },
+        { label: '本机主题浅色', hex: '#E4EAE0', dark: false },
+        { label: '官方深色', hex: '#1b1b1c', dark: true },
+    ];
+    const measured = [];
+    for (const surface of surfaces) {
+        const p = palette(surface.dark);
+        const keys = Object.keys(p);
+        assert.equal(keys.length, 16, surface.label + ' 下应当是 16 色 ANSI 调色板');
+        for (const key of keys) {
+            assert.match(p[key], /^#[0-9a-f]{6}$/i, key + ' 应是 6 位 hex(xterm 要具体颜色)');
+            const ratio = contrast(p[key], surface.hex);
+            // 深色的 `black` 是约定的"暗淡槽", 放宽到 3:1;其余一律按 WCAG AA 正文的 4.5:1。
+            const floor = surface.dark && key === 'black' ? 3 : 4.5;
+            measured.push({ where: surface.label, key, ratio, floor });
+            assert.ok(
+                ratio >= floor,
+                surface.label +
+                    ' 下 ' +
+                    key +
+                    ' = ' +
+                    p[key] +
+                    ' 对比度只有 ' +
+                    ratio.toFixed(2) +
+                    ':1(< ' +
+                    floor +
+                    ') —— 这就是"看不清"',
+            );
+        }
+    }
+    measured.sort((x, y) => x.ratio - y.ratio);
+    console.log(
+        '  调色板余量最紧的三个: ' +
+            measured
+                .slice(0, 3)
+                .map((m) => m.where + '/' + m.key + ' ' + m.ratio.toFixed(2) + ':1')
+                .join(' · '),
+    );
+});
+
+check('fge: 右栏页签 Alt+J / Alt+L 切换(到边不环绕)', () => {
+    const source = readFileSync(join(ROOT, 'plugins/file-git-explorer/lib/client.js'), 'utf8');
+    const b = loadBundle('plugins/file-git-explorer/lib/client.js');
+    const next = b.exports.__tabNeighbor;
+    assert.equal(typeof next, 'function', '应暴露 __tabNeighbor 供离线校验');
+
+    // 用户口径的"不做无限切换": 到边返回 -1(调用方据此什么都不做), 而不是绕回另一端。
+    assert.equal(next(0, 2, -1), -1, '在最左还往左 → 不切(不环绕)');
+    assert.equal(next(1, 2, 1), -1, '在最右还往右 → 不切(不环绕)');
+    assert.equal(next(0, 2, 1), 1, '左 → 右');
+    assert.equal(next(1, 2, -1), 0, '右 → 左');
+    // 三个格子时中间那个两个方向都能走。
+    assert.equal(next(1, 3, 1), 2);
+    assert.equal(next(1, 3, -1), 0);
+    assert.equal(next(0, 3, -1), -1);
+    assert.equal(next(2, 3, 1), -1);
+    // 只有一格 / 没有选中格子时都不动。
+    assert.equal(next(0, 1, 1), -1, '只有一格 → 不动');
+    assert.equal(next(-1, 3, 1), -1, '没找到选中格 → 不动');
+
+    // 接线: 必须是 Alt+J / Alt+L、走 DOM 的选中格 + sidebarRight.focus, 且该让的都让开。
+    assert.match(
+        source,
+        /if \(!ev\.altKey \|\| ev\.ctrlKey \|\| ev\.metaKey \|\| ev\.shiftKey\) return;/,
+        '只吃纯 Alt(不带 ctrl/meta/shift)',
+    );
+    assert.match(source, /ev\.key === 'j' \|\| ev\.key === 'J' \? -1/, 'Alt+J 必须是"左一格"');
+    assert.match(source, /ev\.key === 'l' \|\| ev\.key === 'L' \? 1/, 'Alt+L 必须是"右一格"');
+    assert.match(
+        source,
+        /\[data-sidebar-right-panel\] \[data-dockkit-tab\]\[aria-selected="true"\]/,
+        '要按页签条上真正选中的那一格算左右邻居(与 rememberUserTab 同一条 DOM 契约)',
+    );
+    assert.match(source, /ctx\.sidebarRight\.focus\(id\)/, '切过去要用 sidebarRight.focus');
+    assert.match(
+        source,
+        /fge-term-host[\s\S]{0,120}host\.contains\(active\)/,
+        '焦点在终端里时让给终端',
+    );
+    assert.match(source, /data-rightbar-collapsed/, '右栏收起时不切(切了也看不见)');
+});
 
 console.log('');
 if (failures.length > 0) {

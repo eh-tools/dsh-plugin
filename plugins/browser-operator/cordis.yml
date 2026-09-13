@@ -1,0 +1,35 @@
+# 挂载示例:把 browser-operator 加进一个 agent preset
+#
+# browser-operator 是**纯 host 插件**:只往 host 的 `tools` 注册表注册 9 个
+# `browser_*` 工具、不发布任何服务,所以不需要 isolate realm,可以安全地置于
+# 预设顶层(与 standard 里的 tool-bash / tool-fs / tool-web 同理:消费注册表,
+# 不提供)。反过来,它也不能当 profile bundle 挂 —— 它没有 client 半。
+#
+# 把下面这一行加进目标 preset 的 `agent.cordis.yml`
+# (例如 `~/.dsh/.agent-presets/browser-operator/agent.cordis.yml`),
+# 保存后**新建会话**即可生效;插件源码改动要**重启 DSH**(host 侧插件不热更)。
+#
+# `name` 用**绝对路径**:preset 的一条 `name` 只要是绝对路径,roster 就会把它
+# 转成 `file:` URL 直接 import(`dsh-agent-presets/specifier`),因此**不需要**
+# 先把插件装进 profile。把 `<repo-abs-path>` 换成你克隆下来的仓库绝对路径
+# (Windows 形如 `E:\path\to\dsh-plugin`)。
+#
+# 首次使用前在插件目录装一次依赖:`pnpm --dir <repo-abs-path>/plugins/browser-operator install`
+# (只需要 playwright-core;浏览器用系统装好的 Chrome,不下载额外二进制)。
+
+- id: browser-operator
+  name: <repo-abs-path>/plugins/browser-operator/lib/index.js
+  config:
+    # 驱动哪个浏览器:chrome(默认,系统 Google Chrome)/ edge / chromium(Playwright 自带)
+    browser: chrome
+    # 有头可见 —— 就是为了让人工能在 SSO / 验证码那一步接管
+    headless: false
+    # 省略 = $DSH_HOME/browser-operator/profile,登录态长期复用
+    # profileDir: ''
+    # 指定浏览器可执行文件;填了就忽略上面的 browser 通道
+    # executablePath: ''
+    # 指定产物目录;省略 = 优先项目已 ignore 的目录(logs/、output/、scripts/ …)
+    # artifactDir: ''
+    logCap: 500
+    navigationTimeoutMs: 60000
+    actionTimeoutMs: 15000
