@@ -2157,15 +2157,14 @@ window.__ModuleLoader__.load({
         }
       }
 
-      // ---- 终端视图(真 PTY over WebSocket) ----
+      // ---- 终端视图(内核 = 官方 ctx.webTerminals, 外壳 = 本插件的抽屉) ----
 
       /**
-       * 一个 xterm 实例 ↔ 一条 WebSocket ↔ 该工作区的常驻 PTY。
-       * 同工作区的多个实例各自连一条 WS, 输出由 host 广播(输入皆可)。
+       * 一个 xterm 实例 ↔ 官方 `ctx.webTerminals` 的一个 view(每会话一个)。
+       * 帧由官方推来(`snapshot` → `output`), 本组件只负责把它交给 xterm 并 ack。
        */
       function TerminalView(props) {
         var sessionId = props.sessionId;
-        var root = props.root;
         var visible = props.visible !== false;
         var hostRef = React.useRef(null);
         var termRef = React.useRef(null);
@@ -2177,7 +2176,7 @@ window.__ModuleLoader__.load({
         var viewState = statePair[0];
         var setViewState = statePair[1];
         /**
-         * 「选中即复制」开关的当前值。⚠ 终端 effect 只按 `[root, visible]` 重挂(重挂 = 重建终端),
+         * 「选中即复制」开关的当前值。⚠ 终端 effect 只按 `[sessionId, visible]` 重挂(重挂 = 重建终端),
          * 所以开关**不能**进依赖数组, 只能走 ref 让 mouseup 那条闭包读到最新值。
          */
         var copyRef = React.useRef(props.copyOnSelect !== false);
@@ -2357,7 +2356,7 @@ window.__ModuleLoader__.load({
                 // **打开抽屉就把焦点给终端**(用户口径: 省掉"再用鼠标点一下终端才能打字"这一步)。
                 // ⚠ 必须放在 `open()` **之后**: xterm 的 focus() 是打到它自己那个隐藏 textarea 上的,
                 //   元素还没挂上去就没有焦点可给(静默失败)。
-                // ⚠ 只在**挂载时**做一次(effect 依赖是 [root, visible], 不是每次渲染) —— 否则用户
+                // ⚠ 只在**挂载时**做一次(effect 依赖是 [sessionId, visible], 不是每次渲染) —— 否则用户
                 //   刚点去 composer 打字, 一次无关重渲染就会把焦点抢回来。
                 // ⚠ 副作用要说清: 焦点一进来, **Esc 就归终端了**(与"焦点在终端里"那条分流一致),
                 //   开抽屉后 Esc 不再收起抽屉 —— 想收起点条空白处 / 页签上的 `×`。
@@ -4228,7 +4227,6 @@ window.__ModuleLoader__.load({
               ? h('div', { className: 'fge-empty' }, '等待会话工作区…')
               : h(TerminalView, {
                   sessionId: sessionId,
-                  root: root,
                   visible: open,
                   copyOnSelect: copyOn,
                 }),
