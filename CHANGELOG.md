@@ -4,6 +4,34 @@
 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),版本号遵循
 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [0.4.0] - 2026-09-17
+
+### Changed
+
+- `file-git-explorer`:**终端内核易主** —— 抽屉里的终端改由官方 `ctx.webTerminals`
+  (`@deepseek-ai/dsh-api-terminal-controller`)提供:PTY / shell 探测 / 进程归属 / 屏幕快照 /
+  每会话配额全归官方,而**抽屉外壳一条没动**(抽屉舌、跟 composer 同宽、高度记忆、终端标题条、
+  收起不杀进程、展开自动聚焦、选中即复制 / `Alt+C` / 尾巴收敛 / 那枚开关)。随之而来的行为变化:
+  终端从"每工作区一个 / 同工作区多会话共享"改为**每会话一个**(官方配额 8);终止键改为官方
+  "请求结束进程"(失败可在抽屉里重试);重连靠官方 host 的**屏幕快照**补屏,不再自留字节回放
+- `file-git-explorer`:抽屉正文新增**状态行** —— 按官方 `phase` / `info.state` / `writable` 显示
+  一行提示 + 至多一枚动作(正在连接 / 重新连接 / 重试 / 接管输入 / 进程已结束(退出码 N));
+  连着且可写时整行不渲染
+- 离线护栏:`client bundle 装配` 新增「官方帧桥契约」用例(假 xterm / 假 view 直接跑
+  `snapshot → reset + resize → write → ack`);host 冒烟改为断言**零升级路由**且旧路径 404
+
+### Removed
+
+- `file-git-explorer`:自建 PTY 链路整体退场 —— `lib/pty.js`(终端池 / 环形回放 / 帧编解码 /
+  shell 绝对路径解析)、`/fge/ws/terminal` 裸 socket 升级、以及 `node-pty` 与 `ws` 的 profile
+  锚点解析,连同它们的单测 `tests/pty.test.mjs` 一并删除;host 半保留 `/fge/vendor/*`
+  (xterm 仍由本插件自己渲染)
+
+### Added
+
+- 文档:ADR-0006(终端内核易主的决策 —— 为什么"内核归官方、外壳留本插件",以及被否掉的
+  「把官方终端页签浮到抽屉位」与代价清单)
+
 ## [0.3.0] - 2026-09-13
 
 ### Added
