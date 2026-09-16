@@ -69,6 +69,11 @@ client 侧 xterm + WS 控制帧 + 自管连接状态。它带着两处已经实�
   - 终止键语义从"立刻杀整棵进程树"变成官方"请求结束进程"(后台清理,失败可在抽屉里重试)。
   - 重连从"自管 256KB 字节回放 + 绝对字节位寻址"变成官方 host 屏幕快照。
   - **观感仍是本插件那套**,不是官方那套终端 UI —— 官方正文组件未导出,拿不到,这是本决策的前提而非疏漏。
+  - **client 半从此依赖那个服务**:`exports.inject` 里加了 `webTerminals`(与官方终端页签自己的
+    `inject` 同一口径,它就是 `["slots","locale","sidebarRight","sidebarRightTabs","webTerminals","theme"]`)。
+    于是官方 terminal-controller 缺席时, 本插件的 client 半会停在 pending、**git 页签也一起不出现** ——
+    这是刻意选的失败模式: 缺失在装配期就显形, 而不是等用户点开抽屉才发现只有一半能用。
+    该 controller 随 web bundle 常驻, 且与 `ui-sidebar-terminal` 各自独立挂载(关掉官方页签它仍在)。
 - **守门**:离线护栏用**假 `ctx.webTerminals`**(可控帧流 + 假 state store)钉死帧桥契约 ——
   帧顺序与 ack 次数、输入 → `view.write`、fit → `view.resize`(夹在 `maxCols/maxRows`)、终止 → `view.close`;
   `verify-client-bundles` 另断言 client `inject` 含 `webTerminals`、host 不再注册 `/fge/ws/terminal`、
