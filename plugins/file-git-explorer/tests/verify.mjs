@@ -1,20 +1,23 @@
 /**
- * dsh-file-git-explorer v0.6.0 host 冒烟验证(真实 HTTP + 真实 git + 真实 PTY, 离线可跑)
+ * dsh-file-git-explorer v0.6.0 host 冒烟验证(真实 HTTP + 真实 git, 离线可跑)
  *
  * 目的: 用自带 **真 node:http server** 的假 ctx 挂载静态双半插件的 host 半
- *       (../lib/index.js), 让全部路由都经真实 HTTP / WebSocket 走一遍 —— 校验
- *       info / status / diff / log / show 的数据契约、信任栅栏、vendor 白名单, 并用
- *       真 ws 客户端 + 真 node-pty 跑通「stdin → PTY → 广播 → 客户端」端到端往返。
+ *       (../lib/index.js), 让全部路由都经真实 HTTP 走一遍 —— 校验
+ *       info / status / diff / log / show 的数据契约、信任栅栏、vendor 白名单。
  *       本文件是**集成冒烟脚本**(不是 node:test 用例), 直接 `node tests/verify.mjs`。
+ *
+ * ⚠ 终端**不在这里**: 它在 ADR-0006 之后归官方 terminal-controller(host 半不再有终端路由),
+ *   所以本文件只断言"那条旧 WS 路径已经不在了"; 帧桥那条契约在
+ *   `scripts/verify-client-bundles.mjs` 里用假 xterm / 假 view 跑。
  *
  * 运行: node tests/verify.mjs
  *       cwd 必须 = plugins/file-git-explorer; git 在 PATH 中。
  *       退出码 0 = 所有非跳过检查通过, 1 = 有断言失败。
- *       依赖缺失(profile 里没有 ws / 插件没装 @xterm/*)时对应小节打印 skip 而不失败 ——
+ *       依赖缺失(插件没装 @xterm/*)时对应小节打印 skip 而不失败 ——
  *       那是"环境缺依赖", 不是"代码错了"。
  *
  * 覆盖:
- *   · 假 ctx: 真 http server(register 精确优先 + 最长前缀胜出、registerUpgrade、
+ *   · 假 ctx: 真 http server(register 精确优先 + 最长前缀胜出、
  *     端口 0 取真实端口、真实 404)、假 subprocess(真 child_process.execFile)、
  *     ctx.effect 收集器 + disposeAll
  *   · info    : cwd / repoRoot 指向临时仓库
@@ -26,19 +29,15 @@
  *   · log/show: 提交列表契约(hash/short/author/subject + head)与提交详情(message/files)
  *   · 信任栅栏: 缺 x-dsh-plugin → 403、GET → 405、非回环 Host → 403、未知方法 → 404
  *   · vendor  : 白名单命中 200 + content-type/javascript, 未知名与 ../ 穿越 → 404
- *   · WS 栅栏 : 非回环 Host 的裸升级请求收到 403 文本响应
- *   · 终端 e2e: 真 ws → ready 帧(shell 为绝对路径)→ 二进制帧写 stdin → PTY stdout
- *               回传 fge-pty-ok → ping 控制帧回环 → kill → exit 帧或 socket 关闭
+ *   · 终端内核: host 半零升级路由, 旧 /fge/ws/terminal → 404(终端已归官方, 见 ADR-0006)
  */
 
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile, execFileSync } from 'node:child_process';
-import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 
 import { apply } from '../lib/index.js';
@@ -219,7 +218,7 @@ async function startHarness() {
 
     const subprocess = createFakeSubprocess();
     const ctx = {
-        // profile 配置树锚点: 插件靠它从 dsh 自己的 node_modules 解析 node-pty / ws。
+        // profile 配置树锚点: 插件靠它解析自己带的静态资产(@xterm/xterm 的 dist)。
         baseUrl: PROFILE_URL,
         webServer: {
             register(route) {
@@ -253,6 +252,8 @@ async function startHarness() {
     return {
         ctx,
         port: server.address().port,
+        /** 当前注册在案的升级路由条数 —— 终端内核易主后这里应当是 0(见 ADR-0006)。 */
+        upgradeRouteCount: () => upgradeRoutes.size,
         /** 收起全部 side effect: ctx.effect 的 disposer(杀 PTY)优先, 再关 server。 */
         async close() {
             for (const dispose of disposers.splice(0).reverse()) {
@@ -321,37 +322,6 @@ function rawHttpRequest({ method, requestPath, headers, body }) {
     });
 }
 
-/** 裸 WS 升级握手(手工写请求行), 用于校验升级前的 Host 栅栏。 */
-function rawUpgradeAttempt(hostHeader) {
-    return new Promise((resolve, reject) => {
-        const socket = net.connect({ host: '127.0.0.1', port }, () => {
-            socket.write(
-                [
-                    'GET /fge/ws/terminal HTTP/1.1',
-                    'Host: ' + hostHeader,
-                    'Upgrade: websocket',
-                    'Connection: Upgrade',
-                    'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
-                    'Sec-WebSocket-Version: 13',
-                    '',
-                    '',
-                ].join('\r\n'),
-            );
-        });
-        let data = '';
-        socket.setEncoding('utf8');
-        socket.setTimeout(5000, () => {
-            socket.destroy();
-            resolve(data);
-        });
-        socket.on('data', (chunk) => {
-            data += chunk;
-        });
-        socket.on('error', reject);
-        socket.on('close', () => resolve(data));
-    });
-}
-
 // ============================== git fixture ==============================
 
 /**
@@ -403,17 +373,8 @@ function createRepoFixture() {
 
 let harness = null;
 let repoDir = null;
-let wsClient = null;
 
 async function cleanup() {
-    if (wsClient !== null) {
-        try {
-            wsClient.terminate();
-        } catch {
-            // 可能已经关闭
-        }
-        wsClient = null;
-    }
     if (harness !== null) {
         try {
             await harness.close();
@@ -434,202 +395,6 @@ async function cleanup() {
         }
         repoDir = null;
     }
-}
-
-// ============================== 终端端到端 ==============================
-
-/**
- * 真 ws 客户端 + 真 node-pty: 证明「stdin → PTY → 广播 → 客户端」整条链路活着。
- * 依赖从 ctx.baseUrl(profile 配置树)解析 —— 与插件内部同一条解析路径; 解析不到就 skip。
- */
-async function runTerminalE2E() {
-    let requireProfile;
-    try {
-        requireProfile = createRequire(PROFILE_URL);
-    } catch (err) {
-        skip('终端 e2e(ws + node-pty)', 'createRequire(ctx.baseUrl) 失败: ' + err.message);
-        return;
-    }
-
-    let wsModule;
-    try {
-        wsModule = requireProfile('ws');
-    } catch (err) {
-        skip(
-            '终端 e2e(ws + node-pty)',
-            '无法从 profile 解析 "ws"(未装依赖): ' + (err.code ?? err.message),
-        );
-        return;
-    }
-    const WebSocketClient = wsModule.WebSocket ?? wsModule;
-
-    const url =
-        'ws://127.0.0.1:' +
-        port +
-        '/fge/ws/terminal?root=' +
-        encodeURIComponent(repoDir) +
-        '&cols=90&rows=25';
-    const client = new WebSocketClient(url);
-    wsClient = client;
-
-    const frames = [];
-    let ptyOutput = '';
-    let closed = false;
-    let errored = null;
-    const wake = [];
-
-    const notify = () => {
-        for (const tick of wake.splice(0)) tick();
-    };
-
-    client.on('message', (data, isBinary) => {
-        const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
-        if (isBinary === true) {
-            frames.push({ binary: true, buffer: buf });
-            // PTY stdout 走二进制帧; 文本帧是 JSON 控制协议。
-            ptyOutput += buf.toString('utf8');
-        } else {
-            frames.push({ binary: false, text: buf.toString('utf8') });
-        }
-        notify();
-    });
-    client.on('close', () => {
-        closed = true;
-        notify();
-    });
-    client.on('error', (err) => {
-        errored = err;
-        notify();
-    });
-
-    /** 等谓词成立或超时; 帧到达 / 关闭 / 出错都会唤醒。 */
-    function waitUntil(predicate, timeoutMs, label) {
-        return new Promise((resolve, reject) => {
-            let settled = false;
-            const stop = () => {
-                clearInterval(poll);
-                clearTimeout(timer);
-                const at = wake.indexOf(tick);
-                if (at !== -1) wake.splice(at, 1);
-            };
-            const finish = (err) => {
-                if (settled) return;
-                settled = true;
-                stop();
-                if (err === undefined) resolve();
-                else reject(err);
-            };
-            const tick = () => {
-                let hit = false;
-                try {
-                    hit = predicate();
-                } catch {
-                    hit = false;
-                }
-                if (hit) finish();
-            };
-            // 除了被帧到达唤醒, 也按 50ms 轮询一次: 单靠 notify 会漏掉
-            // 「谓词注册前数据已到」或「同一批帧只唤醒一次」的时序, 导致明明
-            // 已经满足条件却空等到超时。
-            const poll = setInterval(tick, 50);
-            const timer = setTimeout(
-                () => finish(new Error('超时(' + timeoutMs + 'ms)等待: ' + label)),
-                timeoutMs,
-            );
-            wake.push(tick);
-            tick();
-        });
-    }
-
-    const controls = () =>
-        frames
-            .filter((f) => !f.binary)
-            .map((f) => tryJson(f.text))
-            .filter((m) => m !== null);
-    const controlOf = (type) => controls().find((m) => m.t === type) ?? null;
-
-    // 1) ready: stdout 回放前先来的一帧控制消息, shell 必须是绝对路径。
-    await waitUntil(() => controlOf('ready') !== null || errored !== null, 15000, 't:ready 控制帧');
-    assert.equal(errored, null, 'ws 在 ready 之前不应出错');
-    const ready = controlOf('ready');
-    assert.ok(ready !== null, '应收到 t:ready 文本帧');
-    assert.equal(typeof ready.shell, 'string', 'ready.shell 应为字符串');
-    assert.ok(path.isAbsolute(ready.shell), 'ready.shell 应为绝对路径, 实际: ' + ready.shell);
-    assert.ok(fs.existsSync(ready.shell), 'ready.shell 应真实存在: ' + ready.shell);
-    assert.equal(ready.cols, 90, 'cols 应回显 90');
-    assert.equal(ready.rows, 25, 'rows 应回显 25');
-    ok('终端: ready 帧(shell=' + ready.shell + ', 90x25)');
-
-    // 2) stdin → stdout 往返。必须发**二进制帧**: 文本帧会被当控制协议解析而被忽略。
-    //    ⚠ 断言前必须剥掉 ANSI 转义: PowerShell 的 PSReadLine 会给回显上色, 并把
-    //    颜色序列**插进 token 内部**(带 `-` 的串还会被拆成参数名分段着色), 于是
-    //    原始字节流里根本不存在连续的 'fge-pty-ok'。这条断言要证明的是
-    //    「客户端字节 → node-pty stdin → PTY stdout → 广播 → 客户端」整条链路,
-    //    与着色无关, 故先用无 `-` 的标记 + 剥离 ANSI(双重保险)。
-    //    注: PTY 自身会回显输入, 所以该串通常至少出现两次。
-    /* eslint-disable no-control-regex -- 刻意匹配 ANSI 控制序列(ESC / BEL), 见上方说明 */
-    const stripAnsi = (text) =>
-        text.replace(/\u001b\][^\u0007]*\u0007/g, '').replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '');
-    /* eslint-enable no-control-regex */
-    const MARKER = 'fgeptyok';
-    client.send(Buffer.from('echo ' + MARKER + '\r', 'utf8'));
-    try {
-        await waitUntil(
-            () => stripAnsi(ptyOutput).includes(MARKER) || errored !== null,
-            15000,
-            'PTY stdout 中的 ' + MARKER,
-        );
-    } catch (err) {
-        console.log('[dbg] frames=' + frames.length);
-        console.log('[dbg] binaryFrames=' + frames.filter((f) => f.binary).length);
-        console.log('[dbg] textFrames=' + frames.filter((f) => !f.binary).length);
-        console.log('[dbg] ptyOutputLen=' + ptyOutput.length);
-        console.log(
-            '[dbg] textSample=' +
-                JSON.stringify(
-                    frames
-                        .filter((f) => !f.binary)
-                        .map((f) => f.text.slice(0, 90))
-                        .slice(0, 8),
-                ),
-        );
-        console.log('[dbg] strippedSample=' + JSON.stringify(stripAnsi(ptyOutput).slice(0, 400)));
-        throw err;
-    }
-    assert.equal(errored, null, '往返期间 ws 不应出错');
-    const hits = stripAnsi(ptyOutput).split(MARKER).length - 1;
-    assert.ok(hits >= 1, 'PTY stdout 应出现 ' + MARKER);
-    ok('终端: stdin→PTY→stdout 往返(' + MARKER + ' 命中 ' + hits + ' 次, 含终端回显)');
-
-    // 3) ping 控制帧回环(文本帧路径)。
-    const pingBefore = controls().filter((m) => m.t === 'ping').length;
-    client.send(JSON.stringify({ t: 'ping' }));
-    await waitUntil(
-        () => controls().filter((m) => m.t === 'ping').length > pingBefore || errored !== null,
-        5000,
-        'ping 控制帧回环',
-    );
-    assert.equal(errored, null, 'ping 期间 ws 不应出错');
-    assert.ok(controls().filter((m) => m.t === 'ping').length > pingBefore, '应收到 ping 回帧');
-    ok('终端: ping 控制帧回环');
-
-    // 4) kill → exit 控制帧(或 socket 直接关闭)。
-    client.send(JSON.stringify({ t: 'kill' }));
-    await waitUntil(
-        () => controlOf('exit') !== null || closed || errored !== null,
-        15000,
-        'exit 帧或 socket 关闭',
-    );
-    const sawExit = controlOf('exit') !== null;
-    assert.ok(sawExit || closed, 'kill 后应收到 exit 控制帧或 socket 关闭');
-    ok('终端: kill → ' + (sawExit ? 'exit 控制帧' : 'socket 关闭'));
-
-    try {
-        client.terminate();
-    } catch {
-        // 已关闭
-    }
-    wsClient = null;
 }
 
 // ============================== 主流程 ==============================
@@ -886,17 +651,15 @@ async function runAll() {
         ok('vendor: xterm.css 200 + css(' + vendorCss.text.length + ' 字节)');
     }
 
-    // ---- 8. 升级栅栏(非回环 Host) ----
-    const upgradeReject = await rawUpgradeAttempt('evil.example');
-    assert.match(
-        upgradeReject,
-        /^HTTP\/1\.1 403 /,
-        '非回环 Host 的升级应在握手前被拒: ' + JSON.stringify(upgradeReject.slice(0, 80)),
-    );
-    ok('WS 栅栏: 非回环 Host 的裸升级请求 → 403 文本响应');
-
-    // ---- 9. 终端端到端(真 ws + 真 node-pty) ----
-    await runTerminalE2E();
+    // ---- 8. 终端不再走 host(见 ADR-0006) ----
+    //
+    // 内核易主之后 host 半**不该**再注册任何升级路由: 抽屉里的终端由官方
+    // `@deepseek-ai/dsh-api-terminal-controller` 提供(client 半用 `ctx.webTerminals`)。
+    // 于是原来那条 `/fge/ws/terminal` 现在必须**查无此路**, 而整台 server 的升级路由表应当是空的。
+    assert.equal(harness.upgradeRouteCount(), 0, 'host 半不该再注册任何升级路由');
+    const gone = await apiCall('GET', '/fge/ws/terminal');
+    assert.equal(gone.status, 404, '旧终端 WS 路径应 404(它已经不在了), 实际: ' + gone.status);
+    ok('终端内核: host 侧无升级路由, 旧 /fge/ws/terminal → 404');
 }
 
 let failure = null;
