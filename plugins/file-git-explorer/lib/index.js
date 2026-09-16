@@ -1,7 +1,10 @@
 /**
  * dsh-file-git-explorer — host half(静态双半插件)
  *
- * 职责: 为右侧栏「git 页签」与终端抽屉提供 git 数据与**真 PTY**。
+ * 职责: 为右侧栏「git 页签」与终端抽屉提供 git 数据与 xterm 静态资产。
+ *
+ * ⚠ 终端**进程**不在这里: 抽屉里的终端由官方 `@deepseek-ai/dsh-api-terminal-controller` 提供
+ * (client 半直接用 `ctx.webTerminals`, host 半不需要任何路由), 见 docs/adr/0006。
  *
  * 静态插件的 client→host 通信不走动态插件的 harness 私有 RPC, 而是注册
  * HTTP JSON 路由(与 dsh-ds-balance 同款信任栅栏):
@@ -14,7 +17,6 @@
  *   POST /fge/api/log     { repoRoot, ref?, skip?, limit? } → { ref, head, commits }   翻页零 rev-parse
  *   POST /fge/api/show    { repoRoot, hash, path? }         → { kind:'commit'|'merge'|'diff', message, files, hunks, text }
  *   GET  /fge/vendor/…    xterm.js | xterm.css | addon-fit.js   白名单静态资产(见下方栅栏说明)
- *   GET  /fge/ws/terminal WebSocket 升级 → PTY 字节流(帧协议见 lib/pty.js 顶部)
  *
  * 信任栅栏: 仅回环地址 + `x-dsh-plugin: 1` 头 + 仅 POST。**vendor 路由是唯一例外** ——
  * `<script src>` 无法携带自定义头, 故只校验回环地址, 并以**固定白名单**兜底(三个文件名
@@ -28,7 +30,6 @@
  */
 
 import fsp from 'node:fs/promises';
-import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import {
@@ -44,27 +45,8 @@ import {
   parseDiffHunks,
   parseWorktreeList,
 } from './git.js';
-import {
-  resolveShellExecutable,
-  clampSize,
-  shellArgs,
-  encodeControl,
-  decodeControl,
-  RingBuffer,
-  TerminalPool,
-  DEFAULT_COLS,
-  DEFAULT_ROWS,
-  CTRL_READY,
-  CTRL_EXIT,
-  CTRL_ERROR,
-  CTRL_RESIZE,
-  CTRL_PING,
-  CTRL_KILL,
-} from './pty.js';
 
-// 自身依赖的锚点(插件自带依赖, 如 @xterm/xterm)。node-pty / ws 的锚点见 apply()
-// 内的 requireProfile —— 依赖解析刻意延迟到 apply() 内: 插件即使在被移除/半装配
-// 状态下也不能因顶层 import 原生模块失败而拖垮整个 profile boot。
+// 自身依赖的锚点(插件自带依赖, 如 @xterm/xterm)。
 const requireSelf = createRequire(import.meta.url);
 
 export const name = 'dsh-file-git-explorer';
@@ -74,7 +56,6 @@ export const inject = ['webServer'];
 
 const ROUTE_PREFIX = '/fge/api';
 const VENDOR_PREFIX = '/fge/vendor';
-const WS_TERMINAL_PATH = '/fge/ws/terminal';
 const BODY_CAP = 256 * 1024; // 请求体上限(与 handoff 一致)
 const TEXT_CAP = 2 * 1024 * 1024; // diff / 提交详情文本上限
 const BRANCH_TTL_MS = 60 * 1000;
@@ -95,11 +76,8 @@ export function apply(ctx) {
   // ---- 依赖解析锚点 ----
   //
   // ⚠ 实测钉死: 插件以 **junction** 挂进 profile, 而 Node 默认解析 realpath,
-  // 所以 `import.meta.url` 指向真实仓库路径, 从那里 `require('node-pty')` /
-  // `require('ws')` 一律 MODULE_NOT_FOUND —— 这两个是 **dsh 自己的依赖**,
-  // 只在 profile 配置树里解析得到(dsh-app-boot 把 ctx.baseUrl 设为 profile 目录,
-  // 其 node_modules 有指向 dsh 安装目录的 junction)。
-  // 故顺序为: 先锚 profile 配置树, 再退回插件自身(插件自带依赖)。
+  // 所以 `import.meta.url` 指向真实仓库路径, 从那里不一定解析得到 profile 里的东西。
+  // 故顺序为: 先锚 profile 配置树, 再退回插件自身(插件自带依赖, 如 @xterm/xterm)。
   let requireProfile = null;
   try {
     if (typeof ctx.baseUrl === 'string' && ctx.baseUrl !== '') {
@@ -107,20 +85,6 @@ export function apply(ctx) {
     }
   } catch {
     requireProfile = null;
-  }
-
-  /** 解析依赖, 失败抛最后一个锚点的错误。 */
-  function resolveDep(name) {
-    const anchors = requireProfile === null ? [requireSelf] : [requireProfile, requireSelf];
-    let lastError = null;
-    for (const anchor of anchors) {
-      try {
-        return anchor(name);
-      } catch (err) {
-        lastError = err;
-      }
-    }
-    throw lastError ?? new Error('fge: cannot resolve ' + name);
   }
 
   /** 解析依赖内某个文件的绝对路径(先 profile, 再自身)。 */
@@ -562,197 +526,6 @@ export function apply(ctx) {
     }
   }
 
-  // ---- 终端(真 PTY) ----
-
-  /**
-   * 每工作区一个终端, 全局 LRU 上限 16。
-   *
-   * 进程**不进 ctx.jobs**: jobs 的语义是"会话销毁即取消", 而终端要跨抽屉关闭 /
-   * 切会话 / 页面刷新存活, 两者矛盾 —— 故本插件自管生命周期。
-   */
-  const terminals = new TerminalPool();
-  /** WebSocket 升级处理器(懒加载 ws, 未装依赖时优雅降级)。 */
-  let handleUpgrade = null;
-
-  /** 工作区键: 归一路径 + 大小写折叠(Windows 同目录不同大小写视为同一工作区)。 */
-  function terminalKey(root) {
-    const norm = path.resolve(root);
-    return process.platform === 'win32' ? norm.toLowerCase() : norm;
-  }
-
-  function broadcast(entry, payload) {
-    for (const client of entry.clients) {
-      if (client.readyState !== 1) continue; // 1 = OPEN
-      try {
-        if (typeof payload === 'string') client.send(payload);
-        else client.send(payload, { binary: true });
-      } catch {
-        // 单客户端发送失败不影响其它客户端
-      }
-    }
-  }
-
-  function spawnPty(cwd, cols, rows) {
-    const pty = resolveDep('node-pty');
-    const shell = resolveShellExecutable(process.platform, process.env, (p) => fs.existsSync(p));
-    if (shell === null) throw new Error('no-shell-found');
-    const size = clampSize(cols, rows);
-    const proc = pty.spawn(shell, shellArgs(shell), {
-      name: 'xterm-256color',
-      cols: size.cols,
-      rows: size.rows,
-      cwd,
-      env: { ...process.env, TERM: 'xterm-256color' },
-      useConpty: process.platform === 'win32',
-    });
-    return { shell, proc, size };
-  }
-
-  /** 取或建该工作区的终端; 已退出的旧终端被重置为新进程。 */
-  function ensureTerminal(root, cols, rows) {
-    const key = terminalKey(root);
-    let entry = terminals.get(key);
-    if (entry !== undefined && entry.exited === false) return entry;
-    if (entry !== undefined) {
-      // 旧进程已结束: **丢掉上一个进程的回放缓冲**再接新进程。
-      // (原来是把旧缓冲当"上文"留着 —— 配上每次重启都重打一遍的 shell banner, 缓冲里就叠了 N 份
-      //  "PowerShell … + 提示符", 重开抽屉时整屏都是它。同一次会话内的重连回放仍然照旧。)
-      entry.ring.reset();
-      entry.ring.append('\r\n\x1b[90m— 上一次会话已结束, 已开启新终端 —\x1b[0m\r\n');
-      entry.exited = false;
-      entry.exitInfo = null;
-      const respawned = spawnPty(entry.cwd, cols ?? entry.cols, rows ?? entry.rows);
-      entry.proc = respawned.proc;
-      entry.shell = respawned.shell;
-      entry.cols = respawned.size.cols;
-      entry.rows = respawned.size.rows;
-      wirePty(entry);
-      return entry;
-    }
-    const size = clampSize(cols, rows);
-    const spawned = spawnPty(root, size.cols, size.rows);
-    entry = {
-      key,
-      cwd: path.resolve(root),
-      proc: spawned.proc,
-      shell: spawned.shell,
-      cols: size.cols,
-      rows: size.rows,
-      ring: new RingBuffer(),
-      clients: new Set(),
-      exited: false,
-      exitInfo: null,
-    };
-    wirePty(entry);
-    const evicted = terminals.put(key, entry);
-    for (const victim of evicted) {
-      // 淘汰只作用于最久未用的槽位: 先礼貌终止, 再把"已淘汰"告诉还挂着的客户端。
-      try {
-        victim.value.proc.kill();
-      } catch {
-        // 进程可能已退出
-      }
-      broadcast(
-        victim.value,
-        encodeControl({ t: CTRL_EXIT, code: null, signal: null, evicted: true }),
-      );
-      for (const client of victim.value.clients) {
-        try {
-          client.close();
-        } catch {
-          // 忽略
-        }
-      }
-      victim.value.clients.clear();
-    }
-    return entry;
-  }
-
-  /** 接上 PTY 的 data/exit 事件(新进程与重启后的进程共用)。 */
-  function wirePty(entry) {
-    entry.proc.onData((data) => {
-      const text = typeof data === 'string' ? data : String(data);
-      entry.ring.append(text);
-      broadcast(entry, Buffer.from(text, 'utf8'));
-    });
-    entry.proc.onExit(({ exitCode, signal }) => {
-      entry.exited = true;
-      entry.exitInfo = { code: exitCode, signal: signal ?? null };
-      broadcast(entry, encodeControl({ t: CTRL_EXIT, code: exitCode, signal: signal ?? null }));
-    });
-  }
-
-  /** 客户端接入: 发 ready + 回放, 并把该 socket 加入广播集。 */
-  function attachClient(entry, ws, from) {
-    entry.clients.add(ws);
-    const replay = entry.ring.since(from ?? 0);
-    try {
-      ws.send(
-        encodeControl({
-          t: CTRL_READY,
-          id: entry.key,
-          shell: entry.shell,
-          cols: entry.cols,
-          rows: entry.rows,
-          replay: replay.bytes.length,
-          lossy: replay.lossy,
-          exited: entry.exited,
-        }),
-      );
-    } catch {
-      // 忽略
-    }
-    if (replay.bytes.length > 0) {
-      try {
-        ws.send(replay.bytes, { binary: true });
-      } catch {
-        // 忽略
-      }
-    }
-  }
-
-  function handleTerminalFrame(entry, ws, raw) {
-    // ws 的 message 事件把 isBinary 作为第二个参数传入, 见下方绑定。
-    const isBinary = raw.isBinary === true;
-    if (isBinary) {
-      try {
-        entry.proc.write(raw.data.toString('utf8'));
-      } catch {
-        // 进程已退出
-      }
-      return;
-    }
-    const msg = decodeControl(raw.data.toString('utf8'));
-    if (msg === null) return;
-    if (msg.t === CTRL_RESIZE) {
-      const size = clampSize(msg.cols, msg.rows);
-      entry.cols = size.cols;
-      entry.rows = size.rows;
-      try {
-        entry.proc.resize(size.cols, size.rows);
-      } catch {
-        // 进程已退出
-      }
-      return;
-    }
-    if (msg.t === CTRL_KILL) {
-      // ■ 终止整棵进程树: node-pty 的 kill 在 Windows 上走 ConPTY 终止整树。
-      try {
-        entry.proc.kill();
-      } catch {
-        // 已退出
-      }
-      return;
-    }
-    if (msg.t === CTRL_PING) {
-      try {
-        ws.send(encodeControl({ t: CTRL_PING }));
-      } catch {
-        // 忽略
-      }
-    }
-  }
-
   ctx.webServer.register({ kind: 'prefix', path: ROUTE_PREFIX, handler: apiHandler });
   ctx.webServer.register({ kind: 'prefix', path: VENDOR_PREFIX, handler: serveVendor });
 
@@ -796,113 +569,4 @@ export function apply(ctx) {
       writeJson(res, 500, { ok: false, error: 'failed' });
     }
   }
-
-  // WebSocket 升级: dsh 的 registerUpgrade 只按 pathname 匹配并交出裸 socket,
-  // 握手由本插件用 ws 完成(这正是 ws 是依赖的原因)。
-  try {
-    const { WebSocketServer } = resolveDep('ws');
-    const wss = new WebSocketServer({ noServer: true });
-
-    /** 握手前拒绝: 在裸 socket 上写一段 HTTP 响应(与 dsh-api-gateway 同款)。 */
-    function rejectUpgrade(socket, status, reason) {
-      const body = reason.toLowerCase();
-      socket.end(
-        [
-          'HTTP/1.1 ' + String(status) + ' ' + reason,
-          'Connection: close',
-          'Content-Type: text/plain; charset=utf-8',
-          'Content-Length: ' + String(Buffer.byteLength(body)),
-          '',
-          body,
-        ].join('\r\n'),
-      );
-    }
-
-    handleUpgrade = (req, socket, head) => {
-      // 终端是能执行任意命令的能力, 只服务回环来源; 不合法时在握手前就拒掉。
-      if (!isTrustedRequest(req)) {
-        rejectUpgrade(socket, 403, 'Forbidden');
-        return;
-      }
-      wss.handleUpgrade(req, socket, head, (ws) => {
-        let root = CWD;
-        let cols = DEFAULT_COLS;
-        let rows = DEFAULT_ROWS;
-        let from = 0;
-        try {
-          const url = new URL(req.url ?? '/', 'http://dsh.internal');
-          const q = url.searchParams;
-          const rawRoot = q.get('root');
-          if (rawRoot !== null && path.isAbsolute(rawRoot)) root = path.normalize(rawRoot);
-          const size = clampSize(q.get('cols'), q.get('rows'));
-          cols = size.cols;
-          rows = size.rows;
-          const rawFrom = Number(q.get('from'));
-          if (Number.isFinite(rawFrom) && rawFrom >= 0) from = Math.floor(rawFrom);
-        } catch {
-          // 查询串异常时用默认值
-        }
-
-        let entry;
-        try {
-          entry = ensureTerminal(root, cols, rows);
-        } catch (err) {
-          try {
-            ws.send(
-              encodeControl({
-                t: CTRL_ERROR,
-                error: 'spawn-failed',
-                detail: err instanceof Error ? err.message : String(err),
-              }),
-            );
-            ws.close();
-          } catch {
-            // 忽略
-          }
-          return;
-        }
-
-        attachClient(entry, ws, from);
-        ws.on('message', (data, isBinary) => {
-          handleTerminalFrame(entry, ws, { data: Buffer.from(data), isBinary });
-        });
-        ws.on('close', () => {
-          entry.clients.delete(ws);
-        });
-        ws.on('error', () => {
-          entry.clients.delete(ws);
-        });
-      });
-    };
-    ctx.webServer.registerUpgrade({
-      path: WS_TERMINAL_PATH,
-      handler: (req, socket, head) => handleUpgrade(req, socket, head),
-    });
-  } catch (err) {
-    console.error('fge: 终端不可用(缺少 ws / node-pty 依赖)', err);
-  }
-
-  // 插件卸载时收掉所有终端进程, 不留孤儿 shell。
-  ctx.effect(
-    () => () => {
-      for (const key of terminals.keys()) {
-        const entry = terminals.delete(key);
-        if (entry === undefined) continue;
-        try {
-          entry.proc.kill();
-        } catch {
-          // 已退出
-        }
-        for (const client of entry.clients) {
-          try {
-            client.close();
-          } catch {
-            // 忽略
-          }
-        }
-        entry.clients.clear();
-      }
-    },
-    'fge: dispose terminals',
-  );
 }

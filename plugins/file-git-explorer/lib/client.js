@@ -37,8 +37,11 @@ window.__ModuleLoader__.load({
 
     exports.name = 'dsh-file-git-explorer';
 
-    /** 官方右侧栏注册表 / 槽位注册表 / 悬浮面板控制面。 */
-    exports.inject = ['slots', 'sidebarRightTabs', 'sidebarRight'];
+    /**
+     * 官方右侧栏注册表 / 槽位注册表 / 悬浮面板控制面, 以及**官方终端内核**
+     * (`webTerminals`: 抽屉里的终端由它提供, 见 ADR-0006 与 package.json 的 `dsh.client.inject`)。
+     */
+    exports.inject = ['slots', 'sidebarRightTabs', 'sidebarRight', 'webTerminals'];
 
     // ---- 按目录归类(纯函数) ----
     //
@@ -408,6 +411,41 @@ window.__ModuleLoader__.load({
       return viewportY + row - 1;
     }
 
+    /**
+     * 把官方终端的一帧交给 xterm, 返回**新的 `lastRevision`**(原值 = 这一帧被丢掉)。
+     *
+     * - `snapshot`: 先 `reset()` + 按 host 的 `info.cols/rows` `resize()`, 再写 `frame.screen`
+     *   —— 顺序反了就是串屏;
+     * - `output`: 直接写 `frame.data`;
+     * - **两者都要在 `write` 回调里 `acknowledge(revision)`**: 官方那条流是 await 这次 ack 才放下一帧的,
+     *   漏掉就再也没有输出了(见 ADR-0006)。
+     *
+     * 放在工厂作用域(而不是 apply 里)是为了离线护栏能拿假 xterm / 假 view 把这条契约直接跑一遍。
+     */
+    function applyTerminalFrame(term, view, render, lastRevision) {
+      if (term === null || view === null || render === undefined || render === null) {
+        return lastRevision;
+      }
+      if (render.revision <= lastRevision) return lastRevision;
+      var frame = render.frame;
+      if (frame.type === 'snapshot') {
+        try {
+          term.reset();
+          term.resize(frame.info.cols, frame.info.rows);
+        } catch (e) {
+          // 尺寸异常也照旧写屏: 宁可先看见内容, 也别整屏丢掉
+        }
+      }
+      term.write(frame.type === 'snapshot' ? frame.screen : frame.data, function () {
+        try {
+          view.acknowledge(render.revision);
+        } catch (e) {
+          // view 已经拆了: ack 不再有意义
+        }
+      });
+      return render.revision;
+    }
+
     exports.apply = function (ctx) {
       var slots = ctx.slots;
       var h = React.createElement;
@@ -425,7 +463,13 @@ window.__ModuleLoader__.load({
 
       var API_BASE = '/fge/api';
       var VENDOR_BASE = '/fge/vendor';
-      var WS_PATH = '/fge/ws/terminal';
+      /**
+       * 抽屉这个终端在**官方终端 view 表**里的 occurrence key(官方按 `(sessionId, key)` 缓存)。
+       *
+       * 用固定字面量, 所以同一个会话反复开关抽屉拿回的是**同一个**终端 —— 与官方 `terminal` 页签
+       * (multiple: true, key = 每次新铸的页签 id)不在一个空间, 两种入口互不干扰。
+       */
+      var TERM_KEY = 'fge-dock';
       var TERM_HEIGHT_KEY = 'fge-term-height-v1';
       /**
        * 终端「选中即复制」开关的存储键。**默认开**(用户要的就是"选中就复制"), 关掉只停**自动**那一条 ——
@@ -800,6 +844,14 @@ window.__ModuleLoader__.load({
           //   它是一整条 5px 通宽的横带, 一亮就是一整条, 在抽屉边缘上非常扎眼。
           //   可拖的提示交给 `cursor:ns-resize`(悬停时指针就变了), 这里保持完全透明。
           '.fge-term-grip{height:var(--fge-term-grip,5px);cursor:ns-resize;background:transparent}',
+          // 状态行: 终端连着且可写时**整行不渲染**(component 返回 null), 所以这里只管"要说一句话"时的样子。
+          // 底色与终端体同一只 token, 于是它读起来是"终端上方的一行说明", 而不是另起一块面板。
+          '.fge-term-status{display:flex;align-items:center;gap:6px;padding:3px 8px;font-size:11.5px;color:var(--dsw-alias-label-secondary);background:' +
+            TERM_SURFACE +
+            ';border-bottom:1px solid var(--dsw-alias-border-l2)}',
+          '.fge-term-status-text{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+          '.fge-term-status-action{flex:0 0 auto;padding:1px 6px;border:1px solid var(--dsw-alias-border-l2);border-radius:4px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;cursor:pointer}',
+          '.fge-term-status-action:hover{background:var(--dsw-alias-interactive-bg-hover)}',
           '.fge-term-body{flex:1 1 auto;min-height:0;padding:2px 4px 4px;background:' + TERM_SURFACE + '}',
           '.fge-term-body .xterm{height:100%}',
           // xterm 自带的滚动条(vscode 血统)是 **14px** 宽, 在这么窄的抽屉里显得又粗又占地方;
@@ -1867,6 +1919,13 @@ window.__ModuleLoader__.load({
       // 看起来就是"标题条错位/断开"。所以这里按主题色算出**不透明**的 #rrggbb 再交给 xterm。
       /** 所有活着的 xterm 实例: 主题一换要就地更新(组件重挂才算的话, 抽屉不关就一直是旧主题)。 */
       var liveTerms = new Set();
+      /**
+       * 当前挂着的官方终端 view: **会话 id → view**。
+       *
+       * 抽屉里的 xterm 体是唯一创建 view 的地方, 而标题条上那枚终止键在**外面**(TerminalDock) ——
+       * 它按会话来这里取(见 killTerminal)。收起抽屉时组件卸载, 这条登记也一并摘掉。
+       */
+      var termViews = new Map();
       /** 最近一次 theme/change 的快照: 新开的终端直接用它算色, 不必等下次主题切换。 */
       var lastThemeSnapshot = null;
 
@@ -2105,15 +2164,18 @@ window.__ModuleLoader__.load({
        * 同工作区的多个实例各自连一条 WS, 输出由 host 广播(输入皆可)。
        */
       function TerminalView(props) {
+        var sessionId = props.sessionId;
         var root = props.root;
         var visible = props.visible !== false;
         var hostRef = React.useRef(null);
         var termRef = React.useRef(null);
         var fitRef = React.useRef(null);
-        var wsRef = React.useRef(null);
-        var statePair = React.useState('loading');
-        var state = statePair[0];
-        var setState = statePair[1];
+        /** 这个会话的官方终端 view(取或建见 effect 里的 `ctx.webTerminals.view`)。 */
+        var viewRef = React.useRef(null);
+        var statePair = React.useState(null);
+        /** 官方 `view.state` 的最新快照: `{phase, writable, info, environment, render, error, issue}`。 */
+        var viewState = statePair[0];
+        var setViewState = statePair[1];
         /**
          * 「选中即复制」开关的当前值。⚠ 终端 effect 只按 `[root, visible]` 重挂(重挂 = 重建终端),
          * 所以开关**不能**进依赖数组, 只能走 ref 让 mouseup 那条闭包读到最新值。
@@ -2129,13 +2191,19 @@ window.__ModuleLoader__.load({
 
         React.useEffect(
           function () {
-            if (!visible || typeof root !== 'string' || root === '') return undefined;
+            // 终端**按会话**取(官方 view 归 Session, 见 ADR-0006): 没有会话 id 就没有终端可开。
+            if (!visible || typeof sessionId !== 'string' || sessionId === '') return undefined;
             var disposed = false;
             var term = null;
-            var ws = null;
+            var view = null;
             var fit = null;
             var ro = null;
             var onData = null;
+            /** 官方 state 的退订函数; 以及 `view.mount()` 返回的 detach(**只摘流, 不杀进程**)。 */
+            var unsubscribe = null;
+            var detach = null;
+            /** 已经交给 xterm 的最大帧号 —— 官方按 revision 递增推送, 只认更大的。 */
+            var lastRevision = 0;
             /** 本次挂上去的所有监听 —— `[target, type, fn, capture]`, cleanup 照着这张表逐个摘。 */
             var listeners = [];
             /** 上一次**已经写进剪贴板**的选区文字, 用来避免同一段被反复重写(见下面的 mouseup)。 */
@@ -2336,93 +2404,83 @@ window.__ModuleLoader__.load({
                   copySelection(true, false);
                   return false;
                 });
+                // ---- 内核 = 官方 terminal-controller(见 ADR-0006) ----
+                //
+                // `view()` 就是"取或建": 官方按 (会话, key) 缓存 view, 所以同一个会话反复开关抽屉拿回的是
+                // **同一个**终端; 而且官方在 `view()` 里就 `refresh()`(探测 shell + 起进程),
+                // 这里没有"连接"这一步 —— 挂 DOM 生命周期走 `mount()`。
                 try {
-                  fit.fit();
-                } catch (e) {
-                  // 容器尚未布局, 由 ResizeObserver 补
+                  view = ctx.webTerminals.view(sessionId, TERM_KEY);
+                } catch (err) {
+                  if (!disposed) {
+                    setViewState({ phase: 'failed', writable: false, error: errText(err) });
+                  }
+                  return;
                 }
+                viewRef.current = view;
+                termViews.set(sessionId, view);
 
-                var url =
-                  WS_PATH +
-                  '?root=' +
-                  encodeURIComponent(root) +
-                  '&cols=' +
-                  String(term.cols) +
-                  '&rows=' +
-                  String(term.rows);
-                ws = new WebSocket(
-                  (window.location.protocol === 'https:' ? 'wss://' : 'ws://') +
-                    window.location.host +
-                    url,
-                );
-                ws.binaryType = 'arraybuffer';
-                wsRef.current = ws;
+                /** 官方 view 的最新快照 —— 帧以外的地方(只读态 / 尺寸上限)读它。 */
+                var latest = null;
 
-                ws.onopen = function () {
-                  if (!disposed) setState('open');
-                };
-                ws.onmessage = function (ev) {
-                  if (disposed || term === null) return;
-                  if (typeof ev.data === 'string') {
-                    // 文本帧 = 控制协议(见 lib/pty.js 顶部)
-                    var msg = null;
-                    try {
-                      msg = JSON.parse(ev.data);
-                    } catch (e) {
-                      msg = null;
-                    }
-                    if (msg && msg.t === 'exit') {
-                      term.write(
-                        '\r\n\x1b[90m[进程已结束' +
-                          (msg.code === null || msg.code === undefined
-                            ? ''
-                            : ' 退出码 ' + String(msg.code)) +
-                          ']\x1b[0m\r\n',
-                      );
-                    } else if (msg && msg.t === 'error') {
-                      term.write('\r\n\x1b[31m[fge] ' + String(msg.error) + '\x1b[0m\r\n');
-                    }
+                /**
+                 * 按官方上限 refit(与官方正文的 `fitScreen` 同一口径: `proposeDimensions()` 的结果
+                 * 先夹到 `environment.maxCols/maxRows`, 再同时告诉 xterm 与 host)。
+                 */
+                function fitToHost() {
+                  if (fit === null || term === null) return;
+                  var dims = null;
+                  try {
+                    dims = fit.proposeDimensions();
+                  } catch (e) {
+                    return; // 容器尚未布局
+                  }
+                  if (dims === undefined || dims === null) return;
+                  var env = latest === null ? undefined : latest.environment;
+                  var cols = env === undefined ? dims.cols : Math.min(dims.cols, env.maxCols);
+                  var rows = env === undefined ? dims.rows : Math.min(dims.rows, env.maxRows);
+                  if (cols < 2 || rows < 1) return;
+                  try {
+                    term.resize(cols, rows);
+                  } catch (e) {
                     return;
                   }
-                  term.write(new Uint8Array(ev.data));
-                };
-                ws.onclose = function () {
-                  if (!disposed) setState('closed');
-                };
-                ws.onerror = function () {
-                  if (!disposed) setState('error');
-                };
+                  view.resize(cols, rows); // 非 writable 时官方自己忽略
+                }
+
+                /** 官方快照的落点: 存下来 → 交给 React → 同步只读态 → 有帧就写屏。 */
+                function syncViewState() {
+                  if (disposed || view === null) return;
+                  latest = view.state.getSnapshot();
+                  if (term !== null) term.options.disableStdin = latest.writable !== true;
+                  lastRevision = applyTerminalFrame(term, view, latest.render, lastRevision);
+                  setViewState(latest);
+                }
+
+                unsubscribe = view.state.subscribe(syncViewState);
+                syncViewState();
+                // 挂上 DOM 生命周期。返回的 detach **只摘流, 不杀进程** —— 收起抽屉走的正是这一条。
+                detach = view.mount();
+                // ⚠ 必须在 `mount()` 之后: 尺寸上限只有 `environment` 到了才有。
+                fitToHost();
 
                 onData = term.onData(function (data) {
-                  // ⚠ 必须走**二进制帧**: 文本帧在本协议里专供 JSON 控制消息,
-                  // host 收到非 JSON 的文本帧会直接丢弃 —— 那样键入就全丢了。
-                  if (ws !== null && ws.readyState === 1) {
-                    ws.send(new TextEncoder().encode(data));
-                  }
+                  // 输入原样交给官方(它自己排队 + 限流, 非 writable 时直接丢弃)。
+                  if (view !== null) view.write(data);
                 });
 
-                // 尺寸变化同步 PTY cols/rows
+                // 尺寸变化 → 重新 refit 并同步给 host 的 PTY
                 if (typeof ResizeObserver === 'function') {
                   ro = new ResizeObserver(function () {
-                    if (disposed || fit === null || ws === null) return;
-                    try {
-                      fit.fit();
-                    } catch (e) {
-                      return;
-                    }
-                    if (ws.readyState === 1) {
-                      ws.send(JSON.stringify({ t: 'resize', cols: term.cols, rows: term.rows }));
-                    }
+                    if (disposed) return;
+                    fitToHost();
                   });
                   ro.observe(hostRef.current);
                 }
               })
               .catch(function (err) {
                 if (!disposed) {
-                  setState('error');
-                  if (hostRef.current !== null) {
-                    hostRef.current.textContent = String((err && err.message) || err);
-                  }
+                  setViewState({ phase: 'failed', writable: false, error: errText(err) });
                 }
               });
 
@@ -2441,13 +2499,23 @@ window.__ModuleLoader__.load({
               dragFromTerm = false;
               dragLastRow = -1;
               dragBlocked = false;
-              if (ws !== null) {
+              // 收起抽屉: 只摘订阅 + detach —— **不 close**(进程与屏幕都由 host 的官方终端留着,
+              // 再展开就是同一个终端 + 一帧新快照)。
+              if (unsubscribe !== null) {
                 try {
-                  ws.close();
+                  unsubscribe();
                 } catch (e) {
                   // 忽略
                 }
               }
+              if (detach !== null) {
+                try {
+                  detach();
+                } catch (e) {
+                  // 忽略
+                }
+              }
+              if (view !== null && termViews.get(sessionId) === view) termViews.delete(sessionId);
               if (term !== null) {
                 liveTerms.delete(term);
                 try {
@@ -2458,45 +2526,122 @@ window.__ModuleLoader__.load({
               }
               termRef.current = null;
               fitRef.current = null;
-              wsRef.current = null;
+              viewRef.current = null;
             };
           },
-          [root, visible],
+          [sessionId, visible],
         );
 
-        var hint = null;
-        if (state === 'loading') hint = '正在连接终端…';
-        else if (state === 'error') hint = '终端不可用(检查依赖与 host 日志)';
-        else if (state === 'closed') hint = '连接已关闭, 重新打开即可重连';
+        var status = terminalStatus(viewState);
 
         return h(
           'div',
           { className: 'fge-root' },
-          hint === null ? null : h('div', { className: 'fge-empty' }, hint),
+          status === null
+            ? null
+            : h(
+                'div',
+                { className: 'fge-term-status' },
+                h('span', { className: 'fge-term-status-text' }, status.text),
+                status.action === null
+                  ? null
+                  : h(
+                      'button',
+                      {
+                        type: 'button',
+                        className: 'fge-term-status-action',
+                        onClick: function () {
+                          termAction(viewRef.current, status.action.run);
+                        },
+                      },
+                      status.action.label,
+                    ),
+              ),
           h('div', { className: 'fge-term-body', ref: hostRef }),
         );
       }
 
-      /** 终止当前工作区终端(■)。 */
-      function killTerminal(root) {
-        var ws = new WebSocket(
-          (window.location.protocol === 'https:' ? 'wss://' : 'ws://') +
-            window.location.host +
-            WS_PATH +
-            '?root=' +
-            encodeURIComponent(root) +
-            '&cols=80&rows=24',
-        );
-        ws.onopen = function () {
-          ws.send(JSON.stringify({ t: 'kill' }));
-          window.setTimeout(function () {
-            try {
-              ws.close();
-            } catch (e) {
-              // 忽略
-            }
-          }, 120);
-        };
+      /** 错误 → 一行文案(取 view 本身也可能抛, 那时没有 `message`)。 */
+      function errText(err) {
+        if (err === null || err === undefined) return '未知原因';
+        var msg = err.message === undefined ? String(err) : String(err.message);
+        return msg === '' ? '未知原因' : msg;
+      }
+
+      /**
+       * 官方 view 的状态 → 抽屉顶上那行提示 + 至多一枚动作。
+       *
+       * 口径照官方终端正文的状态条(`phase` / `info.state` / `writable` / `issue`), 但只取**一条文案
+       * 加一枚动作** —— 抽屉的标题条是照 Windows Terminal 做的, 不再引入第二条状态栏。
+       * 可写且连着时返回 `null`: 什么都不显示(`fge-term-status` 那一行是占位的, 不该常驻)。
+       */
+      function terminalStatus(viewState) {
+        if (viewState === null || viewState === undefined) return null;
+        var issue = viewState.issue;
+        if (issue === 'inputFull') return { text: '终端输入队列已满, 这次输入被拒绝', action: null };
+        if (issue === 'terminalLimit') return { text: '该会话的终端数已达上限', action: null };
+        if (issue === 'missingTerminal') return { text: '这个终端已不存在, 收起再展开即可新建', action: null };
+        if (issue === 'attachmentEnded') return { text: '终端连接已被替换', action: { label: '接管输入', run: 'connect' } };
+        var info = viewState.info;
+        if (viewState.phase === 'failed' || viewState.phase === 'disconnected') {
+          var text =
+            viewState.phase === 'disconnected'
+              ? '连接已断开'
+              : '终端失败: ' + (viewState.error === undefined ? '未知原因' : viewState.error);
+          // 与官方正文那条 retry 同款: 还没有进程信息就重新拉一次, 有了就重连。
+          return info === undefined
+            ? { text: text, action: { label: '重试', run: 'refresh' } }
+            : { text: text, action: { label: '重新连接', run: 'connect' } };
+        }
+        if (viewState.phase === 'closed') return { text: '进程已结束, 收起再展开可新建终端', action: null };
+        if (info !== undefined && info.state === 'exited') {
+          return {
+            text:
+              '进程已结束' +
+              (info.exitCode === null || info.exitCode === undefined
+                ? ''
+                : '(退出码 ' + String(info.exitCode) + ')'),
+            action: null,
+          };
+        }
+        if (info !== undefined && info.state === 'failed') {
+          return { text: '终端不可用: ' + (info.error === undefined ? '未知原因' : info.error), action: null };
+        }
+        if (viewState.phase === 'connected' && viewState.writable !== true) {
+          return { text: '只读(另一处持有输入权)', action: { label: '接管输入', run: 'connect' } };
+        }
+        if (viewState.phase !== 'connected') return { text: '正在连接终端…', action: null };
+        return null;
+      }
+
+      /** 状态行上那枚动作按钮: `connect` = 重新连接 / 接管输入, `refresh` = 重新拉一次终端。 */
+      function termAction(view, run) {
+        if (view === null || view === undefined) return;
+        try {
+          if (run === 'connect') view.connect();
+          else if (run === 'refresh') view.refresh();
+        } catch (err) {
+          console.warn('[fge] 终端动作失败', err);
+        }
+      }
+
+      /**
+       * 终止终端的进程(标题条右端那枚终止键)。
+       *
+       * 走官方 `view.close()` —— 它的语义是**请求结束进程**(后台清理, 失败会留在 `closeFailures` 里
+       * 可重试), 不再是本插件自己 `proc.kill()` 一棵进程树。失败会落进 view 的 state,
+       * 由 `terminalStatus` 那行提示带出来。
+       */
+      function killTerminal(sessionId) {
+        var view = termViews.get(sessionId);
+        if (view === undefined) return;
+        Promise.resolve()
+          .then(function () {
+            return view.close();
+          })
+          .catch(function (err) {
+            console.warn('[fge] 终止终端失败', err);
+          });
       }
 
       // ---- Git 页签: 变更列表 + 提交历史 ----
@@ -4063,11 +4208,11 @@ window.__ModuleLoader__.load({
               'button',
               {
                 className: 'fge-btn fge-term-glyph fge-term-kill',
-                title: '终止整棵终端进程树',
-                'aria-label': '终止终端进程树',
+                title: '结束这个终端的进程',
+                'aria-label': '结束终端进程',
                 onClick: function (ev) {
                   ev.stopPropagation();
-                  if (root !== '') killTerminal(root);
+                  killTerminal(sessionId);
                 },
               },
               // `■` 原来是个**文字字形**: 同一个码位在不同平台/字体回退下大小与粗细都不一样
@@ -4081,7 +4226,12 @@ window.__ModuleLoader__.load({
             { className: 'fge-term-body', id: 'fge-term-host' },
             root === ''
               ? h('div', { className: 'fge-empty' }, '等待会话工作区…')
-              : h(TerminalView, { root: root, visible: open, copyOnSelect: copyOn }),
+              : h(TerminalView, {
+                  sessionId: sessionId,
+                  root: root,
+                  visible: open,
+                  copyOnSelect: copyOn,
+                }),
           ),
         );
       }
@@ -4457,6 +4607,11 @@ window.__ModuleLoader__.load({
     exports.__treeRows = makeTreeRows;
     /** 终端的 16 色 ANSI 调色板 —— 离线护栏拿它逐个算与终端面的对比度(见 §13)。 */
     exports.__terminalPalette = terminalPalette;
+    /**
+     * 官方终端帧 → xterm 的那条契约(snapshot 先 reset+resize 再写屏 / 写完 ack)——
+     * 离线护栏用假 xterm 与假 view 直接跑它(见 ADR-0006)。
+     */
+    exports.__applyTerminalFrame = applyTerminalFrame;
     /** 右栏页签左右切换的下标计算 —— 离线护栏验它的**不环绕**语义(见 §14)。 */
     exports.__tabNeighbor = tabNeighbor;
     /**
