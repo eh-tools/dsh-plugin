@@ -11,14 +11,15 @@
   聊天里的文件链接), 与本插件的 **diff**。同一时间只有一个, 开新的先关旧的, 观感即「就地换内容」。
   文件内容**不自己渲染**: 本插件只是把官方正文页签 `ctx.sidebarRight.float()` 起来, 于是
   markdown / 代码 / 图片 / html / **pdf 全部是官方原版**; diff 用官方 `primitives.DiffBlock`。
-- **终端抽屉**(kind 无, 座位 `conversation.composer.dock`): **真 PTY** —— `node-pty` ↔ WebSocket ↔
-  `xterm.js`, 所以 vim / htop / 颜色 / 补全 / Ctrl+C 全部可用。收起态是 composer 下方一枚透明 chevron,
+- **终端抽屉**(kind 无, 座位 `conversation.composer.dock`): **内核是官方的** —— PTY / shell 探测 / 进程归属 /
+  屏幕快照全归 `@deepseek-ai/dsh-api-terminal-controller`(client 半用 `ctx.webTerminals`, 见 `docs/adr/0006`),
+  本插件只留**外壳 + xterm 渲染**, 所以 vim / htop / 颜色 / 补全 / Ctrl+C 全部可用。收起态是 composer 下方一枚透明 chevron,
   点击**向上**展开;**宽度与 composer 卡片(uV2eYG_card)完全一致**, 配色全走主题 token,
-  顶上是 Windows Terminal 观感的**终端标题条**(页签上的 `×` / 点条空白处收起, 右端**终止键**才杀进程);
+  顶上是 Windows Terminal 观感的**终端标题条**(页签上的 `×` / 点条空白处收起, 右端**终止键**才结束进程);
   **展开就自动聚焦终端**(不用再用鼠标点一下就能打字 —— 代价是那一刻 `Esc` 归终端, 想收起点条空白处);
   终端里**选中即复制**(拖选 / 双击 / 三击, 松手就进剪贴板), **Alt+C 兜底**; 条右侧那枚**开关**可以关掉自动那条。
   **拖到内容下面那片空白里也不会选出一堆空行**(选区尾巴收到最后一行有内容处)。
-  终端只有这一种形态(没有右栏终端页签)。
+  终端只有这一种形态(没有右栏终端页签), **每会话一个**(见 `CONTEXT.md`「会话终端」)。
 - 文件树**回归官方**: 本插件既不接管、也不自绘文件树。**右栏默认铺两格** —— 官方「工作区文件」+ 本插件的「Git」,
   且 **Git 是打开右栏时当前显示的那一格**(见实现事实 §9)。
 
@@ -35,10 +36,10 @@ host 半随 DSH 启动自动挂载; 浏览器 bundle 由 profile 注入, 刷新 
 
 ### 依赖
 
-| 依赖                               | 来源                | 说明                                                                                                                                                                                                                                                             |
-| ---------------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@xterm/xterm`、`@xterm/addon-fit` | 本包 `dependencies` | 终端前端。**必须由本包自带** —— 浏览器模块表(seed)是一份封闭的 9 项名单, 不含 xterm, 所以 `require('xterm')` 必然抛错; 改由 host 的 `/fge/vendor/…` 白名单路由伺服官方构建产物, client 用 `<script>` 载入后取全局 `window.Terminal` / `window.FitAddon.FitAddon` |
-| `node-pty`、`ws`                   | **dsh 自带**        | 不声明为本包依赖: 它们是 dsh 自己的依赖(`dsh-subprocess-local` → `node-pty`, `dsh-api-gateway` → `ws`), 且**只从 profile 锚点解析得到**(原因见下方「实现事实」)                                                                                                  |
+| 依赖                                       | 来源                | 说明                                                                                                                                                                                                                                                             |
+| ------------------------------------------ | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@xterm/xterm`、`@xterm/addon-fit`         | 本包 `dependencies` | 终端前端。**必须由本包自带** —— 浏览器模块表(seed)是一份封闭的 9 项名单, 不含 xterm, 所以 `require('xterm')` 必然抛错; 改由 host 的 `/fge/vendor/…` 白名单路由伺服官方构建产物, client 用 `<script>` 载入后取全局 `window.Terminal` / `window.FitAddon.FitAddon` |
+| `@deepseek-ai/dsh-api-terminal-controller` | **dsh 自带**        | 终端的**内核**(`ctx.webTerminals`)。不声明为本包依赖: 它随官方 bundle 一起挂载; 本包只在 `package.json` 的 `dsh.client.inject` 里声明它, 好让模块图**先装配它再跑本插件**(`exports.inject` 里也有 `webTerminals`, 见 ADR-0006)                                   |
 
 安装依赖(仅首次):
 
@@ -217,18 +218,19 @@ pnpm --dir plugins/file-git-explorer install
   抽屉**顶部两角圆角**(`border-radius:12px 12px 0 0`), 底部不圆。
 - **终端标题条**(terminal title bar): 顶上一条 Windows Terminal 观感的标题区 —— 一枚页签(`>_` 字形 +
   **尾部省略号**截断的工作区路径 + **悬停才出现**的 `×`)加右端一枚**终止键**(官方 SVG `IconStopFill16`)。
-  页签**恒定只有当前工作区这一枚**:
-  它长得像页签, 但**不是多页签容器**(每工作区仍是一个终端, 见 `CONTEXT.md`「工作区终端」)—— 外观档,
+  页签**恒定只有当前会话这一枚**:
+  它长得像页签, 但**不是多页签容器**(每会话仍是一个终端, 见 `CONTEXT.md`「会话终端」)—— 外观档,
   没有 `+`、没有多终端、没有重命名与排序。**条自己不带底色**(透出抽屉表面), 与终端体的分界交给下面那条 1px 线。
   **抽屉本体四周有描边**(上 + 左右各 1px `border-l2`, 下边贴座位底不画): 只画上边时, 标题条这一段自己不带底色,
   它跟终端体的接缝就只剩下面那条分隔线 —— 观感上 grip 与 body 之间"断了一截"(用户口径的断层感)。
   官方 composer 座里的横条本来就是四周描边的(`.nLMEza_bar{border:.5px solid var(--dsw-alias-border-l1)}`)。
-- **`×` = 收起, 终止键 = 杀进程**: 页签上的 `×` 与点条空白处等价(**收起抽屉, 不杀进程**); 右端**终止键** =
-  **终止整棵终端进程树**(Windows 下走 ConPTY 终止整树), 取主题的危险色 `--dsw-alias-state-error-primary`,
+- **`×` = 收起, 终止键 = 结束进程**: 页签上的 `×` 与点条空白处等价(**收起抽屉, 不杀进程**); 右端**终止键** =
+  **结束这个终端的进程**(调用官方 `view.close()`: 请求结束 → 清理在后台做完 → 失败落进状态行可重试),
+  取主题的危险色 `--dsw-alias-state-error-primary`,
   悬停用 `--dsw-alias-interactive-bg-hover-danger`。条内按钮自己 `stopPropagation`, 点它们不会连带收起。
   终止键里的图标是**官方 SVG**(`primitives.IconStopFill16`, 尺寸 12, 取色走 `currentColor`) ——
   原来是文字字形 `■`, 与刷新键那个 `⟳` 同一个毛病: 同一个码位在不同平台/字体回退下大小与粗细都不一样。
-  抽屉关闭 / 切换会话 / 刷新页面都**不影响**终端进程。
+  抽屉关闭 / 切换会话 / 刷新页面都**不影响**终端进程(它归 host 的官方 terminal-controller)。
   primitives 的图标全表里**没有终端图标**(最接近的只有 `IconCodeOutline16`), 所以页签上的 `>_` 仍是自绘字形, 不引依赖。
 - **展开就自动聚焦终端**(用户口径: 省掉"再用鼠标点一下才能打字")。做法与代价见实现事实 §13。
   ⚠ 代价: 焦点一进来 `Esc` 就归终端了, 所以**开抽屉后 `Esc` 不再收起抽屉** —— 想收起就点条空白处、
@@ -265,21 +267,19 @@ pnpm --dir plugins/file-git-explorer install
   它是一整条 5px 通宽的横带, 一亮就是一整条, 在抽屉边缘非常扎眼; 可拖的提示交给 `cursor:ns-resize`。
   git 页签里那条**分栏**拖柄 `.fge-grip` 已按**同一口径**去掉 hover 底色(见 §14)——
   两条拖柄的底色现在都恒为 `transparent`, 亮/暗与自定义主题下都不会再冒出一块跟旁边不一样的色块。
-- **每工作区一个终端**(键 = 归一化 + 大小写折叠的 cwd): 切工作区就是切换终端; 同工作区多会话**共享同一终端**
-  (输出广播, 任意一端都可输入)。全局上限 **16 个**, 超出按 LRU 淘汰最久未用的。
-- **重连回放**: host 常驻终端并保留 **256KB** 尾部输出; 重开抽屉 / 刷新页面即重连并补发, 用**绝对字节位**寻址,
-  因此不会因缓冲修剪而错位(客户端位置早于缓冲起点时标记 `lossy`)。
-- **PTY 重启不叠 banner**(用户实测: "一进去就看到很多 `PowerShell … / PS …>`"): 两处一起修 ——
-  ① PowerShell 家族 spawn 时带 **`-NoLogo`**(`shellArgs`), 不再每次启动都打一遍版本 banner;
-  ② 上一次会话结束后重启时 **`ring.reset()`** 丢掉上一个进程的回放, 只留一条"上一次会话已结束"标记
-  (原来是把旧缓冲当"上文"留着, 配上每次重启的 banner 就是 N 份叠在一起)。**同一次会话内**的重连回放照旧。
+- **每会话一个终端**(官方 `view(sessionId, 'fge-dock')` 的 key 固定, 所以反复开关抽屉拿回同一个):
+  切会话就是换一个终端; 同一工作区的两个会话**各有各的终端**(旧口径的"每工作区一个 / 多会话共享"随内核易主作废)。
+  官方每会话配额默认 **8** 个终端。
+- **重连补屏**: 重开抽屉 / 刷新页面时官方重新挂流, 第一帧就是 host 侧的**完整屏幕快照**(`snapshot`), 之后才是输出帧;
+  所以"接着看"靠的是官方那份快照, 不再是本插件自留的字节回放(buffer 上限 2MB 也由官方定)。
+- **状态行**: 抽屉正文顶上会按官方 `phase` / `info.state` / `writable` 显示**一行提示 + 至多一枚动作按钮** ——
+  「正在连接终端…」「连接已断开 / 重新连接」「终端失败: … / 重试」「只读(另一处持有输入权)/ 接管输入」
+  「进程已结束(退出码 N)」。连着且可写时**整行不渲染**(不留空条)。
 - **Esc 焦点分流**: 焦点在终端内 → 交给终端(送给 PTY); 焦点在终端外 → 收起抽屉。
-- 默认 shell: `resolveShellExecutable` 产**绝对路径**(PATH 扫描 → 已知安装位置 → `ComSpec`/`/bin/sh` 兜底)。
-  **Windows 上不能用裸名** —— node-pty 的 ConPTY 原生层不解析 `powershell` 这类名字, 必须以绝对路径启动。
-- 进程**不进 `ctx.jobs`**: jobs 的语义是「会话销毁即取消」, 与「终端要跨抽屉关闭 / 切会话 / 页面刷新存活」矛盾,
-  故本插件自管生命周期; 插件卸载时统一收掉所有终端。
+- 默认 shell / 尺寸钳制 / `-NoLogo` **都归官方**(provider 探测 → profile `shell` 覆盖 → POSIX `/bin/sh`、Windows `cmd.exe` 兜底;
+  尺寸按 `environment.maxCols/maxRows` 夹)。本插件只把 fit 结果交给官方 `view.resize()`, 非 writable 时官方自己忽略。
 
-## HTTP / WebSocket 接口(host 半, 仅本机)
+## HTTP 接口(host 半, 仅本机)
 
 信任栅栏与 `dsh-ds-balance` 同款: **仅回环地址 + `x-dsh-plugin: 1` 头 + 仅 POST**。
 `repoRoot` / `root` 必须是绝对路径; 路径一律 argv 直传 git(无 shell), ref/hash 先过白名单(`safeRef` 拒 `-` 开头 /
@@ -294,7 +294,10 @@ pnpm --dir plugins/file-git-explorer install
 | `POST /fge/api/log`                                 | `{repoRoot, ref?, skip?, limit?}` | `{ref, commits[], head?}` —— `head` 只在 `skip=0` 附带                                   |
 | `POST /fge/api/show`                                | `{repoRoot, hash, path?}`         | `{kind:'commit'\|'merge'\|'diff', message, files[], hunks?, text?}`                      |
 | `GET /fge/vendor/xterm.js\|xterm.css\|addon-fit.js` | —                                 | 白名单静态资产                                                                           |
-| `GET /fge/ws/terminal?root=&cols=&rows=&from=`      | —                                 | WebSocket 升级 → PTY 字节流                                                              |
+
+⚠ **没有终端路由**: 抽屉里的终端归官方 `@deepseek-ai/dsh-api-terminal-controller`
+(`ctx.webTerminals` + 它自己的 Remote 通道), host 半**不注册任何路由、也不注册升级路由** ——
+旧的 `GET /fge/ws/terminal` 已退场(`tests/verify.mjs` 会断言它 404)。见 `docs/adr/0006`。
 
 `hunks` 是官方 `DiffBlock` 的 `diffs` 形状: **一个 hunk 一条**, 两侧都已是拆好的行块(上下文两边各一份),
 `text` 是原始统一 diff(保留备用)。**解析在 host 侧的纯函数里**(`lib/git.js` 的 `parseDiffHunks`),
@@ -304,24 +307,23 @@ pnpm --dir plugins/file-git-explorer install
 **硬编码白名单**(三个文件名逐字符命中)兜底 —— 不接受任意路径, 从根上排除穿越; 内容是只读第三方静态资产,
 不含任何仓库数据。
 
-### WebSocket 帧协议
+### 官方终端帧契约(本插件消费的那两个动作)
 
-与 xterm 的接缝刻意做窄: **数据走二进制帧, 控制走文本帧**。
+内核易主之后, 本插件对官方的接缝只有三处: **取 view**、**消费帧**、**发命令**。
 
 ```
-client → host
-  · 二进制帧                     原样写入 PTY 的 stdin
-  · {t:'resize', cols, rows}     同步 PTY 尺寸
-  · {t:'ping'}                   保活
-  · {t:'kill'}                   终止整棵终端进程树
-host → client
-  · 二进制帧                     PTY stdout 原样字节(交由 xterm 解释 ANSI)
-  · {t:'ready', id, shell, cols, rows, replay, lossy, exited}
-  · {t:'exit', code, signal, evicted?}
-  · {t:'error', error}
+取 view      · ctx.webTerminals.view(sessionId, 'fge-dock')   ← 取或建; 官方在这一次调用里就 refresh()(探 shell + 起进程)
+挂载         · view.mount() → 返回 detach(只摘流, 不杀进程 —— 收起抽屉走的就是它)
+消费帧       · view.state 快照流:
+               { revision, frame: { type:'snapshot', info:{cols,rows}, screen } }   ← 挂流第一帧就是整屏
+               { revision, frame: { type:'output', data } }                          ← 之后按序号递增
+               写完**必须** view.acknowledge(revision) —— 官方 await 这次 ack 才放下一帧
+发命令       · view.write(data) / view.resize(cols, rows) / view.connect() / view.refresh() / view.close()
 ```
 
-二进制帧不过 JSON —— 这样 vim 的全屏重绘与任意字节序列都不会被编码层破坏。
+⚠ `snapshot` 帧要**先 `term.reset()` + 按 `info.cols/rows` `term.resize()` 再写屏**, 顺序反了就是串屏;
+⚠ `acknowledge` 漏掉 = 输出停住(不是卡一帧, 是再也不动)。这两条都由
+`scripts/verify-client-bundles.mjs` 里的 `__applyTerminalFrame` 用假 xterm / 假 view 钉死。
 
 ## 实现事实(已实测钉死, 改实现前必读)
 
@@ -364,24 +366,25 @@ hunk 的范围由 `@@` 头声明的增删数**界定**, 所以 hunk 内一行内
 插件以 **junction** 挂进 profile(`~/.dsh/profiles/web/node_modules/dsh-file-git-explorer` → 仓库真实路径),
 而 Node 默认解析 **realpath**, `dsh` 也没有传 `--preserve-symlinks`。于是:
 
-- 从插件自身路径 `require('node-pty')` / `require('ws')` → **MODULE_NOT_FOUND**;
-- 从 **profile 目录** 解析 → 命中(dsh 在那装了指向自身 `node_modules` 的 junction)。
+- 从插件自身路径 `require('node-pty')` / `require('ws')` → **MODULE_NOT_FOUND**(内核易主后本插件已不 require 它们);
+- 从 **profile 目录** 解析 → 命中(dsh 在那装了指向自身 `node_modules` 的 junction);
+- 插件自带的静态资产(`@xterm/xterm` 的 dist)则相反: 从**自身路径**解析才命中。
 
 故 host 半先 `createRequire(ctx.baseUrl)`(`ctx.baseUrl` 由 `dsh-app-boot` 设为 profile 目录),
 失败再退回 `createRequire(import.meta.url)`。
-**`import.meta.url` 仍然正确用于读本包自己的文件**(本插件没有自带 vendor 资产, 但新增时应照此)。
+**`import.meta.url` 仍然正确用于读本包自己的文件**(vendor 资产就是这条路径)。
 
-### 4. 静态资产与 WebSocket
+### 4. 静态资产与升级路由
 
 - `dsh-host-webserver` **不提供**静态文件 API(它自己"不伺服任何文件"), 也不做回环校验 —— 都是插件的事。
 - `register({kind:'prefix', path, handler})` 按 **最长前缀** 匹配; 重复 `(kind, path)` 抛错,
   所以 `/fge/api` 与 `/fge/vendor` 必须是两条路由。
-- `registerUpgrade({path, handler})` 只按 **pathname** 精确匹配(查询串被剥离, 因此 `?root=&cols=` 可用),
-  交出的是**裸 socket** —— 握手要自己用 `ws` 的 `WebSocketServer({noServer:true})` + `handleUpgrade` 完成,
-  这正是 `ws` 是依赖的原因。不合法来源在**握手前**直接写一段 HTTP 403 到 socket 上。
+- 本插件**不注册任何升级路由**(`registerUpgrade` 一个都不用): 旧的 `/fge/ws/terminal` 随内核易主退场,
+  `ws` 也不再是需要(见 `docs/adr/0006`)。`tests/verify.mjs` 直接断言"升级路由表为空" + "旧路径 404"。
 - 浏览器模块表(seed)是**封闭的 9 项**: `react`、`react/jsx-runtime`、`react-dom`、`react-dom/client`、
   `@deepseek-ai/cordis`、`-client-store`、`-client-ui-slots`、`-client-ui-primitives`、`-client-ui-dockkit`。
-  client 半只能用这些 + `dsh.client.inject` 声明的图内包 —— 所以 `dsh.client.inject` 保持 `[]`。
+  client 半能用这些, 加 `dsh.client.inject` 声明的图内包(本插件声明了
+  `@deepseek-ai/dsh-api-terminal-controller` —— 只为**装配顺序**, 服务本身走 `ctx.webTerminals`)。
 
 ### 5. 座位、优先级, 与「影子替换官方芯片」
 
@@ -814,7 +817,8 @@ xterm 由既有的 ResizeObserver 自动 refit。(官方 dock 座位如目标条
 > **尺寸全套取偶数** —— 盒子 18、轨道 24×12、滑块 8、文字行盒 12, 免得居中落半像素)+
 > **终止键是官方 SVG**(`primitives.IconStopFill16` 尺寸 12, 且源码里不许再出现 `'■'` 字面量)+
 > **选区尾巴收敛**(纯函数 `__findLastContentRow` / `__clampSelectionTail` / `__mouseRowAt` 逐个跑, 外加拖拽途中
-> 只许吃事件、**不许**落选区那条回归锁)」; host 侧的 `-NoLogo` 与「重启丢旧回放」由 `tests/pty.test.mjs` 守。
+> 只许吃事件、**不许**落选区那条回归锁)」; 终端**内核那半边**(帧桥 ack 契约 / 取 view / mount-detach / close /
+> host 侧零升级路由)由 `__applyTerminalFrame` 的假 xterm·假 view 用例与 `tests/verify.mjs` 守(见 ADR-0006)。
 > 真浏览器验收见验收清单第 10、11 条。
 
 ### 14. 上下两栏、聚焦提交、按目录归类与层级线
@@ -1090,10 +1094,13 @@ worktrees(相对路径): {"ok":false,"error":"invalid-root"}
 ```bash
 node tests/git.test.mjs      # git 纯函数层(porcelain v2 解析 / worktree list 解析 / 白名单 / diff argv / 统一 diff→hunk)
 node tests/address.test.mjs  # 文件地址与「复制内容」纯函数层(芯片逻辑的可执行规约)
-node tests/pty.test.mjs      # 终端纯函数层(shell 绝对路径解析 / 尺寸钳制 / 帧编解码 / 回放缓冲 / LRU)
-node tests/verify.mjs        # host 全链路冒烟: 真实 git + 真实 HTTP 栅栏 + vendor + 真 WS/PTY 端到端
+node tests/verify.mjs        # host 全链路冒烟: 真实 git + 真实 HTTP 栅栏 + vendor + 「终端已不在 host」(升级路由为空 / 旧路径 404)
 eslint .                     # 仓库统一 lint(client bundle 按惯例忽略)
 ```
+
+⚠ **终端没有自己的 host 测试文件**: `lib/pty.js` 与 `tests/pty.test.mjs` 随内核易主一并删除(见 `docs/adr/0006`)。
+终端现在的护栏全在仓库根的离线脚本里 —— 帧桥契约(`__applyTerminalFrame`:snapshot 先 reset+resize 再写屏、
+写完 ack)用**假 xterm / 假 view** 直接跑, 接线点(取 view / mount-detach / close / 不再有 WS)用源码断言钉死。
 
 浏览器半边的**装配契约**(种子模块引用、槽位名 / key / priority)由仓库根的
 `scripts/verify-client-bundles.mjs` 离线护栏 —— 其中一条就是「影子芯片必须是负数 priority」;
@@ -1174,10 +1181,11 @@ eslint .                     # 仓库统一 lint(client bundle 按惯例忽略)
     **终端底色 = 主题色而非 xterm 的黑**, **切明/暗主题时已经开着的终端就地换色**(不必重开抽屉);
     **彩色输出看得清** —— 16 色 ANSI 按明暗自成一套、逐个颜色验过对比度(浅色面最紧 5.2:1),
     加粗的高亮词不会切到"亮白 / 亮黄"那种在浅底上糊掉的颜色;
-    **点终止键杀掉终端再重开, 回放里不该出现旧的输出、也不该出现一屏 `PowerShell …` banner**(只剩一条"已开启新终端"标记);
+    **点终止键结束终端后, 状态行要变成"进程已结束(退出码 N)"**, 收起再展开是**新终端**(不该出现旧输出, 也不该出现一屏 `PowerShell …` banner);
     顶上**终端标题条**里恰好**一枚页签**(`>_` 字形 + 尾部省略号的
-    工作区路径, **没有 `+`**),悬停页签才出现 `×` 且点它只收起、右端**终止键**是**红色**且只杀进程、
-    **点条空白处也能收起**;刷新页面后重开抽屉应看到历史输出;Esc(焦点在终端外)收起。
+    工作区路径, **没有 `+`**),悬停页签才出现 `×` 且点它只收起、右端**终止键**是**红色**且只结束进程、
+    **点条空白处也能收起**;收起再展开(或刷新页面后重开抽屉)应看到**同一屏内容**(官方 host 的屏幕快照补屏);
+    切到另一个会话应看到**另一个终端**(每会话一个);焦点在终端外时 `Esc` 收起抽屉。
 11. **刷新快捷键**:按 `Alt+Ctrl+R` → 与点 `⟳` 同一效果(先 sync 再重取变更列表与历史首页, `⟳` 转起来);
     **焦点在终端里时也照样触发**(这正是从光 `Alt+R` 改成 `Alt+Ctrl+R` 的原因: 光 Alt+R 要留给终端的 readline);
     右栏收起 / 当前不是 Git 那格时按它 → **切到 Git 页签并刷新**;从 composer 里按也灵, 且不许把这一按漏成终端输入。
@@ -1200,12 +1208,16 @@ eslint .                     # 仓库统一 lint(client bundle 按惯例忽略)
 - 悬浮面板**不吸**右栏边缘, 可以被拖走 / 缩放; 换窗口尺寸后也不会自动跟着重排(几何只在浮起那一刻算)。
   (例外是**全屏态**: 那是 CSS 的 `inset:0`, 所以它会跟着窗口尺寸走 —— 不过退出全屏回到的是浮起时
   那一份几何, 中间改过窗口尺寸的话要重新浮起才准。)
-- Windows 下 PTY 退出后 ConPTY 会滞留句柄直到事件循环排空, **dsh 重启清零**; 终端进程生命周期与 dsh 进程绑定。
-- 终端尺寸同步依赖浏览器 `ResizeObserver`, 极端布局变化下可能差一格, 下一次 resize 自愈。
+- 终端进程的生命周期与清理**归官方 terminal-controller**(每会话配额 8; 官方在 Session owner / controller 卸载时终止它拥有的进程)。
+- 终端尺寸同步依赖浏览器 `ResizeObserver`(官方正文也是这条), 极端布局变化下可能差一格, 下一次 resize 自愈;
+  `snapshot` 帧会把 host 那一侧的尺寸再摆正一次。
+- 抽屉**不提供**官方终端页签那几样: 不是多页签容器(每会话一个终端)、没有重命名、没有那套状态条按钮
+  —— 只有一行提示 + 一枚动作(见「终端抽屉」那节的「状态行」)。要那些就去右栏开官方终端页签, 两者互不干扰
+  (官方 `recover()` 会把"本页已经有 view 的终端"排除, 所以它不会把抽屉里的终端再开成一个页签)。
 - 悬浮面板的状态是**按会话**存的(官方 `sidebarRight` 的 store 就是按会话的), 所以切走再切回来会看到它还在;
   切到别的会话时它不会跟过去。
 
 ## 术语
 
 「右侧栏页签」「git 页签」「变更列表」「diff 范围」「提交历史」「聚焦提交」「提交说明」「查看分支」「刷新」「悬浮面板」「详情」
-「git 页签分栏」「目录归类」「层级线」「composer 座」「抽屉舌」「终端抽屉」「终端标题条」「工作区终端」「回放缓冲」「工作区」的定义见仓库根 `CONTEXT.md`。
+「git 页签分栏」「目录归类」「层级线」「composer 座」「抽屉舌」「终端抽屉」「终端标题条」「会话终端」「屏幕快照」「工作区」的定义见仓库根 `CONTEXT.md`。
