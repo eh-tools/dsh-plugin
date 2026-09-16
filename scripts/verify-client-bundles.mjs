@@ -298,6 +298,10 @@ const OFFICIAL_TEXT_ID = '@deepseek-ai/dsh-client-ui-sidebar-documentpreview';
             b.exports.inject.includes('sidebarRight'),
             'inject 应含 sidebarRight(float/close)',
         );
+        assert.ok(
+            b.exports.inject.includes('webTerminals'),
+            'inject 应含 webTerminals(抽屉里的终端由官方 ctx.webTerminals 提供, 见 ADR-0006)',
+        );
     });
 
     check('fge: 只 require 了种子模块(含 primitives)', () => {
@@ -1080,7 +1084,7 @@ check(
         assert.match(sw[0], /'选中复制'/, '开关要有文字标签(光一个轨道看不出是什么)');
         assert.match(
             source,
-            /h\(TerminalView, \{ root: root, visible: open, copyOnSelect: copyOn \}\)/,
+            /h\(TerminalView, \{[\s\S]{0,200}?copyOnSelect: copyOn/,
             '开关的值要传给终端视图(否则开关只是个装饰)',
         );
         // ⚠ 拖拽途中**不许**落选区: xterm 的 setSelection 会先 `_removeMouseDownListeners()`,
@@ -1114,6 +1118,72 @@ check(
         );
     },
 );
+
+// 终端内核: ADR-0006 —— PTY / shell / 进程 / 屏幕快照归官方 `ctx.webTerminals`,
+// 本插件只留"抽屉外壳 + xterm 渲染"。下面既跑帧桥那条真实契约, 也钉住几个接线点。
+check('fge: 终端内核 = 官方 ctx.webTerminals(帧桥 ack / mount-detach / close, 不再自建 WS)', () => {
+    const b = loadBundle('plugins/file-git-explorer/lib/client.js');
+    const apply = b.exports.__applyTerminalFrame;
+    assert.equal(typeof apply, 'function', '应暴露 __applyTerminalFrame 供离线校验');
+    const calls = [];
+    const term = {
+        reset: () => calls.push(['reset']),
+        resize: (cols, rows) => calls.push(['resize', cols, rows]),
+        write: (data, cb) => {
+            calls.push(['write', data]);
+            cb();
+        },
+    };
+    const acks = [];
+    const view = { acknowledge: (revision) => acks.push(revision) };
+    let last = 0;
+    last = apply(
+        term,
+        view,
+        {
+            revision: 1,
+            frame: { type: 'snapshot', info: { cols: 120, rows: 30 }, screen: 'SCREEN' },
+        },
+        last,
+    );
+    assert.deepEqual(
+        calls,
+        [['reset'], ['resize', 120, 30], ['write', 'SCREEN']],
+        'snapshot 必须**先 reset + 按 host 尺寸 resize, 再写屏**(顺序反了就是串屏)',
+    );
+    assert.deepEqual(acks, [1], '写完必须 acknowledge —— 官方那条流 await 它才放下一帧');
+    assert.equal(last, 1, 'ack 过的那一帧成为新的 lastRevision');
+    calls.length = 0;
+    last = apply(term, view, { revision: 2, frame: { type: 'output', data: 'hi' } }, last);
+    assert.deepEqual(calls, [['write', 'hi']], 'output 帧直接写, 不 reset');
+    assert.deepEqual(acks, [1, 2], 'output 帧同样要 ack');
+    calls.length = 0;
+    apply(term, view, { revision: 2, frame: { type: 'output', data: 'dup' } }, last);
+    assert.deepEqual(calls, [], '同一个 revision 不重放');
+    assert.deepEqual(acks, [1, 2], '重放的帧不许再 ack(官方认的是 pendingRender 那一帧)');
+
+    // 接线点(源码契约)。
+    const source = readFileSync(join(ROOT, 'plugins/file-git-explorer/lib/client.js'), 'utf8');
+    assert.match(
+        source,
+        /ctx\.webTerminals\.view\(sessionId, TERM_KEY\)/,
+        '终端要按 (会话, TERM_KEY) 取官方 view —— 同一个会话反复开关抽屉拿到同一个终端',
+    );
+    assert.match(
+        source,
+        /view\.state\.subscribe\(syncViewState\)/,
+        '要订阅官方 view 的 state 快照流',
+    );
+    assert.match(source, /view\.mount\(\)/, '要挂官方 view 的 DOM 生命周期');
+    assert.match(
+        source,
+        /detach !== null[\s\S]{0,80}detach\(\)/,
+        '收起抽屉只 detach(不 close): 进程与屏幕留给 host 的官方终端',
+    );
+    assert.match(source, /view\.close\(\)/, '终止键要走官方 close()(请求结束进程)');
+    assert.ok(!/new WebSocket/.test(source), '不再自己拉 WebSocket(协议 / 重连 / 回放全归官方)');
+    assert.ok(!/\/fge\/ws\/terminal/.test(source), '不再有自建的终端 WS 路径');
+});
 
 check('fge: 终端选区尾巴收敛(纯函数: 最后一行有内容 / 收到那行 / 行号算法)', () => {
     const styles = [];

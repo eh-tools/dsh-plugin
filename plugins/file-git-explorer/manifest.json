@@ -1,15 +1,14 @@
 {
   "kind": "static",
   "name": "dsh-file-git-explorer",
-  "purpose": "官方右侧栏默认铺「文件」+「Git」两格(Git 为活动页签): git 页签正文是上下两栏(变更列表/当前 diff 占 3/4, 下栏提交历史最多 60%), 两栏各带不透明标题栏, 列表按目录归类 + 纵向虚线层级线, 提交行尾的 hash 胶囊点击复制完整 hash; 点一条提交聚焦到该提交(下栏整栏独占、带返回与 Esc, 说明默认折两行可展开, 返回不刷新也不丢滚动位置); 另有详情悬浮面板(官方文档正文页签被浮起来, md/代码/图片/html/pdf 全是官方原版; diff 用官方 DiffBlock 渲染), 外加 composer 座下方的终端抽屉(真 PTY: node-pty ↔ WebSocket ↔ xterm.js; 每工作区一个终端, 跨抽屉关闭与会话切换存活, 重连 256KB 回放)。静态双半 npm 包, 随 web profile 启动自动加载。",
+  "purpose": "官方右侧栏默认铺「文件」+「Git」两格(Git 为活动页签): git 页签正文是上下两栏(变更列表/当前 diff 占 3/4, 下栏提交历史最多 60%), 两栏各带不透明标题栏, 列表按目录归类 + 纵向虚线层级线, 提交行尾的 hash 胶囊点击复制完整 hash; 点一条提交聚焦到该提交(下栏整栏独占、带返回与 Esc, 说明默认折两行可展开, 返回不刷新也不丢滚动位置); 另有详情悬浮面板(官方文档正文页签被浮起来, md/代码/图片/html/pdf 全是官方原版; diff 用官方 DiffBlock 渲染), 外加 composer 座下方的终端抽屉(内核 = 官方 ctx.webTerminals: 每会话一个终端, 进程与屏幕快照归 host; 外壳仍是本插件的抽屉, xterm.js 渲染 + 选中即复制)。静态双半 npm 包, 随 web profile 启动自动加载。",
   "files": [
     "package.json",
     "cordis.patch.yml",
     "lib/index.js",
     "lib/client.js",
     "lib/git.js",
-    "lib/address.js",
-    "lib/pty.js"
+    "lib/address.js"
   ],
   "install": "dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer"
 }

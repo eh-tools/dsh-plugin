@@ -20,7 +20,6 @@ test:
     node scripts/verify-plugin-manifests.mjs
     node plugins/file-git-explorer/tests/git.test.mjs
     node plugins/file-git-explorer/tests/address.test.mjs
-    node plugins/file-git-explorer/tests/pty.test.mjs
     node plugins/file-git-explorer/tests/verify.mjs
     node plugins/db-console/tests/pg.test.mjs
     node plugins/db-console/tests/smoke.mjs
