@@ -8,10 +8,10 @@
  *
  * ⚠ 终端**不在这里**: 它在 ADR-0006 之后归官方 terminal-controller(host 半不再有终端路由),
  *   所以本文件只断言"那条旧 WS 路径已经不在了"; 帧桥那条契约在
- *   `scripts/verify-client-bundles.mjs` 里用假 xterm / 假 view 跑。
+ *   `tests/verify-client-bundles.mjs` 里用假 xterm / 假 view 跑。
  *
  * 运行: node tests/verify.mjs
- *       cwd 必须 = plugins/file-git-explorer; git 在 PATH 中。
+ *       cwd 必须 = plugins/obsolete/file-git-explorer; git 在 PATH 中。
  *       退出码 0 = 所有非跳过检查通过, 1 = 有断言失败。
  *       依赖缺失(插件没装 @xterm/*)时对应小节打印 skip 而不失败 ——
  *       那是"环境缺依赖", 不是"代码错了"。

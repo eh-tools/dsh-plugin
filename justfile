@@ -16,11 +16,11 @@ test:
     node plugins/obsolete/tool-vision/tests/smoke.mjs
     node plugins/obsolete/paste-image/tests/save.test.mjs
     node scripts/verify-ds-balance.mjs
-    node scripts/verify-client-bundles.mjs
+    node plugins/obsolete/file-git-explorer/tests/verify-client-bundles.mjs
     node scripts/verify-plugin-manifests.mjs
-    node plugins/file-git-explorer/tests/git.test.mjs
-    node plugins/file-git-explorer/tests/address.test.mjs
-    node plugins/file-git-explorer/tests/verify.mjs
+    node plugins/obsolete/file-git-explorer/tests/git.test.mjs
+    node plugins/obsolete/file-git-explorer/tests/address.test.mjs
+    node plugins/obsolete/file-git-explorer/tests/verify.mjs
     node plugins/db-console/tests/pg.test.mjs
     node plugins/db-console/tests/smoke.mjs
     node plugins/db-console/tests/editor-metrics.mjs

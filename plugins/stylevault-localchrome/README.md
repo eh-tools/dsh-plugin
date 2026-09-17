@@ -15,7 +15,7 @@ dsh plugin --profile web add github:GptsApp/dsh-stylevault
 安装本插件（取色 + 生成预设）：
 
 ```bash
-dsh plugin --profile web add link:<本目录绝对路径>
+dsh plugin --profile web add link:<repo-abs-path>/plugins/stylevault-localchrome
 ```
 
 ---

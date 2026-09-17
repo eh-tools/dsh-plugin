@@ -1,5 +1,9 @@
 # dsh-file-git-explorer
 
+> **已归档(2026-09 退役)**:不再维护、**不列入默认安装**,源码与护栏留档在
+> `plugins/obsolete/file-git-explorer/` —— 本目录 `tests/` 下的用例仍在 `just check` 里跑。
+> 本目录的 `CONTEXT.md` 与 `docs/adr/0002`–`0007` 是它当时的领域词表与决策记录,一并留档。
+
 官方**右侧栏**里的 Git 页签 + 详情悬浮面板 + 对话下方的终端抽屉。
 
 - **Git 页签**(kind `fge-git`, docked 常驻): 头部一颗**分支按钮**(当前分支 + 上游 `↑ahead ↓behind` 徽标),
@@ -28,7 +32,7 @@
 ## 安装
 
 ```bash
-dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer
+dsh plugin --profile web add link:<repo-abs-path>/plugins/obsolete/file-git-explorer
 ```
 
 host 半随 DSH 启动自动挂载; 浏览器 bundle 由 profile 注入, 刷新 GUI 页面生效。
@@ -44,7 +48,7 @@ host 半随 DSH 启动自动挂载; 浏览器 bundle 由 profile 注入, 刷新 
 安装依赖(仅首次):
 
 ```bash
-pnpm --dir plugins/file-git-explorer install
+pnpm --dir plugins/obsolete/file-git-explorer install
 ```
 
 ## 使用
@@ -323,7 +327,7 @@ pnpm --dir plugins/file-git-explorer install
 
 ⚠ `snapshot` 帧要**先 `term.reset()` + 按 `info.cols/rows` `term.resize()` 再写屏**, 顺序反了就是串屏;
 ⚠ `acknowledge` 漏掉 = 输出停住(不是卡一帧, 是再也不动)。这两条都由
-`scripts/verify-client-bundles.mjs` 里的 `__applyTerminalFrame` 用假 xterm / 假 view 钉死。
+`tests/verify-client-bundles.mjs` 里的 `__applyTerminalFrame` 用假 xterm / 假 view 钉死。
 
 ## 实现事实(已实测钉死, 改实现前必读)
 
@@ -494,7 +498,7 @@ diff 页签浮起后离开页签条, git 页签又成为活动页签、**重新�
 `gitData` 的复用判据是纯函数 `gitDataDecision(snapshot, cwd, now, GIT_DATA_FRESH_MS)`, 三选一:
 `skip`(同工作区 + 30s 内, **一个请求都不发**)/ `revalidate`(同工作区但旧了: 快照照铺上屏, 后台重取)/
 `load`(没有这个工作区的快照: 从头取)。离线护栏直接跑它, 并且用真实组件把「同工作区切会话 = 0 次请求」
-钉死(`scripts/verify-client-bundles.mjs`)。
+钉死(`tests/verify-client-bundles.mjs`)。
 
 ⚠ 这一步修的 bug: 数据原先与视图状态**一起**挂在会话 id 上, 于是同一个工作区换个会话被当成全新工作区,
 `info → status → log` 再走一遍(真 boot 实测: 每次切换固定这三条, 200–730ms), 面板先白成
@@ -670,7 +674,7 @@ overflow:hidden` + 裁切时加 `mask-image` 渐隐)—— **第一版改它是�
   右栏就停在用户原本看的地方。focus 与 float 落在同一拍(同一个微任务)里, 所以连"先跳过去再跳回来"的闪动都没有。
   实现事实 §10 里那次"自己把活动页签换掉"是同一枚硬币的另一面: **本插件有能力改动右栏当前页签, 就欠用户一个还原**。
 
-> 这两条由仓库根 `scripts/verify-client-bundles.mjs` 的「座位空隙的重试走微任务 + 浮起后把用户那一格 focus 回来」
+> 这两条由本目录 `tests/verify-client-bundles.mjs` 的「座位空隙的重试走微任务 + 浮起后把用户那一格 focus 回来」
 > 一项离线守住(桩里 `float()` 第一次必抛、`setTimeout` 只记账不执行): 退回定时器、或者删掉那次 focus, 这项就红。
 
 ### 13. 终端抽屉: 配色 / 自动聚焦 / 滚动条
@@ -808,7 +812,7 @@ xterm 由既有的 ResizeObserver 自动 refit。(官方 dock 座位如目标条
 **内联样式** —— CSS 必须 `!important` 才压得住。这里收到 6px、滑块同宽并加 `border-radius:3px`(对齐 dsh 自己的细滚条);
 滑块颜色不用管, xterm 自己按 `scrollbarSliderBackground`(默认 = 前景色 20% 透明)注入一段 `<style>`, 于是天然跟主题。
 
-> 由 `scripts/verify-client-bundles.mjs` 的离线守住: **「16 色 ANSI 调色板与终端面的对比度达标」**
+> 由 `tests/verify-client-bundles.mjs` 的离线守住: **「16 色 ANSI 调色板与终端面的对比度达标」**
 > (纯计算: 官方浅色 / 本机主题浅色 / 官方深色三种面, 逐个颜色算 WCAG 对比度 —— 这是"看不清"唯一可离线度量的判据) +
 > 「终端底色不写透明」+「订了 `theme/change`」+
 > 「表面用官方 code-block 底色(不是 `bg-base`)、条无底色、抽屉/舌宽度照 composer 卡片的公式(不是 chat-content-width)、
@@ -968,7 +972,7 @@ scrollbar-gutter:stable}` —— 用户口径是"展开后滚动条该出现在�
   外面那层 `.fge-commit-meta` 因此改成 flex(左 `作者 · 时间` 可截断、右胶囊 `flex:0 0 auto`), 而
   `.fge-commit-meta-text` 单独承担 `.6` 的透明度 —— 否则「已复制」的绿色会被一起压灰。
 
-> 由 `scripts/verify-client-bundles.mjs` 的离线守住: 「`.fge-body` 是竖排 flex + 两栏各滚各的 + 有 `ns-resize` 拖柄
+> 由 `tests/verify-client-bundles.mjs` 的离线守住: 「`.fge-body` 是竖排 flex + 两栏各滚各的 + 有 `ns-resize` 拖柄
 > 且**它不许有 hover 底色**(反向断言, 与终端上缘那条同口径) +
 > **两栏之间只剩那条 1px 分界线**(上栏不许再有底部内边距; 拖柄布局高度 1px + `z-index:2` + 热区交给 `::after`
 > —— 这几条就是"空隙"那个 bug 的回归锁) +
@@ -1069,7 +1073,7 @@ scrollbar-gutter:stable}` —— 用户口径是"展开后滚动条该出现在�
 - ⚠ **切换要清掉属于上一份仓库的视图状态**: 正在查看的分支、聚焦的提交、展开的说明, 换了仓库都不成立
   (拿另一个仓库的 ref 去查历史只会报错); 详情浮层里的 diff 也是旧仓库的内容, 一并关掉。
 - ⚠ **worktree 列表是"工作区数据", 不是每次刷新的附赠**: 它跟在同一轮加载的尾部、**也进快照** ——
-  否则会破坏「同工作区切会话一个请求都不发」那条既有承诺(仓库根那条护栏检查就是这么抓住第一版的:
+  否则会破坏「同工作区切会话一个请求都不发」那条既有承诺(本目录那条护栏检查就是这么抓住第一版的:
   它断言首次挂载的调用序列, 多出来的 `worktrees` 立刻暴露)。菜单**每次打开**再重取一次: 新开的
   worktree(比如刚 `just wt` 建的)一打开就能看到。
 - 按钮**不是弹性项**: 头部只有分支那颗是 `flex:1`(它要吃掉剩余空间才能长到 ⟳ 前面), 再加一个弹性项
@@ -1099,16 +1103,16 @@ eslint .                     # 仓库统一 lint(client bundle 按惯例忽略)
 ```
 
 ⚠ **终端没有自己的 host 测试文件**: `lib/pty.js` 与 `tests/pty.test.mjs` 随内核易主一并删除(见 `docs/adr/0006`)。
-终端现在的护栏全在仓库根的离线脚本里 —— 帧桥契约(`__applyTerminalFrame`:snapshot 先 reset+resize 再写屏、
+终端现在的护栏全在本目录 `tests/` 的离线脚本里 —— 帧桥契约(`__applyTerminalFrame`:snapshot 先 reset+resize 再写屏、
 写完 ack)用**假 xterm / 假 view** 直接跑, 接线点(取 view / mount-detach / close / 不再有 WS)用源码断言钉死。
 
-浏览器半边的**装配契约**(种子模块引用、槽位名 / key / priority)由仓库根的
-`scripts/verify-client-bundles.mjs` 离线护栏 —— 其中一条就是「影子芯片必须是负数 priority」;
+浏览器半边的**装配契约**(种子模块引用、槽位名 / key / priority)由本目录的
+`tests/verify-client-bundles.mjs` 离线护栏 —— 其中一条就是「影子芯片必须是负数 priority」;
 「git 页签上下两栏(上栏默认 3/4)」「按目录归类」「提交说明折叠两行」也有对应的 CSS / 纯函数断言(见实现事实 §14)。
 
 ### 浏览器验收清单(离线脚本盖不到, 需要真 boot)
 
-在**隔离 `DSH_HOME` + 独立端口**起一个实例(先 `dsh plugin --profile <名> add link:<repo-abs-path>/plugins/file-git-explorer`,
+在**隔离 `DSH_HOME` + 独立端口**起一个实例(先 `dsh plugin --profile <名> add link:<repo-abs-path>/plugins/obsolete/file-git-explorer`,
 再 `dsh --profile <名> --port <端口> --no-open`),在真浏览器里逐条走一遍:
 
 0. **右栏外观与拖动**:默认宽度 = 15vw(1920 窗口下约 288px);**打开右栏是把中栏挤窄、不是浮在它上面** ——
@@ -1220,4 +1224,4 @@ eslint .                     # 仓库统一 lint(client bundle 按惯例忽略)
 ## 术语
 
 「右侧栏页签」「git 页签」「变更列表」「diff 范围」「提交历史」「聚焦提交」「提交说明」「查看分支」「刷新」「悬浮面板」「详情」
-「git 页签分栏」「目录归类」「层级线」「composer 座」「抽屉舌」「终端抽屉」「终端标题条」「会话终端」「屏幕快照」「工作区」的定义见仓库根 `CONTEXT.md`。
+「git 页签分栏」「目录归类」「层级线」「composer 座」「抽屉舌」「终端抽屉」「终端标题条」「会话终端」「屏幕快照」「工作区」的定义见本目录 `CONTEXT.md`。

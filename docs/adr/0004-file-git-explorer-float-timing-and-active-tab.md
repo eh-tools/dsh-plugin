@@ -1,8 +1,8 @@
 # 0004 — 浮起详情: 微任务重试 + 浮起后把用户原本那一格 focus 回来
 
-- 状态:已接受
+- 状态:已接受(`file-git-explorer` 2026-09 退役归档,本 ADR 仅作历史记录)
 - 日期:2026-09-12
-- 关联词条:`CONTEXT.md` § file-git-explorer(悬浮面板)
+- 关联词条:`plugins/obsolete/file-git-explorer/CONTEXT.md`(悬浮面板)
 - 关联决策:ADR-0002(详情由官方 float 承载)、ADR-0003(用影子芯片拿 tabId)
 - 触发:用户实测报告 —— 「点 diff 详情 / 文件详情,页签条先加一个 tag、闪一下、消失,才出现悬浮面板;
   同时右栏自己切回 git 树」

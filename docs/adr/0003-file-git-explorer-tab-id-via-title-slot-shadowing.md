@@ -1,8 +1,8 @@
 # 0003 — 用影子替换页签芯片槽取得 tabId,而不是自绘正文
 
-- 状态:已接受
+- 状态:已接受(`file-git-explorer` 2026-09 退役归档,本 ADR 仅作历史记录)
 - 日期:2026-09-11
-- 关联词条:`CONTEXT.md` § file-git-explorer(悬浮面板)
+- 关联词条:`plugins/obsolete/file-git-explorer/CONTEXT.md`(悬浮面板)
 - 关联决策:ADR-0002(详情由官方 float 承载)
 
 ## 背景

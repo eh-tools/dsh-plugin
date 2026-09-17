@@ -1,7 +1,10 @@
 /**
  * 静态插件的 client bundle 装配冒烟(无浏览器, 离线可跑)
  *
- * 运行: node scripts/verify-client-bundles.mjs
+ * 运行: node plugins/obsolete/file-git-explorer/tests/verify-client-bundles.mjs
+ *
+ * ⚠ 本脚本是 **file-git-explorer 专属**的装配护栏, 随插件一起退役、一起搬进
+ * `plugins/obsolete/`; 下面所有路径都相对**本插件目录**, 不再相对仓库根。
  *
  * host 侧的端到端由各插件自己的 tests/verify.mjs 覆盖; 这个脚本补的是**浏览器半边**
  * 里最容易写错、又最难靠人眼发现的一层 —— 装配契约:
@@ -18,7 +21,8 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+/** 被测插件目录 —— 本脚本住在 `tests/` 下, 上一级就是包根。 */
+const PLUGIN = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 /** 平台种子模块(浏览器 require 只能命中这份封闭名单 + 图内已装配包)。 */
 const SEED_MODULES = new Set([
@@ -173,14 +177,14 @@ function treeText(node) {
 
 /**
  * 在 stub 环境里加载一个 client bundle 并执行 apply()。
- * @param {string} relPath bundle 相对仓库根的路径
+ * @param {string} relPath bundle 相对**插件目录**的路径
  * @param {object} [options] 需要更真的环境时给的覆盖项:
  *   `sidebarRight`(替掉空对象)、`documentOverrides`、`requireOverrides`、`timers`(收 setTimeout)、
  *   `listeners`(收 document.addEventListener)、`innerWidth`。
  * @returns {{id: string, exports: object, slots: Array, tabs: Array, requires: string[], react: object}}
  */
 function loadBundle(relPath, options = {}) {
-    const source = readFileSync(join(ROOT, relPath), 'utf8');
+    const source = readFileSync(join(PLUGIN, relPath), 'utf8');
     const timers = options.timers === undefined ? [] : options.timers;
     const listeners = options.listeners === undefined ? [] : options.listeners;
     let registration = null;
@@ -288,7 +292,7 @@ const OFFICIAL_TEXT_ID = '@deepseek-ai/dsh-client-ui-sidebar-documentpreview';
 
 // ---- fge: git 页签 + diff 页签 + 文档芯片影子 + 终端抽屉 ----
 {
-    const b = loadBundle('plugins/file-git-explorer/lib/client.js');
+    const b = loadBundle('lib/client.js');
 
     check('fge: bundle id 与 inject', () => {
         assert.equal(b.id, 'dsh-file-git-explorer');
@@ -399,7 +403,7 @@ const OFFICIAL_TEXT_ID = '@deepseek-ai/dsh-client-ui-sidebar-documentpreview';
 // (把 `gitDataDecision` 退回"同工作区也永远重新取"的旧规则, 这一条立刻变红)。
 
 {
-    const b = loadBundle('plugins/file-git-explorer/lib/client.js');
+    const b = loadBundle('lib/client.js');
 
     check('fge: 工作区键归一化(盘符 / 反斜杠 / 尾斜杠 / 大小写)', () => {
         const key = b.exports.__workspaceKey;
@@ -447,7 +451,7 @@ const OFFICIAL_TEXT_ID = '@deepseek-ai/dsh-client-ui-sidebar-documentpreview';
     check('fge: 上下两栏之间只剩那条 1px 分界线(拖柄不再撑出空隙)', () => {
         // 直接看**注入出去的 CSS**(与终端那几条同款手法): 这几条是字符串拼出来的, 读源码文本会被拼法绕过去。
         const styles = [];
-        loadBundle('plugins/file-git-explorer/lib/client.js', {
+        loadBundle('lib/client.js', {
             documentOverrides: {
                 getElementById: () => null,
                 createElement: (tag) =>
@@ -530,7 +534,7 @@ await checkAsync('fge: 同工作区切会话 —— 第二个会话一次 git �
     };
     try {
         const react = makeHookReact();
-        const b = loadBundle('plugins/file-git-explorer/lib/client.js', {
+        const b = loadBundle('lib/client.js', {
             requireOverrides: {
                 react,
                 // git 页签体只用到这两个官方 hook 与两个图标; 它们与本回归无关, 给空实现即可。
@@ -630,7 +634,7 @@ await checkAsync(
             // 芯片要复刻官方外观(FileTypeIcon / classifyFileType 等), 这里给个"什么都能当函数调"的桩。
             '@deepseek-ai/dsh-client-ui-primitives': new Proxy({}, { get: () => () => null }),
         };
-        const b = loadBundle('plugins/file-git-explorer/lib/client.js', {
+        const b = loadBundle('lib/client.js', {
             requireOverrides,
             // 右栏面板量得出宽度(否则会走"量不出 rect"那一路, 那是另一条合法分支)。
             documentOverrides: {
@@ -738,7 +742,7 @@ await checkAsync('fge: 右栏宽度可拖 + 钳在 [200px, 15vw] + 拖动后记�
     };
     const panelWidth = { value: 240 };
     const windowListeners = [];
-    const b = loadBundle('plugins/file-git-explorer/lib/client.js', {
+    const b = loadBundle('lib/client.js', {
         innerWidth: 1600, // 上限 = 15vw = 240px
         requireOverrides: {
             '@deepseek-ai/dsh-client-ui-primitives': new Proxy({}, { get: () => () => null }),
@@ -816,7 +820,7 @@ await checkAsync('fge: 右栏宽度可拖 + 钳在 [200px, 15vw] + 拖动后记�
 });
 
 check('fge: git 头部 38px(与会话头部对齐) + 拖柄不再隐藏 + 终端底色不写透明 + 订主题事件', () => {
-    const source = readFileSync(join(ROOT, 'plugins/file-git-explorer/lib/client.js'), 'utf8');
+    const source = readFileSync(join(PLUGIN, 'lib/client.js'), 'utf8');
     // 头部高度: 官方页签条 0–38, 官方的「文件」页签头也是 38px ⇒ 底边线落在 y=76, 与会话头部
     // (`wSkVaW_header`)的底边线对齐。写成 padding 撑出来的高度会差 4px(实测 33.8px, 线在 y≈71.8)。
     assert.match(source, /\.fge-head\{[^}]*height:38px/, '.fge-head 必须是 38px 高(border-box)');
@@ -846,7 +850,7 @@ check('fge: git 头部 38px(与会话头部对齐) + 拖柄不再隐藏 + 终端
         !/background:\s*'rgba\(0,0,0,0\)'/.test(source),
         '终端 theme.background 必须给具体颜色(透明会被 xterm 丢掉 → 变纯黑)',
     );
-    const b = loadBundle('plugins/file-git-explorer/lib/client.js');
+    const b = loadBundle('lib/client.js');
     assert.ok(
         b.events.some((e) => e.name === 'theme/change'),
         '应订 theme/change: 主题切换时活着的终端要就地换色',
@@ -858,7 +862,7 @@ check(
     () => {
         // 直接看**注入出去的 CSS**: 这几条规则是字符串拼出来的, 读源码文本容易被拼法绕过去。
         const styles = [];
-        loadBundle('plugins/file-git-explorer/lib/client.js', {
+        loadBundle('lib/client.js', {
             documentOverrides: {
                 getElementById: () => null,
                 createElement: (tag) =>
@@ -973,7 +977,7 @@ check(
         );
         // 终止键里的图标必须是**官方 SVG**, 不许退回文字字形 `■`: 同一个码位在不同平台/字体回退下
         // 大小与粗细都不一样(与刷新键那个 `⟳` 同一个毛病)。取色走 currentColor, 由 .fge-term-kill 给危险色。
-        const source = readFileSync(join(ROOT, 'plugins/file-git-explorer/lib/client.js'), 'utf8');
+        const source = readFileSync(join(PLUGIN, 'lib/client.js'), 'utf8');
         assert.match(
             source,
             /h\(primitives\.IconStopFill16, \{ size: 12 \}\)/,
@@ -1122,7 +1126,7 @@ check(
 // 终端内核: ADR-0006 —— PTY / shell / 进程 / 屏幕快照归官方 `ctx.webTerminals`,
 // 本插件只留"抽屉外壳 + xterm 渲染"。下面既跑帧桥那条真实契约, 也钉住几个接线点。
 check('fge: 终端内核 = 官方 ctx.webTerminals(帧桥 ack / mount-detach / close, 不再自建 WS)', () => {
-    const b = loadBundle('plugins/file-git-explorer/lib/client.js');
+    const b = loadBundle('lib/client.js');
     const apply = b.exports.__applyTerminalFrame;
     assert.equal(typeof apply, 'function', '应暴露 __applyTerminalFrame 供离线校验');
     const calls = [];
@@ -1163,7 +1167,7 @@ check('fge: 终端内核 = 官方 ctx.webTerminals(帧桥 ack / mount-detach / c
     assert.deepEqual(acks, [1, 2], '重放的帧不许再 ack(官方认的是 pendingRender 那一帧)');
 
     // 接线点(源码契约)。
-    const source = readFileSync(join(ROOT, 'plugins/file-git-explorer/lib/client.js'), 'utf8');
+    const source = readFileSync(join(PLUGIN, 'lib/client.js'), 'utf8');
     assert.match(
         source,
         /ctx\.webTerminals\.view\(sessionId, TERM_KEY\)/,
@@ -1187,7 +1191,7 @@ check('fge: 终端内核 = 官方 ctx.webTerminals(帧桥 ack / mount-detach / c
 
 check('fge: 终端选区尾巴收敛(纯函数: 最后一行有内容 / 收到那行 / 行号算法)', () => {
     const styles = [];
-    const b = loadBundle('plugins/file-git-explorer/lib/client.js', {
+    const b = loadBundle('lib/client.js', {
         documentOverrides: {
             createElement: () => ({ style: { setProperty: () => {} } }),
             head: { appendChild: () => {} },
@@ -1275,13 +1279,13 @@ check('fge: 终端选区尾巴收敛(纯函数: 最后一行有内容 / 收到�
 });
 
 check('fge: git 页签上下两栏(上栏 3/4)+ 按目录归类 + 提交说明折叠两行', () => {
-    const source = readFileSync(join(ROOT, 'plugins/file-git-explorer/lib/client.js'), 'utf8');
+    const source = readFileSync(join(PLUGIN, 'lib/client.js'), 'utf8');
     // 上栏(变更列表 / 当前 diff)默认占正文 3/4 —— 常量是唯一出处, 别在别处再写一个 75。
     assert.match(source, /GIT_SPLIT_DEFAULT = 75/, '上栏默认占比必须是 3/4(75)');
 
     // 两栏各滚各的 + 中间一条可拖的拖柄(直接看**注入出去的 CSS**, 拼法绕不过去)。
     const styles = [];
-    const b = loadBundle('plugins/file-git-explorer/lib/client.js', {
+    const b = loadBundle('lib/client.js', {
         documentOverrides: {
             getElementById: () => null,
             createElement: (tag) =>
@@ -1628,7 +1632,7 @@ check('fge: git 页签上下两栏(上栏 3/4)+ 按目录归类 + 提交说明�
 });
 
 check('fge: 右侧栏默认铺「文件」+「Git」两格, Git 是活动那格', () => {
-    const source = readFileSync(join(ROOT, 'plugins/file-git-explorer/lib/client.js'), 'utf8');
+    const source = readFileSync(join(PLUGIN, 'lib/client.js'), 'utf8');
     // 用户口径: **git 侧栏也像文件侧栏一样默认打开**。一次 seed 里先开官方「工作区文件」、
     // 再开本插件的「Git」—— 后开的那格成为活动页签, 于是打开右栏直接是变更列表。
     // (带 params 的 `openTab(DIFF_KIND, {...})` 用的是逗号, 不会被这条正则收进来。)
@@ -1668,7 +1672,7 @@ function contrast(a, b) {
 }
 
 check('fge: 终端 16 色 ANSI 调色板与终端面的对比度达标(看得清)', () => {
-    const b = loadBundle('plugins/file-git-explorer/lib/client.js');
+    const b = loadBundle('lib/client.js');
     const palette = b.exports.__terminalPalette;
     assert.equal(typeof palette, 'function', '应暴露 __terminalPalette 供离线校验');
     // 真机上出现过的三种终端面: 官方浅色 / 本机主题(Sage Mist)浅色 / 官方深色。
@@ -1714,8 +1718,8 @@ check('fge: 终端 16 色 ANSI 调色板与终端面的对比度达标(看得清
 });
 
 check('fge: 右栏页签 Alt+J / Alt+L 切换(到边不环绕)', () => {
-    const source = readFileSync(join(ROOT, 'plugins/file-git-explorer/lib/client.js'), 'utf8');
-    const b = loadBundle('plugins/file-git-explorer/lib/client.js');
+    const source = readFileSync(join(PLUGIN, 'lib/client.js'), 'utf8');
+    const b = loadBundle('lib/client.js');
     const next = b.exports.__tabNeighbor;
     assert.equal(typeof next, 'function', '应暴露 __tabNeighbor 供离线校验');
 
@@ -1756,7 +1760,7 @@ check('fge: 右栏页签 Alt+J / Alt+L 切换(到边不环绕)', () => {
 });
 
 check('fge: Alt+Ctrl+R 刷新 git 树(与 ⟳ 同一条)+ 打开抽屉自动聚焦终端', () => {
-    const source = readFileSync(join(ROOT, 'plugins/file-git-explorer/lib/client.js'), 'utf8');
+    const source = readFileSync(join(PLUGIN, 'lib/client.js'), 'utf8');
 
     // —— Alt+Ctrl+R: 一个动作只有一个入口 ——
     // 快捷键必须与页签上那枚 `⟳` 指向**同一个** manualRefresh, 不是另写一套刷新逻辑。
@@ -1839,7 +1843,7 @@ check('fge: Alt+Ctrl+R 刷新 git 树(与 ⟳ 同一条)+ 打开抽屉自动聚�
 });
 
 check('fge: 详情标题加长 + 文件名点击复制', () => {
-    const source = readFileSync(join(ROOT, 'plugins/file-git-explorer/lib/client.js'), 'utf8');
+    const source = readFileSync(join(PLUGIN, 'lib/client.js'), 'utf8');
 
     // —— 详情标题的宽度: 真因是**夹着标题的那个页签**被官方钉死, 不是标题自己 ——
     // 官方 `._tab_…{min-width:80px;max-width:170px}`。⚠ 三个都踩过的坑:
@@ -1940,7 +1944,7 @@ check('fge: 详情标题加长 + 文件名点击复制', () => {
 });
 
 check('fge: 详情浮窗的「全屏」开关(右栏页签条那枚仍然藏)', () => {
-    const source = readFileSync(join(ROOT, 'plugins/file-git-explorer/lib/client.js'), 'utf8');
+    const source = readFileSync(join(PLUGIN, 'lib/client.js'), 'utf8');
 
     // 右栏页签条那枚「进全屏」: 位置放错过一轮 —— 用户要的是**详情面板**全屏, 不是右栏那一格。现在仍然藏。
     assert.match(
@@ -1990,7 +1994,7 @@ check('fge: 详情浮窗的「全屏」开关(右栏页签条那枚仍然藏)', 
 });
 
 check('fge: 详情浮窗 Alt+滚轮 = 横向滚动', () => {
-    const source = readFileSync(join(ROOT, 'plugins/file-git-explorer/lib/client.js'), 'utf8');
+    const source = readFileSync(join(PLUGIN, 'lib/client.js'), 'utf8');
     const at = source.indexOf('fge: alt+wheel scrolls the float sideways');
     assert.ok(at > 0, '应注册这条 effect');
     const body = source.slice(source.lastIndexOf('ctx.effect(', at), at);
@@ -2026,9 +2030,9 @@ check('fge: 详情浮窗 Alt+滚轮 = 横向滚动', () => {
 });
 
 check('fge: worktree 切换器(主仓 / 各 worktree)', () => {
-    const source = readFileSync(join(ROOT, 'plugins/file-git-explorer/lib/client.js'), 'utf8');
-    const host = readFileSync(join(ROOT, 'plugins/file-git-explorer/lib/index.js'), 'utf8');
-    const lib = readFileSync(join(ROOT, 'plugins/file-git-explorer/lib/git.js'), 'utf8');
+    const source = readFileSync(join(PLUGIN, 'lib/client.js'), 'utf8');
+    const host = readFileSync(join(PLUGIN, 'lib/index.js'), 'utf8');
+    const lib = readFileSync(join(PLUGIN, 'lib/git.js'), 'utf8');
 
     // host: 一条专用路由 + 可离线测的纯解析函数(夹具在 tests/git.test.mjs)。
     assert.match(host, /worktrees:\s*handleWorktrees/, 'host 要注册 /fge/api/worktrees');

@@ -7,6 +7,7 @@
 
 DeepSeek Harness (DSH) 的插件集合。**每个插件 = `plugins/<plugin-id>/` 下的独立 npm 包**,经
 `dsh plugin --profile web add link:<repo-abs-path>/plugins/<plugin-id>` **link: 本地安装**挂进 web profile(link: 要求绝对路径)。
+退役插件归档在 `plugins/obsolete/<plugin-id>/`:不再维护、不列入默认安装,源码与用例留档。
 
 ## 你改的是哪种插件
 
@@ -18,7 +19,7 @@ DeepSeek Harness (DSH) 的插件集合。**每个插件 = `plugins/<plugin-id>/`
 - host 半 `lib/index.js`(ESM,命名导出 `name` / `inject` / `apply`)
 - client 半 `lib/client.js`(浏览器 bundle)
 - 自带 `cordis.patch.yml` 挂载层
-- 参照 `plugins/ds-balance`、`plugins/file-git-explorer`、`plugins/stylevault-localchrome`
+- 参照 `plugins/ds-balance`、`plugins/db-console`、`plugins/batch-archive`
 
 **纯 host 插件**(无浏览器 UI):`package.json` + `lib/index.js` + `cordis.yml` 示例 + `tests/`。参照 `plugins/obsolete/tool-vision`。
 

@@ -10,7 +10,7 @@ plugins/obsolete/tool-vision/cordis.yml
 # (与 eslint.config.js 里 client bundle 整体豁免的约定一致)
 plugins/ds-balance/lib/client.js
 plugins/obsolete/paste-image/lib/client.js
-plugins/file-git-explorer/lib/client.js
+plugins/obsolete/file-git-explorer/lib/client.js
 plugins/db-console/lib/client.js
 plugins/deepseek-harness/lib/client.js
 plugins/batch-archive/lib/client.js

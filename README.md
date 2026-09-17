@@ -1,6 +1,6 @@
 # dsh-plugin
 
-> DeepSeek Harness (DSH) 插件集合 —— 余额监控、Git/终端、数据库控制台、批量归档等日常能力,`link:` 本地安装即用。
+> DeepSeek Harness (DSH) 插件集合 —— 余额监控、数据库控制台、批量归档等日常能力,`link:` 本地安装即用。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](package.json)
@@ -11,7 +11,6 @@
 | 插件                     | 状态   | 一句话说明                                                      |
 | ------------------------ | ------ | --------------------------------------------------------------- |
 | `ds-balance`             | 维护中 | 状态栏第二行:余额 + 今日/本月 token,5 分钟自动刷新              |
-| `file-git-explorer`      | 维护中 | 右栏 Git 页签(分支 / 变更 / 历史)+ 详情悬浮面板 + 终端抽屉      |
 | `db-console`             | 维护中 | 会话头部「数据库」页签:PG 登录、schema 树、SQL 编辑器、结果网格 |
 | `deepseek-harness`       | 维护中 | 蓝色粒子鲸鱼背景,跟随官方明/暗/系统主题                         |
 | `stylevault-localchrome` | 维护中 | 读本机 Chrome 配色 → 生成并应用 StyleVault 预设                 |
@@ -19,6 +18,7 @@
 | `browser-operator`       | 维护中 | 常驻可见浏览器 + 9 个 `browser_*` 工具(纯 host,挂 agent preset) |
 | `tool-vision`            | 已归档 | 本地视觉模型描述图片(读图 / OCR / 版面)                         |
 | `paste-image`            | 已归档 | 粘贴图片落盘成文件,路径写入草稿                                 |
+| `file-git-explorer`      | 已归档 | 右栏 Git 页签 + 详情悬浮面板 + 终端抽屉(自建界面已退场)         |
 
 > 归档插件源码在 `plugins/obsolete/`,不再维护、不列入默认安装。
 > 每个插件的配置项与细节见其自身 `plugins/<plugin-id>/README.md`。
@@ -33,7 +33,6 @@ cd dsh-plugin
 
 # <repo-abs-path> 换成克隆下来的仓库绝对路径(link: 要求绝对路径)
 dsh plugin --profile web add link:<repo-abs-path>/plugins/ds-balance
-dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer
 dsh plugin --profile web add link:<repo-abs-path>/plugins/deepseek-harness
 dsh plugin --profile web add link:<repo-abs-path>/plugins/batch-archive
 ```
@@ -48,12 +47,6 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/batch-archive
   dsh plugin --profile web add link:<repo-abs-path>/plugins/stylevault-localchrome
   ```
 - **例外**:`browser-operator` 不装 profile,挂进 agent preset(见下)。
-
-## 效果展示
-
-![界面全览:粒子鲸鱼背景、余额状态栏、右栏文件/Git 页签、数据库页签、批量归档按钮、底部终端抽屉](png/home.png)
-
-> 仓库只保留这一张全局全览图,各插件不再内嵌截图。
 
 ## 插件使用说明
 
@@ -70,16 +63,6 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/batch-archive
 - 也可点状态栏**「浏览器登录」**,用系统 Chrome 登录后自动写入。
 - 常见问题:只有余额没调用量 = 缺 `DEEPSEEK_USER_TOKEN`;调用量报 `40002/40003` = token 过期,重新登录;「浏览器登录」不可用 = 本机没有 Chrome。
 - 非官方 base URL(网关 / 代理 / 中转)下整行隐藏,属设计行为。
-
-### file-git-explorer —— Git 页签 + 详情浮窗 + 终端抽屉
-
-- **Git 页签**(打开右栏默认显示这格):分支按钮 + 分支树浮窗(本地 / 远程,只换查看对象,不动工作区分支)、变更列表、提交历史、聚焦单条提交;上下两栏各自滚动,可拖分栏比例。右栏宽度可拖(200px ~ 15% 视口)。
-- **列表**:按目录归类 + 层级虚线,hash 胶囊点击复制完整 hash,文件点开进详情浮窗。
-- **详情悬浮面板**:1/2 视口宽贴右栏左缘,同一时间只有一个;承载官方文档正文与 diff,可一键**全屏**,Esc / 切会话关闭。
-- **终端抽屉**:内核用**官方** `ctx.webTerminals`(PTY / shell 探测 / 进程 / 屏幕快照都归官方,沙箱策略一致);每会话一个终端,收起抽屉不杀进程,刷新后重连补屏;选中即复制,标题条含收起 `×` 与结束进程按钮。
-- **worktree 切换器**:仓库用了 `git worktree` 时,可切换看主仓或任意工作树的分支 / 变更 / 历史 / diff。
-- **快捷键**:agent 回合结束自动刷新;`Alt+Ctrl+R` 手动刷新(含 `git fetch`)、`Alt+J` / `Alt+L` 切换右栏页签、详情里 `Alt`+滚轮横向滚动。
-- 已砍掉自绘文件树 / 搜索 / 编辑保存 / 右栏终端页签。细节与接口见 `plugins/file-git-explorer/README.md`。
 
 ### db-console —— 数据库控制台
 
@@ -137,7 +120,7 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/batch-archive
 
 ## 贡献与开发
 
-新增插件 / 提交规范见 [CONTRIBUTING.md](CONTRIBUTING.md);仓库结构:`plugins/<plugin-id>/` 一个插件一个目录。
+新增插件 / 提交规范见 [CONTRIBUTING.md](CONTRIBUTING.md);仓库结构:在役插件在 `plugins/<plugin-id>/`(一个插件一个目录),退役插件留档在 `plugins/obsolete/<plugin-id>/`。
 
 ## 安全
 

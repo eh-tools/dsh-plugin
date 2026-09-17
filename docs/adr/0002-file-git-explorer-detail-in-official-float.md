@@ -1,8 +1,8 @@
 # 0002 — file-git-explorer 的详情一律由官方 float 承载,不自绘悬浮面板
 
-- 状态:已接受
+- 状态:已接受(`file-git-explorer` 2026-09 退役归档,本 ADR 仅作历史记录)
 - 日期:2026-09-11
-- 关联词条:`CONTEXT.md` § file-git-explorer(悬浮面板 / 详情)
+- 关联词条:`plugins/obsolete/file-git-explorer/CONTEXT.md`(悬浮面板 / 详情)
 
 ## 背景
 
