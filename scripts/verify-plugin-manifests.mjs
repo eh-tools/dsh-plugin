@@ -26,8 +26,17 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-/** 本仓库里所有「静态双半包」插件目录名(= 插件 id)。 */
-const PLUGIN_IDS = ['file-git-explorer'];
+/**
+ * 本仓库里在役的「静态双半包」插件目录名(= 插件 id)。
+ * 归档插件(`plugins/obsolete/**`)不入列 —— 它们不列入默认安装, 护栏随插件一起退役。
+ */
+const PLUGIN_IDS = [
+    'ds-balance',
+    'db-console',
+    'deepseek-harness',
+    'stylevault-localchrome',
+    'batch-archive',
+];
 
 let passed = 0;
 const failures = [];

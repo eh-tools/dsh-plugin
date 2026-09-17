@@ -1,0 +1,2 @@
+name: 浏览器操作
+description: 带常驻可见浏览器的编码 Agent：9 个 browser_* 工具驱动本机 Chrome（独立 profile、登录态长期复用、与日常浏览器并存），用于复现/定位/验证 Web bug；产物落项目已 ignore 的目录。

@@ -18,7 +18,7 @@ export default [
       // require / module 不在 node globals 里, no-undef 检查无意义)
       'plugins/ds-balance/lib/client.js',
       'plugins/obsolete/paste-image/lib/client.js',
-      'plugins/file-git-explorer/lib/client.js',
+      'plugins/obsolete/file-git-explorer/lib/client.js',
       'plugins/db-console/lib/client.js',
       'plugins/deepseek-harness/lib/client.js',
       'plugins/batch-archive/lib/client.js',

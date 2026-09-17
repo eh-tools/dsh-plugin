@@ -10,5 +10,5 @@
     "lib/git.js",
     "lib/address.js"
   ],
-  "install": "dsh plugin --profile web add link:<repo-abs-path>/plugins/file-git-explorer"
+  "install": "dsh plugin --profile web add link:<repo-abs-path>/plugins/obsolete/file-git-explorer"
 }

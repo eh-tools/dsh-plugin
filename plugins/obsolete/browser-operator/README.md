@@ -1,5 +1,10 @@
 # browser-operator —— 常驻可见浏览器 + 9 个 `browser_*` 工具(纯 host 插件)
 
+> **已归档(2026-09 退役)**:不再维护、**不列入默认安装**,源码与 preset 留档在
+> `plugins/obsolete/browser-operator/` —— 本目录 `tests/` 下的自检**已从 `just check` 里摘掉**
+> (它会真的拉起一个有头浏览器窗口),要跑请手动执行下面的命令。
+> 本机那份 agent preset 已从 `~/.dsh/.agent-presets/` 拿掉,退役当天的两份 yml 快照见本目录 `preset/`。
+
 > 给「浏览器操作」agent 预设用的宿主侧插件:一个**常驻、有头、跨轮次**的浏览器会话,
 > 独立 profile 长期复用登录态,用来复现 / 定位 / 验证 Web bug。
 >
@@ -22,14 +27,14 @@
 
 ```sh
 # 1) 装依赖(只有一个:playwright-core;浏览器用系统已装的 Chrome)
-pnpm --dir <repo-abs-path>/plugins/browser-operator install
+pnpm --dir <repo-abs-path>/plugins/obsolete/browser-operator install
 ```
 
 ```yaml
 # 2) 把这一行加进目标 preset 的 agent.cordis.yml
 #    (本仓库给「浏览器操作」预设用的完整行见 cordis.yml)
 - id: browser-operator
-  name: <repo-abs-path>/plugins/browser-operator/lib/index.js
+  name: <repo-abs-path>/plugins/obsolete/browser-operator/lib/index.js
   config:
     browser: chrome
     headless: false
@@ -125,7 +130,7 @@ git 不可用时才退化到本地 `.gitignore` 解析。
 ## 自检
 
 ```sh
-node plugins/browser-operator/tests/smoke.mjs
+node plugins/obsolete/browser-operator/tests/smoke.mjs
 ```
 
 会真的拉起一个有头浏览器窗口(临时 profile,跑完即关),覆盖:产物目录 4 条分支、

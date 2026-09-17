@@ -10,21 +10,21 @@ lint:
     node_modules/.bin/prettier --write .
 
 # ---- 单元测试 ----
-# 末项(browser-operator)会真的拉起一个有头 Chrome 窗口:临时 profile、跑完即关,
-# 但本机得装有 Chrome / Edge / Playwright 自带 chromium 之一。
+# 全部离线可跑: 不需要 DSH 进程, 也不需要浏览器。
+# (归档的 browser-operator 自检会真的拉起一个有头浏览器窗口, 已从门禁里摘掉 ——
+#  手动跑法见 plugins/obsolete/browser-operator/README.md)
 test:
     node plugins/obsolete/tool-vision/tests/smoke.mjs
     node plugins/obsolete/paste-image/tests/save.test.mjs
     node scripts/verify-ds-balance.mjs
-    node scripts/verify-client-bundles.mjs
+    node plugins/obsolete/file-git-explorer/tests/verify-client-bundles.mjs
     node scripts/verify-plugin-manifests.mjs
-    node plugins/file-git-explorer/tests/git.test.mjs
-    node plugins/file-git-explorer/tests/address.test.mjs
-    node plugins/file-git-explorer/tests/verify.mjs
+    node plugins/obsolete/file-git-explorer/tests/git.test.mjs
+    node plugins/obsolete/file-git-explorer/tests/address.test.mjs
+    node plugins/obsolete/file-git-explorer/tests/verify.mjs
     node plugins/db-console/tests/pg.test.mjs
     node plugins/db-console/tests/smoke.mjs
     node plugins/db-console/tests/editor-metrics.mjs
-    node plugins/browser-operator/tests/smoke.mjs
 
 # ---- E2E (需真实 llama-server, 仅手动) ----
 e2e:

@@ -4,7 +4,7 @@
  * 职责: 为浏览器端「数据库」页签提供 PostgreSQL 连接与查询通道。
  *
  * 静态插件的 client→host 通信不走动态插件的私有 RPC, 而是注册回环 HTTP JSON
- * 路由(与 file-git-explorer 的 /fge/api 同款信任栅栏):
+ * 路由(信任栅栏 = 只认回环 `Host`:`127.0.0.1` / `localhost` / `[::1]`):
  *
  *   POST /dbc/api/config.get     { root? } → 该项目保存的连接(含明文 url, UI 打码)
  *   POST /dbc/api/config.save    { root?, url } → 保存(覆盖, 项目单例)
@@ -16,8 +16,7 @@
  *   POST /dbc/api/query          { root?, sql } → 原样执行(不拦截), 行集截断返回
  *
  * 隔离口径(CONTEXT.md § db-console): 隔离键 = 会话工作区向上找到的第一个
- * .git 所在目录(仓库根), 无仓库退化为 cwd 本身 —— 与 file-git-explorer 的
- * cwd 缓存同口径; 每个项目至多一条连接。
+ * .git 所在目录(仓库根), 无仓库退化为 cwd 本身; 每个项目至多一条连接。
  *
  * 凭据口径(docs/adr/0001): 明文持久化在 $DSH_HOME/storages/db-console.json,
  * 原子写 + 权限收紧(文件 0600 / 目录尽量 0700); 不做任何加密与解锁流程。
@@ -48,7 +47,7 @@ export const name = 'dsh-db-console';
 /** webServer 是唯一硬依赖。 */
 export const inject = ['webServer'];
 
-const BODY_CAP = 1024 * 1024; // 请求体上限 1 MiB(SQL 粘贴场景比 fge 放宽)
+const BODY_CAP = 1024 * 1024; // 请求体上限 1 MiB(SQL 粘贴场景放宽)
 const ROUTE_PREFIX = '/dbc/api';
 const ROW_CAP = 500; // 行集截断上限(host 与结果网格同值, 展示层约定)
 const APP_NAME = 'dsh-db-console';
@@ -387,7 +386,7 @@ export function apply(ctx) {
     }
   }
 
-  // ---- 路由与信任栅栏(与 file-git-explorer 同款) ----
+  // ---- 路由与信任栅栏 ----
 
   const HANDLERS = {
     'config.get': handleConfigGet,

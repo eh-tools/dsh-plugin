@@ -4,6 +4,39 @@
 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),版本号遵循
 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### Removed
+
+- `file-git-explorer`:**退役归档** —— 源码、装配护栏(`verify-client-bundles`)与 3 条用例整体搬进
+  `plugins/obsolete/file-git-explorer/`,不再维护、不列入默认安装;请从 profile 卸载
+  (`dsh plugin --profile web remove dsh-file-git-explorer`)。决策与代价见 `docs/adr/0007`
+- `db-console`:去掉对 `--dsh-fge-strip-clear-*`(file-git-explorer 广播的细条净空)的兜底内缩 ——
+  变量从来缺省即 0,视觉无变化
+- `browser-operator`:**退役归档** —— 纯 host 插件整体搬进 `plugins/obsolete/browser-operator/`,
+  **同时把它的 agent preset 也从本机拿掉**(`~/.dsh/.agent-presets/browser-operator/`);
+  退役当天的两份 yml 快照留档在该目录 `preset/` 下(绝对路径已换成 `<repo-abs-path>`)。决策见 `docs/adr/0008`
+
+### Changed
+
+- `just check` / `pnpm test`:browser-operator 的自检**从门禁里摘掉** —— 它会真的拉起一个有头浏览器窗口,
+  门禁不再要求本机装有 Chrome / Edge / Playwright chromium;要跑请手动
+  `node plugins/obsolete/browser-operator/tests/smoke.mjs`
+- `.pre-commit-config.yaml`:`check-yaml` 的 exclude 改成 alternation,新增排除 preset 快照
+  (`!!js` 自定义标签 PyYAML 解析不了)
+- `just check` / `pnpm test`:fge 的用例与装配护栏改从 `plugins/obsolete/file-git-explorer/tests/` 跑
+  (护栏脚本的 `ROOT` 随之改为**插件目录**相对,不再相对仓库根)
+- 安装链预检(`scripts/verify-plugin-manifests.mjs`):`PLUGIN_IDS` 从**只列 fge** 改为列在役的 5 个
+  静态双半包(ds-balance / db-console / deepseek-harness / stylevault-localchrome / batch-archive);
+  随之修正 `stylevault-localchrome`、`batch-archive` README 里不合规的路径占位符
+  (`<本目录绝对路径>` / `<本仓库绝对路径>` → `<repo-abs-path>`)
+- 文档:根 README 把 fge 与 browser-operator 移入「已归档」、删掉各自的安装命令与使用说明小节、
+  删掉「例外:挂 agent preset」那条;**删掉随之过期的「效果展示」全览图**
+  (`png/home.png` 里还画着右栏 Git 页签与底部终端抽屉),以后要展示再重拍;AGENTS.md 的静态双半包参照换成在役
+  插件、补上 `plugins/obsolete/` 归档口径;根 `CONTEXT.md` 的 § file-git-explorer 与 § browser-operator 词表
+  整节搬进各自归档目录(`plugins/obsolete/<插件>/CONTEXT.md`),`docs/adr/0002`–`0006` 标注「插件已归档,
+  仅作历史记录」
+
 ## [0.4.0] - 2026-09-17
 
 ### Changed

@@ -49,7 +49,7 @@ window.__ModuleLoader__.load({
     // 目录行、文件名缩进列在下面 —— 而不是每个文件都把完整路径从头平铺一遍
     // (`a/a1` + `a/a2` → `a/` 底下 `a1`、`a2`)。
     //
-    // ⚠ 放在 apply 外面是为了让 `scripts/verify-client-bundles.mjs` 能离线直接跑这两个函数
+    // ⚠ 放在 apply 外面是为了让 `tests/verify-client-bundles.mjs` 能离线直接跑这两个函数
     //   (浏览器 bundle 不能 require 本包自己的模块), 见 exports.__pathTree。
 
     /** 目录树节点: `name` 是本段目录名, `path` 是根到这里的完整路径(做 React key 用)。 */
@@ -2035,7 +2035,7 @@ window.__ModuleLoader__.load({
        * 懒加载 xterm(vendor 白名单路由), 结果缓存在 `xtermPromise`。
        *
        * ⚠ **失败不能把拒绝态永久缓存**: vendor 资产缺失(host 返回 503, 例如插件换了目录却
-       * 没跑 `pnpm --dir plugins/file-git-explorer install`)是一次性的环境问题 —— 环境修好后
+       * 没跑 `pnpm --dir plugins/obsolete/file-git-explorer install`)是一次性的环境问题 —— 环境修好后
        * 应该「重开抽屉」就恢复。若把 rejected promise 缓存住, 用户只能**整页刷新**,
        * 而界面提示(「终端不可用(检查依赖与 host 日志)」)根本没提要刷新。
        * 所以失败时把 `xtermPromise` 置回 null, 下次调用重新拉一遍(`<link>` 只插一次,
@@ -4598,7 +4598,7 @@ window.__ModuleLoader__.load({
       console.info('[fge] ready — 右侧栏「git 页签」+ 详情悬浮面板, composer 下的终端抽屉');
     };
 
-    // 离线校验出口: `scripts/verify-client-bundles.mjs` 直接跑这几个**纯的 / 注入了 `h` 的**函数
+    // 离线校验出口: `tests/verify-client-bundles.mjs` 直接跑这几个**纯的 / 注入了 `h` 的**函数
     // 验「按目录归类」「层级线」「整棵树上屏的行数组」(浏览器 bundle 不能 require 本包的模块,
     // 所以只能这样递出去)。不是插件契约的一部分。
     exports.__pathTree = { build: buildPathTree, compact: compactPathTree, guides: guideSegments };

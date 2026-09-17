@@ -14,11 +14,11 @@
 # 先把插件装进 profile。把 `<repo-abs-path>` 换成你克隆下来的仓库绝对路径
 # (Windows 形如 `E:\path\to\dsh-plugin`)。
 #
-# 首次使用前在插件目录装一次依赖:`pnpm --dir <repo-abs-path>/plugins/browser-operator install`
+# 首次使用前在插件目录装一次依赖:`pnpm --dir <repo-abs-path>/plugins/obsolete/browser-operator install`
 # (只需要 playwright-core;浏览器用系统装好的 Chrome,不下载额外二进制)。
 
 - id: browser-operator
-  name: <repo-abs-path>/plugins/browser-operator/lib/index.js
+  name: <repo-abs-path>/plugins/obsolete/browser-operator/lib/index.js
   config:
     # 驱动哪个浏览器:chrome(默认,系统 Google Chrome)/ edge / chromium(Playwright 自带)
     browser: chrome

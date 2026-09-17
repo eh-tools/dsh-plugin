@@ -59,7 +59,7 @@ const TOOL_TIMEOUT_MS = 120000;
 /**
  * `playwright-core` 的候选解析起点。
  *
- * 正常情况下它就是本插件的依赖(`plugins/browser-operator/node_modules`);
+ * 正常情况下它就是本插件的依赖(`plugins/obsolete/browser-operator/node_modules`);
  * 本机已经全局装了 `@playwright/test`,所以顺带留两条兜底路径,免得忘记
  * `pnpm install` 就完全用不了。
  */
@@ -88,7 +88,7 @@ function loadPlaywright() {
   }
   throw new Error(
     'browser-operator: 找不到 playwright-core。请在插件目录跑一次 `pnpm install`' +
-      `(plugins/browser-operator),或全局装 @playwright/test。已尝试:\n  ${tried.join('\n  ')}`,
+      `(plugins/obsolete/browser-operator),或全局装 @playwright/test。已尝试:\n  ${tried.join('\n  ')}`,
   );
 }
 

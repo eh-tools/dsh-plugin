@@ -20,7 +20,7 @@
 ## 安装
 
 ```sh
-dsh plugin --profile web add link:<本仓库绝对路径>/plugins/batch-archive
+dsh plugin --profile web add link:<repo-abs-path>/plugins/batch-archive
 ```
 
 装完**重启 DSH 并硬刷新浏览器**(Cmd/Ctrl+Shift+R)生效。
