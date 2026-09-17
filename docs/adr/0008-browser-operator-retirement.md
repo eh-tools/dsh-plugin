@@ -60,9 +60,9 @@
   本机与 CI 都更容易跑绿;那份人设(含产物目录规则)有档可查。
 - **负面 / 技术债**:归档的 smoke 只能手动跑;preset 快照会与 shipped `standard` 漂移(文件头已写明);
   本机若还想用可见浏览器,需要重建 preset。
-- **残留数据(本次未清理,属用户数据)**:`$DSH_HOME/browser-operator/profile`(独立 Chrome profile,
-  含登录态)与 `$DSH_HOME/browser-operator/<session-id>`(历史产物)仍在磁盘上 —— 本次只退 preset 与插件,
-  不动这些数据。
+- **本机数据**:`$DSH_HOME/browser-operator/`(独立 Chrome profile + `smoke/` 下的历史产物,
+  344 个文件 / 约 96 MB)在退役时**一并删除** —— 那是插件自己的运行数据,插件不再加载就没有意义;
+  代价是以后恢复可见浏览器要重新登录一次。
 - **回滚**:把 `plugins/obsolete/browser-operator` 移回 `plugins/browser-operator`;把 `preset/agent.cordis.yml`
   里的占位符换回绝对路径后放回 `~/.dsh/.agent-presets/browser-operator/`;再在 `justfile` / `package.json`
   里加回那条 smoke —— 源码一个字符未改(纯重命名 + 注释内的路径)。
