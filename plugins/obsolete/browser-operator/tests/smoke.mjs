@@ -1,7 +1,7 @@
 /**
  * browser-operator 自检 —— 离线可跑,不需要 DSH 进程。
  *
- * 运行: node plugins/browser-operator/tests/smoke.mjs
+ * 运行: node plugins/obsolete/browser-operator/tests/smoke.mjs
  *
  * 只测**外部行为**:产物目录怎么选、工具能不能真的驱动浏览器、断言页面、落盘截图、
  * DISPOSE 后有没有残留进程。不测内部实现。
