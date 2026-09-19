@@ -131,6 +131,35 @@ checkAsync('元素在执行前消失时抛错', async () => {
     assert.ok(disposed, '拿不到元素时该把句柄清掉,不能泄漏');
 });
 
+checkAsync('读快照与解析元素交给页面的是同一个 pageProbe 函数对象', async () => {
+    // 这题不查行为,查**身份**:`readSnapshot` 走 `page.evaluate`、`elementHandle` 走
+    // `page.evaluateHandle`,两个调用点必须交出同一个函数对象。序号「数出来的第 n 个」
+    // 就押在这上面 —— 两处各自定义一份「长得很像」的函数,页面上任何一处判定漂移都会让
+    // 执行器解析到**别的**元素,而且不报错。假页面只把调用点交出去的函数抓下来。
+    const captured = [];
+    const fakeElement = { click: async () => {} };
+    const page = {
+        evaluate: async (fn) => {
+            captured.push(fn);
+            return { url: 'u', title: 't', freshness: 'f', text: '', elements: [] };
+        },
+        evaluateHandle: async (fn) => {
+            captured.push(fn);
+            return { asElement: () => fakeElement, dispose: async () => {} };
+        },
+    };
+    await readSnapshot(page);
+    assert.equal(await elementHandle(page, 3), fakeElement);
+
+    assert.equal(captured.length, 2, '两个调用点各该交出一个函数');
+    // 只认 `===`(`assert/strict` 的 equal 就是严格相等):两份各自定义的替身**行为可以
+    // 完全一致**,任何「行为/结构相等」的比法都会把它们放过去,只有引用相等拦得住。
+    assert.equal(captured[0], captured[1], '两个调用点必须传同一个函数对象,不是两份长得很像的');
+    assert.equal(captured[0], pageProbe, '交给页面的必须是导出的那一个 pageProbe');
+    const lookalike = (options) => options.selector;
+    assert.notEqual(lookalike, pageProbe, '同源替身过不了这道闸 —— 缺的正是上面那条引用相等');
+});
+
 check('pageProbe 真的能被序列化进页面并跑通读模式', () => {
     // 只查源码里有没有 `require(` / `import` 是**空转的**:它检测不出函数体引用了
     // 模块作用域的标识符,而那正是 Playwright 序列化时唯一会炸的东西。
