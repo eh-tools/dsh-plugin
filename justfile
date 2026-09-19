@@ -49,19 +49,7 @@ check: lint test audit
 dev:
     @echo "在 justfile 里定义本项目的 dev 命令"
 
-# ---- worktree 开发流 ----
-# 新功能: just wt <名字> (建 worktree + 装依赖 + 软链 .env)
-wt name:
-    git worktree add .worktrees/{{ name }} -b {{ name }}
-    pnpm --dir .worktrees/{{ name }} install
-    @test -f .env && ln -sf ../../.env .worktrees/{{ name }}/.env && echo "已软链主工作区 .env" || echo "(无 .env 可链)"
-    @echo "进入开发: cd .worktrees/{{ name }}"
-
-# 列出全部 worktree
-wt-list:
-    @git worktree list
-
-# 合并完成后清理 worktree 与分支
-wt-rm name:
-    git worktree remove .worktrees/{{ name }} --force
-    git branch -D {{ name }}
+# ---- 开发流: 分支模式 (不用 worktree) ----
+# 在主工作区开分支 -> 开发 -> 提 PR; 见 AGENTS.md 与 PERSONAL.md
+branch name:
+    git switch -c {{ name }}

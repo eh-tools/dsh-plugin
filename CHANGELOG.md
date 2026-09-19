@@ -53,6 +53,13 @@
 - `.pre-commit-config.yaml` / `.prettierignore`:两处针对 browser-operator preset 的排除路径
   随插件移出 `obsolete/` 而更新
 
+### Fixed
+
+- `tool-vision`:autoStart 拉起服务**不再用 `detached: true`**(Windows 侧改为仅 POSIX 启用)——
+  Windows 上 `detached` 会让子进程获得自己的控制台窗口,`windowsHide` 挡不住
+  (`CREATE_NO_WINDOW` 与 `CREATE_NEW_CONSOLE` 并存时前者被忽略),`just test` / `just check` /
+  pre-push 冒烟每次闪 2~3 个黑窗;Windows 整树清理本就走 `taskkill /T /F`,不受影响
+
 ## [0.4.0] - 2026-09-17
 
 ### Changed
