@@ -305,8 +305,14 @@ Expected: PASS —— 7 项全过,末行 `全部通过:7 项`。
 
 - [ ] **Step 7: 确认门禁真的会跑它**
 
-Run: `git stash -- plugins/browser-operator/lib/policy.js && node -e "console.log(require('./package.json').scripts.test.includes('policy.test.mjs'))" && git stash pop`
-Expected: 打印 `true`(证明接线在)。紧接着 `node plugins/browser-operator/tests/policy.test.mjs` 仍 PASS。
+Run:
+
+```sh
+node -e "const s=require('./package.json').scripts; if(!s.test.includes('policy.test.mjs')||!s.check.includes('policy.test.mjs')) throw new Error('根 package.json 少接线'); console.log('root package.json OK')"
+grep -c "policy.test.mjs" justfile
+```
+
+Expected: 打印 `root package.json OK`,然后 grep 输出 `1`(justfile 里恰好一处)。紧接着 `node plugins/browser-operator/tests/policy.test.mjs` 仍 PASS。
 
 - [ ] **Step 8: 提交**
 
@@ -354,7 +360,7 @@ check('state 带上 goal、当前 URL/标题、元素表与已走过的步数', 
 check('questions 只装当前合法的操作与目标', () => {
   const table = buildElementTable(SNAPSHOT);
   const questions = buildQuestions({ goal: 'g', table });
-  assert.deepEqual(Object.keys(questions.operation.criteria), [...ACTION_SPACE]);
+  assert.deepEqual(questions.operation.criteria, [...ACTION_SPACE]);
   assert.deepEqual(
     questions.click_target.criteria.map((c) => c.index),
     table.eligible.CLICK,
@@ -369,7 +375,7 @@ check('没有合法目标时依然给出 questions(交给 Jev 选 DONE/BLOCKED)'
   const table = buildElementTable({ elements: [] });
   const questions = buildQuestions({ goal: 'g', table });
   assert.deepEqual(questions.click_target.criteria, []);
-  assert.deepEqual(Object.keys(questions.operation.criteria), [...ACTION_SPACE]);
+  assert.deepEqual(questions.operation.criteria, [...ACTION_SPACE]);
 });
 
 check('questions 里带 goal_met 与 stuck 两个概率问题', () => {
@@ -571,9 +577,13 @@ function choiceOf(answers, key) {
   return value === undefined ? undefined : value;
 }
 
-/** 从 answers 里安全取一个概率;缺了返回 0(缺概率不该把回路憋死)。 */
+/**
+ * 从 answers 里安全取一个概率。`noul` 是概率原语的字段名;`choice` 类回答把
+ * 概率放在 `confidence` 上,两处都要认。都缺时返回 0 —— 缺概率不该把回路憋死。
+ */
 function probabilityOf(answers, key) {
-  const value = answers?.[key]?.noul;
+  const answer = answers?.[key];
+  const value = typeof answer?.noul === 'number' ? answer.noul : answer?.confidence;
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
@@ -699,8 +709,8 @@ Expected: FAIL —— `textCandidates is not a function`。
 在 `lib/policy.js` 末尾追加:
 
 ```js
-/** 逐字候选片段的最小长度。1 个字符的词(英文里的 of / to / a)当候选没有意义。 */
-const MIN_CANDIDATE_CHARS = 2;
+/** 逐字候选片段的最小长度。2 个字符的英文虚词(of / to / on / in)当候选没有意义。 */
+const MIN_CANDIDATE_CHARS = 3;
 /** 逐字候选的数量上限,挡住超长 goal 把 questions 撑爆。 */
 const MAX_CANDIDATES = 20;
 
@@ -910,7 +920,10 @@ check('回路执行 CLICK 后因 goal_met 停止', async () => {
   assert.equal(result.status, 'done');
   assert.equal(result.steps.length, 2);
   assert.equal(deps.executed.length, 1);
-  assert.deepEqual(deps.executed[0], { operation: 'CLICK', targetIndex: 1, text: undefined });
+  // 只断言这三个字段:action 上还挂着 snapshot 与 table(执行器要用)。
+  assert.equal(deps.executed[0].operation, 'CLICK');
+  assert.equal(deps.executed[0].targetIndex, 1);
+  assert.equal(deps.executed[0].text, undefined);
 });
 
 check('DONE 不声称目标真的达成 —— 只回报概率', async () => {
@@ -1901,9 +1914,20 @@ git commit -m "feat(browser-operator): 注册 browser_act 并接上真实页面�
 - Consumes: Task 8 注册的 `browser_act`。
 - Produces: 无(自检不产出接口)。
 
-- [ ] **Step 1: 把 `browser_act` 加进期望列表**
+- [ ] **Step 1: 把 `browser_act` 加进期望列表,并给假 ctx 补 `get`**
 
 `tests/smoke.mjs:206-216` 的 `EXPECTED_TOOLS` 数组末尾追加 `'browser_act',`。
+
+再给 `tests/smoke.mjs` 的 `makeCtx()` 补一个 `get`,返回 `undefined`:
+
+```js
+    return {
+      tools: { register: (definition) => tools.set(definition.name, definition) },
+      // browser_act 会 ctx.get('credentials');真实 Cordis ctx 一定有这个方法,
+      // 这个假 ctx 也得有,否则拿到的是 TypeError 而不是「缺凭证」那句人话。
+      get: () => undefined,
+      on(event, handler) {
+```
 
 - [ ] **Step 2: 补两条错误路径检查**
 
@@ -1976,6 +2000,14 @@ git commit -m "test(browser-operator): 自检补 browser_act 与两条错误路�
 | `package.json`            | `:4`           | 「注册 8 个」→「注册 10 个」                          |
 
 > `package.json` 那里的「8 个」本来就是错的(README 一直写 9)—— 顺手纠到 10。
+
+⚠ **别只按行号改**:本任务前面的编辑会让后面几行的行号漂移。改完用这条兜底,它必须**没有任何输出**:
+
+```sh
+grep -rn "9 个\|All 9\|注册 8 个\|九个工具" plugins/browser-operator/ || echo "OK: 没有残留的旧工具数"
+```
+
+(上面这条会连 `tests/smoke.mjs` 一起扫;那个文件里没有工具数文案,所以扫到就是漏了。)
 
 - [ ] **Step 2: 去掉归档横幅、修路径、补 `browser_act` 小节**
 
