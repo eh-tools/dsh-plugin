@@ -23,7 +23,13 @@
 - **契约常量(照抄,别自创)**:`TOOL_TIMEOUT_MS = 120000`(已有,`lib/index.js:57`);`maxSteps` 默认 **12** / 硬上限 **40**;`budgetMs` 默认 **100000**(必须严格小于 120000);`jevTimeoutMs` **5000**;`actionTimeoutMs` 默认 **15000**(已有);`goalMet` / `stuck` 停止阈值 **0.8**;低置信度阈值 **0.35**、连续 **3** 步;校验失败最多重试 **2** 次;`WAIT` 单次上限 **1000 ms**;`jevModel` 默认 `'jev-latest'`。
 - **闭合枚举**:动作空间 8 个(`CLICK` / `TYPE_TEXT` / `SELECT` / `SCROLL_UP` / `SCROLL_DOWN` / `WAIT` / `DONE` / `BLOCKED`);`status` 8 个(`done` / `stuck` / `blocked` / `max_steps` / `timeout` / `error` / `uncertain` / `text_unavailable`)。
 - **不引入第二个模型**:`TYPE_TEXT` 的文本必须是 `goal` 里的逐字片段。**禁止**使用 `ctx.llm`。
-- **代码风格**:prettier `{ semi, singleQuote, trailingComma: 'all', printWidth: 100 }`;eslint `@eslint/js` recommended + node globals。`tests/*.mjs` 现有文件用 4 空格缩进且**未被** prettier 忽略 —— 新测试文件统一用 prettier 默认(2 空格),以 `node_modules/.bin/prettier --write` 的结果为准。
+- **questions 必须匹配 SDK 的 `Question` 联合**(权威定义:`plugins/browser-operator/node_modules/@typesafe-ai/sdk/dist/index.d.mts`)—— 三条硬约束:
+  ① 每个问题都带 `type` 判别字段(`'choice'` / `'noul'` / `'score'`);
+  ② `choice` 的 `criteria` 是**「标签 → 描述」的对象**(`ChoiceCriteria`),不是数组;
+  ③ `noul` 问题**不带** `criteria`。
+  对应地 `ChoiceResponse.choice` 是**字符串标签**(`keyof T & string`)并另带数值 `confidence`,`NoulResponse.noul` 是数值;
+  **元素目标的标签就是元素序号的十进制写法**。
+- **代码风格**:prettier `{ semi, singleQuote, trailingComma: 'all', printWidth: 100 }`;eslint `@eslint/js` recommended + node globals。**`.mjs` 一律 4 空格** —— prettier 3 会读 `.editorconfig`,其 `[*]` 是 `indent_size = 4` 而 JS glob 不含 `.mjs`;`.js` 保持 2 空格。以 `node node_modules/prettier/bin/prettier.cjs --write` 的结果为准。
 - **提交规范**:Conventional Commits,subject ≤ 72 字符、不以句号结尾。
 
 ---
@@ -357,31 +363,60 @@ check('state 带上 goal、当前 URL/标题、元素表与已走过的步数', 
   assert.equal(state.steps.length, 1);
 });
 
+check('questions 的键恰好是那六个', () => {
+  const questions = buildQuestions({ goal: 'g', table: buildElementTable(SNAPSHOT) });
+  assert.deepEqual(Object.keys(questions).sort(), [
+    'click_target',
+    'goal_met',
+    'operation',
+    'select_target',
+    'stuck',
+    'type_text_target',
+  ]);
+});
+
+check('每个问题都带 type 判别字段,且 noul 不带 criteria', () => {
+  const questions = buildQuestions({ goal: 'g', table: buildElementTable(SNAPSHOT) });
+  for (const [name, question] of Object.entries(questions)) {
+    assert.ok(['choice', 'noul'].includes(question.type), `${name} 的 type 不对:${question.type}`);
+  }
+  assert.equal(questions.operation.type, 'choice');
+  assert.equal(questions.goal_met.type, 'noul');
+  assert.ok(!('criteria' in questions.goal_met), 'noul 问题不该带 criteria');
+});
+
 check('questions 只装当前合法的操作与目标', () => {
   const table = buildElementTable(SNAPSHOT);
   const questions = buildQuestions({ goal: 'g', table });
-  assert.deepEqual(questions.operation.criteria, [...ACTION_SPACE]);
+  assert.deepEqual(Object.keys(questions.operation.criteria), [...ACTION_SPACE]);
+  // criteria 的键就是元素序号的十进制写法 —— parseDecision 靠它把回答映射回索引。
+  assert.deepEqual(Object.keys(questions.click_target.criteria), table.eligible.CLICK.map(String));
   assert.deepEqual(
-    questions.click_target.criteria.map((c) => c.index),
-    table.eligible.CLICK,
+    Object.keys(questions.type_text_target.criteria),
+    table.eligible.TYPE_TEXT.map(String),
   );
   assert.deepEqual(
-    questions.type_text_target.criteria.map((c) => c.index),
-    table.eligible.TYPE_TEXT,
+    Object.keys(questions.select_target.criteria),
+    table.eligible.SELECT.map(String),
   );
+});
+
+check('criteria 的值就是元素表里那一行', () => {
+  const questions = buildQuestions({ goal: 'g', table: buildElementTable(SNAPSHOT) });
+  assert.equal(questions.click_target.criteria['1'], '[1] button "Round trip"');
 });
 
 check('没有合法目标时依然给出 questions(交给 Jev 选 DONE/BLOCKED)', () => {
   const table = buildElementTable({ elements: [] });
   const questions = buildQuestions({ goal: 'g', table });
-  assert.deepEqual(questions.click_target.criteria, []);
-  assert.deepEqual(questions.operation.criteria, [...ACTION_SPACE]);
+  assert.deepEqual(questions.click_target.criteria, {});
+  assert.deepEqual(Object.keys(questions.operation.criteria), [...ACTION_SPACE]);
 });
 
-check('questions 里带 goal_met 与 stuck 两个概率问题', () => {
+check('goal_met 与 stuck 是带实质文案的概率问题', () => {
   const questions = buildQuestions({ goal: 'g', table: buildElementTable(SNAPSHOT) });
-  assert.equal(typeof questions.goal_met.instructions, 'string');
-  assert.equal(typeof questions.stuck.instructions, 'string');
+  assert.ok(questions.goal_met.instructions.length > 0);
+  assert.ok(questions.stuck.instructions.length > 0);
 });
 ```
 
@@ -407,41 +442,81 @@ export function buildState({ goal, snapshot, table, steps }) {
   };
 }
 
-/** 一次请求里同时问完 operation 与所有兼容 target —— 两个决策,一次网络往返。 */
+/**
+ * 8 个操作的说明文案。
+ *
+ * `@typesafe-ai/sdk` 的 `ChoiceCriteria` 是**「标签 → 描述」的对象**(不是数组),
+ * 所以 choice 的 criteria 就得长这样:键是模型要原样回给我们的标签。
+ */
+const OPERATION_HINTS = Object.freeze({
+  CLICK: 'Press one clickable element.',
+  TYPE_TEXT: 'Fill one typeable element with a verbatim fragment of the goal.',
+  SELECT: 'Choose an option in one selectable element.',
+  SCROLL_UP: 'Scroll the page up. Makes no selection.',
+  SCROLL_DOWN: 'Scroll the page down. Makes no selection.',
+  WAIT: 'Wait for the page to settle. Makes no selection.',
+  DONE: 'The goal is already met; stop.',
+  BLOCKED: 'A human is required (login, SSO, captcha); stop.',
+});
+
+/**
+ * 一次请求里同时问完 operation 与所有兼容 target —— 两个决策,一次网络往返。
+ *
+ * ⚠ 形状必须与 SDK 的 `Question` 联合一致(见 `@typesafe-ai/sdk/dist/index.d.mts`):
+ * 每个问题都带 `type`;`choice` 的 `criteria` 是「标签 → 描述」的对象;`noul` 不带
+ * criteria。**标签就是元素序号的十进制写法** —— `parseDecision` 靠它把回答映射回索引。
+ *
+ * @param {{ goal: string, table: object }} options
+ */
 export function buildQuestions({ goal, table }) {
-  const criteriaFor = (indexes) =>
-    indexes.map((index) => {
-      const element = table.byIndex.get(index);
-      return { index, label: renderLine(element) };
-    });
+  const criteriaFor = (indexes) => {
+    const criteria = {};
+    for (const index of indexes) {
+      criteria[String(index)] = renderLine(table.byIndex.get(index));
+    }
+    return criteria;
+  };
+  const operationCriteria = {};
+  for (const operation of ACTION_SPACE) operationCriteria[operation] = OPERATION_HINTS[operation];
 
   return {
     operation: {
+      type: 'choice',
       instructions:
         `Choose the single next operation that best advances this goal: ${goal}\n` +
         'Only operations that are legal on the current page are offered. ' +
         'CLICK presses a clickable element, TYPE_TEXT fills a typeable one, SELECT picks an ' +
         'option, SCROLL/WAIT make no selection, DONE means the goal is already met, and ' +
         'BLOCKED means a human is required (login, SSO, captcha).',
-      criteria: [...ACTION_SPACE],
+      criteria: operationCriteria,
     },
     click_target: {
-      instructions: 'Which element should be clicked? Only meaningful when operation is CLICK.',
+      type: 'choice',
+      instructions:
+        'Which element should be clicked? Answer with the element number. ' +
+        'Only meaningful when operation is CLICK.',
       criteria: criteriaFor(table.eligible.CLICK),
     },
     type_text_target: {
+      type: 'choice',
       instructions:
-        'Which element should receive text? Only meaningful when operation is TYPE_TEXT.',
+        'Which element should receive text? Answer with the element number. ' +
+        'Only meaningful when operation is TYPE_TEXT.',
       criteria: criteriaFor(table.eligible.TYPE_TEXT),
     },
     select_target: {
-      instructions: 'Which element should be selected? Only meaningful when operation is SELECT.',
+      type: 'choice',
+      instructions:
+        'Which element should be selected? Answer with the element number. ' +
+        'Only meaningful when operation is SELECT.',
       criteria: criteriaFor(table.eligible.SELECT),
     },
     goal_met: {
+      type: 'noul',
       instructions: `The goal is already satisfied by the page as it stands: ${goal}`,
     },
     stuck: {
+      type: 'noul',
       instructions:
         'No offered operation can make further progress on this goal, and repeating the ' +
         'last operation would not help.',
@@ -450,12 +525,12 @@ export function buildQuestions({ goal, table }) {
 }
 ```
 
-> `criteria` 用数组而不是对象,是为了让 `parseDecision` 能用 `criteria.find(...)` 做**白名单校验** —— Jev 返回的 target 必须落在这次提供的集合里(Task 3)。
+> `criteria` 是**对象**(「标签 → 描述」)而不是数组,这是 SDK 的 `ChoiceCriteria` 规定的;`noul` 问题则完全不带 criteria。白名单校验不看 criteria,而是看 `table.eligible[operation]`(Task 3)—— 那才是执行器的权威,模型回什么标签都越不过它。
 
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `node plugins/browser-operator/tests/policy.test.mjs`
-Expected: PASS —— 11 项。
+Expected: PASS —— 13 项(7 项来自 Task 1)。
 
 - [ ] **Step 5: 提交**
 
@@ -485,13 +560,18 @@ git commit -m "feat(browser-operator): Jev 回路构造 state 与投机扇出 qu
 补 import `parseDecision, validateDecision`,追加:
 
 ```js
-/** 一个形状正确的 Jev 响应 fixture。 */
+/**
+ * 一个形状正确的 Jev 响应 fixture。
+ *
+ * 注意 target 的 `choice` 是**字符串标签**(SDK 的 `ChoiceResponse.choice` 是
+ * `keyof T & string`),不是数字 —— 标签就是 criteria 的键,也就是元素序号。
+ */
 const RESPONSE = {
   answers: {
     operation: { choice: 'CLICK', confidence: 0.91 },
-    click_target: { choice: 1, confidence: 0.88 },
-    type_text_target: { choice: 2, confidence: 0.4 },
-    select_target: { choice: 3, confidence: 0.3 },
+    click_target: { choice: '1', confidence: 0.88 },
+    type_text_target: { choice: '2', confidence: 0.4 },
+    select_target: { choice: '3', confidence: 0.3 },
     goal_met: { noul: 0.02 },
     stuck: { noul: 0.05 },
   },
@@ -588,6 +668,14 @@ function probabilityOf(answers, key) {
 }
 
 /**
+ * 元素目标的回答是 criteria 的**标签**(字符串),而标签就是元素序号的十进制写法。
+ * 不是纯数字的标签一律当作「没给目标」返回 undefined —— 由 validateDecision 拒绝。
+ */
+function indexOfLabel(label) {
+  return typeof label === 'string' && /^\d+$/.test(label) ? Number(label) : undefined;
+}
+
+/**
  * 解析一次 Jev 响应。形状不对就**抛** —— 宁可停下,也不要拿半个决策去点页面。
  * @param {object} response `systemOne` 的返回值
  */
@@ -602,9 +690,9 @@ export function parseDecision(response) {
   }
   return {
     operation,
-    clickTarget: choiceOf(answers, 'click_target'),
-    typeTextTarget: choiceOf(answers, 'type_text_target'),
-    selectTarget: choiceOf(answers, 'select_target'),
+    clickTarget: indexOfLabel(choiceOf(answers, 'click_target')),
+    typeTextTarget: indexOfLabel(choiceOf(answers, 'type_text_target')),
+    selectTarget: indexOfLabel(choiceOf(answers, 'select_target')),
     goalMet: probabilityOf(answers, 'goal_met'),
     stuck: probabilityOf(answers, 'stuck'),
     confidence: probabilityOf(answers, 'operation'),
@@ -842,7 +930,7 @@ check('校验失败后的重新观察也计一个单位(ADR-0009 决策点 6)', 
   const bad = {
     answers: {
       operation: { choice: 'CLICK', confidence: 0.9 },
-      click_target: { choice: 999, confidence: 0.9 },
+      click_target: { choice: '999', confidence: 0.9 },
       goal_met: { noul: 0.1 },
       stuck: { noul: 0.1 },
     },
@@ -887,7 +975,7 @@ const CLICK_THEN_DONE = [
   {
     answers: {
       operation: { choice: 'CLICK', confidence: 0.9 },
-      click_target: { choice: 1, confidence: 0.9 },
+      click_target: { choice: '1', confidence: 0.9 },
       goal_met: { noul: 0.1 },
       stuck: { noul: 0.1 },
     },
@@ -937,7 +1025,7 @@ check('越界目标被拒后重新观察,不执行;重试 2 次后 error', async
   const bad = {
     answers: {
       operation: { choice: 'CLICK', confidence: 0.9 },
-      click_target: { choice: 999, confidence: 0.9 },
+      click_target: { choice: '999', confidence: 0.9 },
       goal_met: { noul: 0.1 },
       stuck: { noul: 0.1 },
     },
@@ -993,7 +1081,7 @@ check('TYPE_TEXT 没有逐字候选时停下,status 为 text_unavailable', async
       {
         answers: {
           operation: { choice: 'TYPE_TEXT', confidence: 0.9 },
-          type_text_target: { choice: 4, confidence: 0.9 },
+          type_text_target: { choice: '4', confidence: 0.9 },
           goal_met: { noul: 0.1 },
           stuck: { noul: 0.1 },
         },
