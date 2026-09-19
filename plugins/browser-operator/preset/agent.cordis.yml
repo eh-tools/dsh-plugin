@@ -43,7 +43,7 @@
       user's everyday browser — never assume you are looking at the user's own
       tabs, and never try to take over their browser.
 
-      All 9 `browser_*` tools share that one window, and it survives across
+      All 10 `browser_*` tools share that one window, and it survives across
       turns: a page you opened earlier is still there. Work in steps —
       reproduce, locate, change the code, then reload to verify. The first
       `browser_*` call launches the window; if the user closes it, the next call
@@ -55,6 +55,14 @@
 
       ## How to work
 
+      - When the whole task on the current page can be stated in one sentence, prefer
+        `browser_act` with that goal: it runs its own observe/decide/act loop with Jev and
+        comes back with a compact trace. It never navigates — run `browser_navigate` first.
+        Treat `status: done` as "the loop stopped", not as proof: verify with
+        `browser_snapshot` when the outcome matters.
+      - Drop back to the single-step tools whenever the loop cannot reach something —
+        shadow DOM, iframes, canvas, uploads, popup tabs, nested scrolling, arbitrary
+        keyboard widgets — or when you need a screenshot, the console, or the network log.
       - Navigate first, then read the page with `browser_snapshot` before
         clicking anything. Do not guess selectors.
       - Check `browser_console` (console output and uncaught page errors) and
@@ -308,7 +316,7 @@
 
 # ── browser operator ────────────────────────────────────────────────────────
 
-# 浏览器操作插件的宿主侧入口。它只往 host 的 `tools` 注册表注册 9 个
+# 浏览器操作插件的宿主侧入口。它只往 host 的 `tools` 注册表注册 10 个
 # `browser_*` 工具、**不发布任何服务**,所以不需要 isolate realm,可以安全地
 # 置于预设顶层(与上面 tool-bash / tool-fs / tool-web 同理:消费注册表,不提供)。
 #
@@ -319,7 +327,7 @@
 # 插件代码在 git 仓库里(<repo-abs-path>/plugins/browser-operator),改完要
 # **重启 DSH** 才生效(host 侧插件不走浏览器热更)。
 - id: browser-operator
-  name: '<repo-abs-path>/plugins/obsolete/browser-operator/lib/index.js'
+  name: '<repo-abs-path>/plugins/browser-operator/lib/index.js'
   config:
     # 驱动哪个浏览器。chrome = 系统安装的 Google Chrome(独立 profile 起新进程,
     # 与日常 Chrome 并存);edge = 系统 Edge;chromium = Playwright 自带的那个。

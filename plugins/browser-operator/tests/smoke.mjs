@@ -1,12 +1,13 @@
 /**
  * browser-operator 自检 —— 离线可跑,不需要 DSH 进程。
  *
- * 运行: node plugins/obsolete/browser-operator/tests/smoke.mjs
+ * 运行: node plugins/browser-operator/tests/smoke.mjs
+ *
+ * **不在 `just check` 里** —— 它会真的拉起一个有头浏览器窗口(用临时 profile,跑完就关),
+ * 所以只能手动跑,你会在屏幕上看到它闪一下。
  *
  * 只测**外部行为**:产物目录怎么选、工具能不能真的驱动浏览器、断言页面、落盘截图、
  * DISPOSE 后有没有残留进程。不测内部实现。
- *
- * 会真的拉起一个有头浏览器窗口(用临时 profile,跑完就关),所以你会在屏幕上看到它闪一下。
  */
 
 import assert from 'node:assert/strict';

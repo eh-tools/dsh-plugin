@@ -1,9 +1,4 @@
-# browser-operator —— 常驻可见浏览器 + 9 个 `browser_*` 工具(纯 host 插件)
-
-> **已归档(2026-09 退役)**:不再维护、**不列入默认安装**,源码与 preset 留档在
-> `plugins/obsolete/browser-operator/` —— 本目录 `tests/` 下的自检**已从 `just check` 里摘掉**
-> (它会真的拉起一个有头浏览器窗口),要跑请手动执行下面的命令。
-> 本机那份 agent preset 已从 `~/.dsh/.agent-presets/` 拿掉,退役当天的两份 yml 快照见本目录 `preset/`。
+# browser-operator —— 常驻可见浏览器 + 10 个 `browser_*` 工具(纯 host 插件)
 
 > 给「浏览器操作」agent 预设用的宿主侧插件:一个**常驻、有头、跨轮次**的浏览器会话,
 > 独立 profile 长期复用登录态,用来复现 / 定位 / 验证 Web bug。
@@ -27,14 +22,14 @@
 
 ```sh
 # 1) 装依赖(只有一个:playwright-core;浏览器用系统已装的 Chrome)
-pnpm --dir <repo-abs-path>/plugins/obsolete/browser-operator install
+pnpm --dir <repo-abs-path>/plugins/browser-operator install
 ```
 
 ```yaml
 # 2) 把这一行加进目标 preset 的 agent.cordis.yml
 #    (本仓库给「浏览器操作」预设用的完整行见 cordis.yml)
 - id: browser-operator
-  name: <repo-abs-path>/plugins/obsolete/browser-operator/lib/index.js
+  name: <repo-abs-path>/plugins/browser-operator/lib/index.js
   config:
     browser: chrome
     headless: false
@@ -45,10 +40,11 @@ pnpm --dir <repo-abs-path>/plugins/obsolete/browser-operator install
 
 改完 `lib/index.js` 要**重启 DSH**(host 侧插件不走浏览器热更)。
 
-## 9 个工具
+## 10 个工具
 
 | 工具                 | 干什么                                                                 |
 | -------------------- | ---------------------------------------------------------------------- |
+| `browser_act`        | 给一个目标,Jev 决策回路在当前页面上连跑若干步,返回精简轨迹             |
 | `browser_navigate`   | 打开 URL(没写 scheme 自动补 `http://`),返回最终 URL / 标题 / HTTP 状态 |
 | `browser_snapshot`   | 读当前页面可见文本(默认整个 body 的 `innerText`)+ 标题 + URL           |
 | `browser_click`      | 点击元素(CSS,或 `text=登录` / `role=button[name="提交"]`)              |
@@ -59,7 +55,50 @@ pnpm --dir <repo-abs-path>/plugins/obsolete/browser-operator install
 | `browser_network`    | 翻**失败**请求:4xx/5xx 响应 + 连接失败/被中止                          |
 | `browser_artifacts`  | 报告产物目录**以及为什么是它**,并可列出已有产物                        |
 
-九个工具共享同一个页面,天然不可并发 —— 都没声明 `isConcurrencySafe`,即独占执行。
+十个工具共享同一个页面,天然不可并发 —— 都没声明 `isConcurrencySafe`,即独占执行。
+
+## `browser_act`(目标级工具)
+
+前 9 个都是单步工具;`browser_act` 是唯一的目标级工具 —— 你给一个目标,它内部用
+[TypeSafe 的 Jev](https://docs.typesafe.ai/introduction) 反复「观察 → 决策 → 执行」,
+最多 12 步(上限 40),只把精简轨迹交回来。
+
+**它不导航。** 先去哪个页面由你用 `browser_navigate` 决定。
+
+**它的边界就是上游的边界。** 回路走的是 jev-ultrafast 那套结构,所以 shadow DOM、iframe、
+canvas、文件上传、弹窗新 tab、嵌套滚动、任意键盘控件**都不在它的能力内** —— 遇到这些用对应的
+单步工具。
+
+**它不做文本生成。** `TYPE_TEXT` 的文本必须是 `goal` 里的**逐字片段**;没有可用片段时它会以
+`status: 'text_unavailable'` 停下,这时改用 `browser_fill`。
+
+**`status: 'done'` 不代表目标真的达成** —— 那只是回路停了。返回里带 `goalMet` 概率,要确认就
+自己 `browser_snapshot` 复核一次。
+
+**动画页面可能被误中止。** 陈旧性复检在**每一个**动作前都会跑,一旦对不上就终止整次运行 ——
+这是有意的安全取舍(宁可停,也不拿过期的元素索引去操作)。代价是**良性**的页面变化也会让整次
+`browser_act` 以 `status: 'error'` 收场而不是重试:走动的时钟、改变可见文本长度的滚动条、
+新冒出来的元素都算。页面本身在动时,改用单步工具。
+
+### 凭证
+
+`browser_act` 需要 `TYPESAFE_API_KEY`(TypeSafe 是按量付费的外部服务)。凭证**只**经 DSH 的
+凭证服务解析,那个服务自己就分层覆盖进程环境变量、provider store 与 `.env` 文件。两条配置路径:
+
+1. 在 `.env` 里写 `TYPESAFE_API_KEY=<你的 key>`
+2. 写进 `~/.dsh/.credentials.yaml`
+
+**没有 key 时只有 `browser_act` 报错,其余 9 个工具照常可用。**
+
+### 哪些测试进 `just check`
+
+| 测试                    | 进 `just check`?   | 需要什么                                   |
+| ----------------------- | ------------------ | ------------------------------------------ |
+| `tests/policy.test.mjs` | ✅ 进              | 什么都不要(离线、无浏览器、无 key、无网络) |
+| `tests/smoke.mjs`       | ❌ 不进,只能手动跑 | 本机装有 Chrome;会真的拉起一个有头窗口     |
+
+门禁保持「离线」是有意的(见 ADR-0009 决策点 4):回路逻辑全在纯策略层与可注入的回路里,
+所以离线单测覆盖得到;浏览器 I/O 与真实 Jev 往返只能手动验证。
 
 ## 产物目录(重点)
 
@@ -130,11 +169,11 @@ git 不可用时才退化到本地 `.gitignore` 解析。
 ## 自检
 
 ```sh
-node plugins/obsolete/browser-operator/tests/smoke.mjs
+node plugins/browser-operator/tests/smoke.mjs
 ```
 
 会真的拉起一个有头浏览器窗口(临时 profile,跑完即关),覆盖:产物目录 4 条分支、
-9 个工具全部注册、导航 / 读文本 / 求值 / console 捕获 / 失败请求捕获 / 截图落盘且
+10 个工具全部注册、导航 / 读文本 / 求值 / console 捕获 / 失败请求捕获 / 截图落盘且
 **不脏仓库状态**、以及 DISPOSE 后**无残留进程**。不需要 DSH 进程。
 
 ## 已知限制
@@ -145,3 +184,7 @@ node plugins/obsolete/browser-operator/tests/smoke.mjs
 - console / network 是环形缓冲 + 序号翻页,没有按请求 id 的精确索引。
 - 预设行绑定本机绝对路径 —— 仓库搬家后要跟着改。
 - 登录 / SSO / 验证码不做自动化,由人工在那个可见窗口里完成一次。
+- **`browser_act` 在动画页面上可能误中止**:陈旧性复检跑在**每一个**动作之前,对不上就
+  终止整次运行。所以良性的页面变化 —— 走动的时钟、改变可见文本长度的滚动条、新出现的
+  元素 —— 会让整次调用以 `status: 'error'` 收场,而不是重试。这是有意的安全取舍:宁可停,
+  也不拿一个过期的元素索引去操作。页面本身在动时用单步工具。

@@ -1,19 +1,26 @@
-# browser-operator 的 agent preset(留档快照)
+# browser-operator 的 agent preset(模板)
 
-退役当天从 `~/.dsh/.agent-presets/browser-operator/` 拷来的两份文件。**本目录不参与任何挂载** ——
-它只是"这个 preset 当时长什么样"的记录,因为那份 preset 只存在于本机,不拷进仓库就没了。
+这个目录是**模板**,不是自动挂载的配置 —— 它不参与任何挂载。挂载要把它拷到本机:
+
+```sh
+cp -r plugins/browser-operator/preset ~/.dsh/.agent-presets/browser-operator
+# 然后把 agent.cordis.yml 里的 <repo-abs-path> 换成仓库的绝对路径
+```
+
+拷过去之后**新建会话**即可生效。改插件源码要**重启 DSH**(host 侧插件不热更)。
 
 - `preset.yml`:preset 的名字与描述(选择器里显示的那两行)。
-- `agent.cordis.yml`:退役当天那份 **shipped `standard` preset 的副本**,只改了两处 ——
-  开头的 `persona`(人设换成「浏览器操作员」,并在人设里申明产物目录规则)与末尾的
-  `browser-operator` 插件行。其余行**不是本插件的东西**,是那天 `standard` 的样子,别当成仓库配置来读。
+- `agent.cordis.yml`:一份 **shipped `standard` preset 的副本**,只改了三处 —— 开头的 `persona`
+  (人设换成「浏览器操作员」,并在人设里申明产物目录规则与 `browser_act` 的用法)与末尾的
+  `browser-operator` 插件行。**其余行不是本插件的东西**,是那份 `standard` 的样子,别当成仓库配置来读。
 
-⚠ 本机那份把插件行写成**绝对路径**(预设的一条 `name` 只要是绝对路径,roster 就转成 `file:` URL
-直接 import,因此不必把插件装进 profile)。拷进仓库时已换成 `<repo-abs-path>` 占位符,以符合仓库的路径约定。
+⚠ 它是模板,不是完整组合:它与 shipped `standard` 会漂移(这是 ADR-0008 就记下的既有债)。
+上游 `standard` 更新后,正确做法是重新拷一份新的 `standard`、再把 persona 与插件行两处改上去。
 
-⚠ 快照内**其余的文字一律保持退役当天的原样** —— 包括那些还写着老位置 `plugins/browser-operator` 的注释。
-插件现在在 **`plugins/obsolete/browser-operator/`**(本目录的上一级)。
+⚠ 插件行的 `name` 写成绝对路径 —— 预设的一条 `name` 只要是绝对路径,roster 就转成 `file:` URL
+直接 import,因此**不需要**把插件装进 profile。代价是这份 preset 绑定了本机路径,仓库搬家后要跟着改。
+仓库里这份用 `<repo-abs-path>` 占位符,符合仓库的路径约定。
 
-⚠ 这个文件带 `!!js` 自定义标签(`disabled: !!js process.platform === 'win32'`),PyYAML 解析不了,
-所以 `.pre-commit-config.yaml` 里的 `check-yaml` 把它排除了 —— 与 `plugins/obsolete/tool-vision/cordis.yml`
-同款处理(那条是 markdown 内容,这条是快照)。
+⚠ 本文件带 `!!js` 自定义标签(`disabled: !!js process.platform === 'win32'`),PyYAML 解析不了,
+所以 `.pre-commit-config.yaml` 的 `check-yaml` 把它排除了;`.prettierignore` 也排除本目录
+(prettier 会重排 persona 的 `>-` 折叠块缩进,那会改变语义)。
