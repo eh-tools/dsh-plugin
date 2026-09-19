@@ -79,7 +79,13 @@ export function pageProbe(options) {
     return 'clickable';
   };
 
-  const elements = nodes.slice(0, options.limit).map((element, position) => ({
+  // 两个计数都取**截断之前**的:`all.length` 是 `limit` 切片**之前**的可见可交互元素数,
+  // `fullText.length` 是 4000 字符截断**之前**的整页文本长度。用截断后的数字会让超过上限
+  // 的大页面在重排、换序之后算出同一个 freshness —— 上限之后的变化就再也看不见了,而序号
+  // 正是靠它挡住「拿过期索引去点别的元素」。
+  const all = collect();
+  const fullText = (document.body ? document.body.innerText : '').replace(/\s+/g, ' ');
+  const elements = all.slice(0, options.limit).map((element, position) => ({
     index: position + 1,
     role: (element.getAttribute('role') || element.tagName.toLowerCase()).trim(),
     name: nameOf(element),
@@ -87,13 +93,13 @@ export function pageProbe(options) {
     disabled: element.disabled === true || element.getAttribute('aria-disabled') === 'true',
     kind: kindOf(element),
   }));
-  const text = (document.body ? document.body.innerText : '').replace(/\s+/g, ' ').slice(0, 4000);
+  const text = fullText.slice(0, 4000);
 
   return {
     url: location.href,
     title: document.title,
     // freshness 由元素数 / URL / 可见文本长度拼成:执行前对不上就说明快照过期。
-    freshness: `${elements.length}|${location.href}|${text.length}`,
+    freshness: `${all.length}|${location.href}|${fullText.length}`,
     text,
     elements,
   };

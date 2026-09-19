@@ -27,7 +27,18 @@ export async function resolveApiKey(credentials) {
     );
   }
   const resolved = await credentials.resolve(TYPESAFE_REF);
-  if (resolved === undefined || typeof resolved.value !== 'string' || resolved.value === '') {
+  // `undefined` 与 `null` 都要认:只挡 undefined 时,provider 返回 null 会让下一句
+  // 抛 `TypeError: Cannot read properties of null`,把「没配 key 请照这两条路径配」
+  // 这句可读的话换成一句读不懂的栈。
+  if (resolved === undefined || resolved === null) {
+    throw new Error(
+      `browser-operator: 没有配置 ${TYPESAFE_REF},browser_act 需要它才能调用 Jev。` +
+        `两条配置路径:① 在 .env 里写 ${TYPESAFE_REF}=<你的 key>;` +
+        '② 写进 DSH 的凭证存储(~/.dsh/.credentials.yaml)。' +
+        '另外 9 个 browser_* 工具不受影响,照常可用。',
+    );
+  }
+  if (typeof resolved.value !== 'string' || resolved.value === '') {
     throw new Error(
       `browser-operator: 没有配置 ${TYPESAFE_REF},browser_act 需要它才能调用 Jev。` +
         `两条配置路径:① 在 .env 里写 ${TYPESAFE_REF}=<你的 key>;` +
