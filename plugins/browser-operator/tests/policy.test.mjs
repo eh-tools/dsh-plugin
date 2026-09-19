@@ -702,6 +702,9 @@ check('创建客户端时显式关掉 SDK 默认重试并传显式超时', () =>
     });
     assert.equal(seen.apiKey, 'k-1');
     assert.equal(seen.model, 'jev-latest');
+    // 真正生效的是 `defaultModel`;`model` 会被构造器静默忽略。两条都断言,免得日后
+    // 有人把「看起来重复」的那个删掉 —— 删掉 defaultModel 就等于模型配置无声失效。
+    assert.equal(seen.defaultModel, 'jev-latest');
     assert.equal(seen.timeout, 5000);
     assert.deepEqual(seen.retry, { maxRetries: 0 });
     assert.equal(typeof decide, 'function');

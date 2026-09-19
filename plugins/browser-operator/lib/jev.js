@@ -55,6 +55,10 @@ export function createDecide({ apiKey, model, timeoutMs, clientFactory }) {
   const make = clientFactory ?? ((options) => new TypeSafeClient(options));
   const client = make({
     apiKey,
+    // ⚠ 构造器上的模型配置键是 `defaultModel`,**不是** `model` —— 传 `model` 会被
+    // **静默忽略**(实测:defaultModel 仍是 'jev-latest')。`model` 只在 per-call 的
+    // systemOne 请求上有效。这里两个都给:`defaultModel` 才是真正生效的那个。
+    defaultModel: model,
     model,
     timeout: timeoutMs,
     retry: { maxRetries: 0 },
