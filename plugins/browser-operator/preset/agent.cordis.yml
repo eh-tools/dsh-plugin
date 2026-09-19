@@ -343,3 +343,7 @@
     logCap: 500
     navigationTimeoutMs: 60000
     actionTimeoutMs: 15000
+    # browser_act 的载荷上限(state 与 questions 每一步都整份重发,直接决定 Jev 开销):
+    # 元素表条数上限,以及进 state 的正文上限(≠ 单步工具的 maxTextChars)。
+    maxElements: 200
+    jevMaxTextChars: 4000

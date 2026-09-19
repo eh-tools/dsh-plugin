@@ -29,6 +29,13 @@
 
 ### Changed
 
+- `browser-operator`:`browser_act` 的载荷上限变成配置项 —— 新增 `maxElements`(默认 `200`)与
+  `jevMaxTextChars`(默认 `4000`)。两者都只作用于 Jev 决策回路,且 **state 与 questions 每一步
+  都整份重发**,所以调它们就是直接买 token;它们与 `maxTextChars`(单步工具按需返回的正文量)
+  不能合并成同一个键
+- `browser-operator`:`browser_act` 各目标问的 `criteria` 不再重复写元素序号与值(`[3] ` / ` · 值`),
+  只留 `role "name"` —— 序号本来就是 criteria 的键,完整描述在 state 的元素表里;上限页面实测省
+  约 1.5 KB(全载荷 4.8%)
 - `browser-operator`:`browser_act` 的「动作执行前校验」(页面过期 / 目标已不在)失败不再直接把整次
   调用收成 `status: 'error'`,改为**重新观察、重试最多 2 次** —— 与动作校验失败共用同一额度,对齐
   `docs/adr/0009` 决策点 6;真正的执行失败(点击超时等)不带该标记,仍然立即收场不重试

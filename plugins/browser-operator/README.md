@@ -189,6 +189,8 @@ git 不可用时才退化到本地 `.gitignore` 解析。
 | `actionTimeoutMs`     | `15000`                              | 动作(点击 / 填充 / 元素截图)超时                                                 |
 | `launchTimeoutMs`     | `60000`                              | 拉起浏览器超时                                                                   |
 | `maxTextChars`        | `20000`                              | 文本 / 求值结果的截断上限                                                        |
+| `maxElements`         | `200`                                | `browser_act` 元素表条数上限;**每步重发**,调小省 token、调大够得着更多元素       |
+| `jevMaxTextChars`     | `4000`                               | 进 `browser_act` state 的正文上限;与 `maxTextChars` 是两套经济学(见下)           |
 | `maxSteps`            | `12`                                 | `browser_act` 回路的步数上限(硬上限 `40`,超了截断)                               |
 | `budgetMs`            | `100000`                             | `browser_act` 回路的时间预算;**调用点会夹到工具声明超时前 1 s**,配置本身不设上界 |
 | `jevTimeoutMs`        | `5000`                               | 单次 Jev 决策请求的超时                                                          |
@@ -196,6 +198,15 @@ git 不可用时才退化到本地 `.gitignore` 解析。
 | `locale`              | `zh-CN`                              | 浏览器 locale                                                                    |
 
 配错的键会在**加载时**直接报错(不静默),`browser` 只接受那三个值。
+
+**两个 `browser_act` 专属上限是每步都付的钱。** `maxElements` 与 `jevMaxTextChars` 决定
+state 与 questions 的大小,而这两份**每一步都整份重发** —— 12 步就是 12 次。上限页面实测
+(200 元素 / 4000 字正文 / 12 步台账):单次请求体约 32 KB ≈ 8.9k token,其中元素表被 state
+与各目标问的 `criteria` **各发一遍**,合计占 77%。所以调这两个值就是直接买 token;真实运行
+后用返回里的 `usage` 核对,别按估算调。
+
+它们与 `maxTextChars` 不能合并:那个是单步工具**按需**返回给主模型的正文量(只付一次),
+这两个是回路**每步**都要付的。
 
 ## 为什么这么选(实测结论)
 

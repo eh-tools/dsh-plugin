@@ -16,8 +16,17 @@ export const ELEMENT_SELECTOR =
   'a[href],button,input,select,textarea,[role="button"],[role="link"],[role="combobox"],' +
   '[role="textbox"],[role="checkbox"],[role="tab"],[contenteditable="true"]';
 
-/** 元素数量上限,挡住超长页面。 */
+/** 元素数量上限,挡住超长页面。默认值,可被插件配置的 `maxElements` 覆盖。 */
 export const MAX_ELEMENTS = 200;
+
+/**
+ * 进 Jev state 的页面正文上限(字符)。默认值,可被插件配置的 `jevMaxTextChars` 覆盖。
+ *
+ * ⚠ 它与单步工具的 `maxTextChars`(默认 20000)是**两套经济学**,不要合并:
+ * 这个管的是**决策回路每一步**都要重发一遍的正文(每步都付,12 步就是 12 次),
+ * 那个管的是单步工具**按需**返回给主模型的正文量(只付一次)。
+ */
+export const JEV_STATE_TEXT_CHARS = 4000;
 
 // ⚠ 截断上限**不能**放在模块作用域:pageProbe 会被 Playwright 序列化进页面,
 // 页面里没有这些名字。它们一律以字面量写进函数体(见下)。
@@ -27,7 +36,7 @@ export const MAX_ELEMENTS = 200;
  * - `options.index` 是数字 → 返回该序号的 DOM 元素,越界返回 `null`(解析模式)
  * - 否则 → 返回完整快照(观察模式)
  *
- * @param {{ selector: string, limit?: number, index?: number }} options
+ * @param {{ selector: string, limit?: number, maxTextChars?: number, index?: number }} options
  */
 /* eslint-disable no-undef -- 函数体整段在页面上下文执行,`document` / `window` /
    `location` 只有进了页面才存在,静态 no-undef 在这一段没有意义。豁免只包住本函数:
@@ -93,7 +102,9 @@ export function pageProbe(options) {
     disabled: element.disabled === true || element.getAttribute('aria-disabled') === 'true',
     kind: kindOf(element),
   }));
-  const text = fullText.slice(0, 4000);
+  // 上限以**字面量**写在函数体里(见上面的 ⚠):这个函数会被序列化进页面执行。
+  const textChars = typeof options.maxTextChars === 'number' ? options.maxTextChars : 4000;
+  const text = fullText.slice(0, textChars);
 
   return {
     url: location.href,
@@ -108,10 +119,19 @@ export function pageProbe(options) {
 
 /**
  * 读一次页面快照。
+ *
+ * 两个上限都由调用方给:决策回路的每一步与「执行前重读」必须用**同一套**上限,
+ * 否则两边数出来的元素序号会错位 —— 那正是 freshness 要拦的事,不该由我们自己制造。
+ *
  * @param {{ evaluate: (fn: Function, arg: object) => Promise<unknown> }} page
  */
-export async function readSnapshot(page, selector = ELEMENT_SELECTOR, limit = MAX_ELEMENTS) {
-  const snapshot = await page.evaluate(pageProbe, { selector, limit });
+export async function readSnapshot(
+  page,
+  selector = ELEMENT_SELECTOR,
+  limit = MAX_ELEMENTS,
+  maxTextChars = JEV_STATE_TEXT_CHARS,
+) {
+  const snapshot = await page.evaluate(pageProbe, { selector, limit, maxTextChars });
   if (snapshot === null || typeof snapshot !== 'object' || !Array.isArray(snapshot.elements)) {
     throw new Error('browser-operator: 页面快照读取失败(没拿到 elements 数组)');
   }

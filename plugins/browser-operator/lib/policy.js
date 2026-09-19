@@ -71,6 +71,20 @@ function renderLine(element) {
   return value === '' ? label : `${label} · ${value}`;
 }
 
+/**
+ * criteria 里一个候选的描述:`role "name"`。
+ *
+ * **不带 `[N] ` 前缀** —— criteria 的键就是那个序号,再写一遍是纯重复。
+ * **不带 ` · value`** —— 值在 state 的元素表里,模型照样看得到;criteria 只负责说清
+ * 「哪些序号是合法的」。上限页面(200 元素)实测这两处省约 1.5 KB(全载荷 4.8%)。
+ *
+ * 元素表仍然是**唯一**的完整描述(`renderLine`),两处不能各写一份口径:
+ * 序号是「同一选择器 + 同一可见性判定数出来的第 n 个」,渲染分叉迟早会错位。
+ */
+function renderCandidate(element) {
+  return `${element.role} "${element.name}"`;
+}
+
 /** 元素表的模型可见文本。 */
 export function renderElementTable(table) {
   return table.lines.join('\n');
@@ -131,7 +145,7 @@ export function buildQuestions({ goal, table, typeTextCandidates: candidates = [
   const criteriaFor = (indexes) => {
     const criteria = {};
     for (const index of indexes) {
-      criteria[String(index)] = renderLine(table.byIndex.get(index));
+      criteria[String(index)] = renderCandidate(table.byIndex.get(index));
     }
     return criteria;
   };

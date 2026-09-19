@@ -49,7 +49,13 @@ import {
 import { createDecide, resolveApiKey } from './jev.js';
 import { runLoop } from './loop.js';
 import { ACTION_SPACE, STATUS } from './policy.js';
-import { elementHandle, readSnapshot } from './snapshot.js';
+import {
+  ELEMENT_SELECTOR,
+  JEV_STATE_TEXT_CHARS,
+  MAX_ELEMENTS,
+  elementHandle,
+  readSnapshot,
+} from './snapshot.js';
 
 /** 插件名:loader 行标识与日志标签。 */
 export const name = 'browser-operator';
@@ -140,6 +146,10 @@ function readConfig(config) {
     launchTimeoutMs: positiveInt(config.launchTimeoutMs, 60000, 'launchTimeoutMs'),
     logCap: positiveInt(config.logCap, 500, 'logCap'),
     maxTextChars: positiveInt(config.maxTextChars, 20000, 'maxTextChars'),
+    // 下面两个只作用于 `browser_act` 的 Jev 决策回路,与上面的 `maxTextChars`
+    // (单步工具按需返回的正文量)是两套经济学:回路每一步都要重发一遍 state。
+    maxElements: positiveInt(config.maxElements, MAX_ELEMENTS, 'maxElements'),
+    jevMaxTextChars: positiveInt(config.jevMaxTextChars, JEV_STATE_TEXT_CHARS, 'jevMaxTextChars'),
     maxSteps: maxStepsConfig(config.maxSteps),
     budgetMs: positiveInt(config.budgetMs, 100000, 'budgetMs'),
     jevTimeoutMs: positiveInt(config.jevTimeoutMs, 5000, 'jevTimeoutMs'),
@@ -1086,7 +1096,12 @@ export function apply(ctx, config = {}) {
         now: () => Date.now(),
         observe: async () => {
           const page = existingPage();
-          return await readSnapshot(page);
+          return await readSnapshot(
+            page,
+            ELEMENT_SELECTOR,
+            settings.maxElements,
+            settings.jevMaxTextChars,
+          );
         },
         decide: async ({ state, questions }) => await decide({ state, questions }),
         execute: async ({ operation, targetIndex, text, snapshot }) =>
@@ -1294,7 +1309,13 @@ export async function executeAction({ operation, targetIndex, text, page, settin
   }
 
   // 重读快照:序号只在「同一份快照」内有效,过期就抛,让回路重来一轮。
-  const current = await readSnapshot(page);
+  // 上限必须与决策那份**同源**:两处不一样,序号就会错位(见 readSnapshot 的说明)。
+  const current = await readSnapshot(
+    page,
+    ELEMENT_SELECTOR,
+    settings?.maxElements,
+    settings?.jevMaxTextChars,
+  );
   if (typeof snapshot?.freshness === 'string' && current.freshness !== snapshot.freshness) {
     const error = new Error(
       `browser-operator: 页面在执行前变了(${snapshot.freshness} → ${current.freshness})`,

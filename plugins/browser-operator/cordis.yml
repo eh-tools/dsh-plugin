@@ -34,3 +34,10 @@
     logCap: 500
     navigationTimeoutMs: 60000
     actionTimeoutMs: 15000
+    # ── browser_act 的载荷上限:state 与 questions **每一步都整份重发**,
+    #    所以这两个值直接决定 Jev 的 token 开销(12 步就是 12 次)。
+    # 元素表条数上限。上限页面实测:200 → 120 省约 10 KB(全载荷 32%)。
+    # 调小省 token,但排在后面的元素 browser_act 就够不着了(单步工具不受影响)。
+    maxElements: 200
+    # 进 Jev state 的正文上限。它**不是**单步工具那个 maxTextChars(20000,按需付一次)。
+    jevMaxTextChars: 4000

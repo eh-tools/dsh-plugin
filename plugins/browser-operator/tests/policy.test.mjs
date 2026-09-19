@@ -25,6 +25,7 @@ import {
 import { evaluateStop, runLoop } from '../lib/loop.js';
 import {
     ELEMENT_SELECTOR,
+    JEV_STATE_TEXT_CHARS,
     MAX_ELEMENTS,
     elementHandle,
     pageProbe,
@@ -96,6 +97,24 @@ checkAsync('readSnapshot 把选择器作为参数传进页面,并透传结果', 
     assert.equal(seen.selector, ELEMENT_SELECTOR);
     assert.equal(seen.limit, MAX_ELEMENTS);
     assert.equal(seen.index, undefined, '读快照时不该带 index');
+});
+
+checkAsync('readSnapshot 的两个载荷上限由调用方给,缺省回落到默认值', async () => {
+    // 元素条数与进 state 的正文长度都是**每步重发**的成本,所以它们得可调
+    // (插件配置 maxElements / jevMaxTextChars);缺省时回落,不能「漏传就无限」。
+    let seen;
+    const page = {
+        evaluate: async (fn, arg) => {
+            seen = arg;
+            return { ...SNAPSHOT };
+        },
+    };
+    await readSnapshot(page, ELEMENT_SELECTOR, 7, 123);
+    assert.equal(seen.limit, 7);
+    assert.equal(seen.maxTextChars, 123);
+    await readSnapshot(page);
+    assert.equal(seen.limit, MAX_ELEMENTS);
+    assert.equal(seen.maxTextChars, JEV_STATE_TEXT_CHARS);
 });
 
 checkAsync('page.evaluate 返回非对象时抛错', async () => {
@@ -399,9 +418,21 @@ check('operation.criteria 的每个值都是非空字符串(加了第 9 个动�
     }
 });
 
-check('criteria 的值就是元素表里那一行', () => {
-    const questions = buildQuestions({ goal: 'g', table: buildElementTable(SNAPSHOT) });
-    assert.equal(questions.click_target.criteria['1'], '[1] button "Round trip"');
+check('criteria 的值只带 role+name:序号是键、完整描述在元素表里,都不重复', () => {
+    // 元素表(state)才是完整描述;criteria 只负责说清「哪些序号合法」。
+    // 上限页面(200 元素)实测:去掉 `[N] ` 前缀与 ` · value` 省约 1.5 KB(全载荷 4.8%)。
+    const table = buildElementTable(SNAPSHOT);
+    const questions = buildQuestions({ goal: 'g', table });
+    assert.equal(questions.click_target.criteria['1'], 'button "Round trip"');
+    assert.equal(
+        table.lines[0],
+        '[1] button "Round trip"',
+        '元素表仍是完整描述(含序号;该元素无值)',
+    );
+    assert.ok(
+        !Object.values(questions.click_target.criteria).some((line) => line.startsWith('[')),
+        'criteria 的值不该再写一遍序号 —— 键就是它',
+    );
 });
 
 /**
@@ -1524,7 +1555,7 @@ check('browser_act 的参数只有 goal 与 maxSteps', () => {
     assert.equal(parameters.additionalProperties, false);
 });
 
-check('配置里的 maxSteps / budgetMs 非有限值在装载期就被拒(R1 的配置那一半)', () => {
+check('配置里的 maxSteps / budgetMs / 两个载荷上限 非有限值在装载期就被拒(R1 的配置那一半)', () => {
     // 模型给的 maxSteps 由 argMaxSteps 挡;这里是**配置**那一半。两者都挡不住的话,
     // 非有限界会让 runLoop 永不返回,而且会饿死 Node 的 timer 阶段、从内部无法中断。
     // 注意:真正挡住非有限值的是 `positiveInt` / `maxStepsConfig`,**不是**调用点那句
@@ -1539,8 +1570,12 @@ check('配置里的 maxSteps / budgetMs 非有限值在装载期就被拒(R1 的
     ]) {
         assert.throws(() => apply(makeCtx(), { maxSteps: bad }), /browser-operator:/);
         assert.throws(() => apply(makeCtx(), { budgetMs: bad }), /browser-operator:/);
+        assert.throws(() => apply(makeCtx(), { maxElements: bad }), /browser-operator:/);
+        assert.throws(() => apply(makeCtx(), { jevMaxTextChars: bad }), /browser-operator:/);
     }
     assert.doesNotThrow(() => apply(makeCtx(), { budgetMs: 100000, maxSteps: 12 }));
+    // 两个回路载荷上限都有默认值:不配能跑,配小了也照样是正数。
+    assert.doesNotThrow(() => apply(makeCtx(), { maxElements: 40, jevMaxTextChars: 800 }));
 });
 
 checkAsync('没打开页面时 browser_act 指向 browser_navigate(而不是先抱怨缺 key)', async () => {
