@@ -29,20 +29,16 @@ just --list               # 查看全部任务
 
 ## 工作流
 
-仓库默认分支为 `main` 且受保护,禁止直接向 `main` 提交(有钩子拦截),请走
-worktree / 分支 + PR:
+仓库默认分支为 `main` 且受保护,禁止直接向 `main` 提交(有钩子拦截),请走分支 + PR:
 
 ```sh
-# 推荐:worktree 隔离开发(仓库已内置 just 任务)
-just wt <功能名>          # 建 worktree + 装依赖
-cd .worktrees/<功能名>
+git switch -c feat/xxx    # 在主工作区开分支
 # ...开发...
-just wt-rm <功能名>       # 合并后清理 worktree 与分支
-
-# 或普通分支
-git checkout -b feat/xxx
+git push -u origin feat/xxx
 ```
 
+- 本仓库**走分支模式,不用 worktree**:改动都在主工作区的分支上完成,不另建检出;
+  代价是主工作区同时只能进行一个任务。
 - 分支命名建议:`feat/xxx`、`fix/xxx`、`docs/xxx`、`refactor/xxx`。
 - 合并用 PR(rebase 到最新 `main` 后提),合并后删分支。
 
