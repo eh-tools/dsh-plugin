@@ -15,7 +15,9 @@ import {
     buildElementTable,
     buildQuestions,
     buildState,
+    parseDecision,
     renderElementTable,
+    validateDecision,
 } from '../lib/policy.js';
 
 let passed = 0;
@@ -204,6 +206,82 @@ check('goal_met 与 stuck 是带实质文案的概率问题', () => {
     const questions = buildQuestions({ goal: 'g', table: buildElementTable(SNAPSHOT) });
     assert.ok(questions.goal_met.instructions.length > 0);
     assert.ok(questions.stuck.instructions.length > 0);
+});
+
+/**
+ * 一个形状正确的 Jev 响应 fixture。
+ *
+ * 注意 target 的 `choice` 是**字符串标签**(SDK 的 `ChoiceResponse.choice` 是
+ * `keyof T & string`),不是数字 —— 标签就是 criteria 的键,也就是元素序号。
+ */
+const RESPONSE = {
+    answers: {
+        operation: { choice: 'CLICK', confidence: 0.91 },
+        click_target: { choice: '1', confidence: 0.88 },
+        type_text_target: { choice: '2', confidence: 0.4 },
+        select_target: { choice: '3', confidence: 0.3 },
+        goal_met: { noul: 0.02 },
+        stuck: { noul: 0.05 },
+    },
+};
+
+check('解析出 operation 与各自的 target 概率', () => {
+    const decision = parseDecision(RESPONSE);
+    assert.equal(decision.operation, 'CLICK');
+    assert.equal(decision.clickTarget, 1);
+    assert.equal(decision.goalMet, 0.02);
+    assert.equal(decision.stuck, 0.05);
+    assert.equal(decision.confidence, 0.91);
+});
+
+check('未知 operation 直接抛错(不接受模型自创的动作)', () => {
+    const bad = {
+        answers: { ...RESPONSE.answers, operation: { choice: 'NAVIGATE', confidence: 1 } },
+    };
+    assert.throws(() => parseDecision(bad), /browser-operator:.*NAVIGATE/);
+});
+
+check('响应缺 answers 时抛错', () => {
+    assert.throws(() => parseDecision({}), /browser-operator:/);
+});
+
+check('CLICK 的目标落在本次提供的白名单里 → 通过', () => {
+    const table = buildElementTable(SNAPSHOT);
+    assert.deepEqual(validateDecision(parseDecision(RESPONSE), table), {
+        ok: true,
+        targetIndex: 1,
+    });
+});
+
+check('CLICK 的目标不在白名单(越界)→ 拒绝', () => {
+    const table = buildElementTable(SNAPSHOT);
+    const decision = { ...parseDecision(RESPONSE), clickTarget: 999 };
+    const verdict = validateDecision(decision, table);
+    assert.equal(verdict.ok, false);
+    assert.match(verdict.reason, /999/);
+});
+
+check('CLICK 落在停用元素上 → 拒绝', () => {
+    const table = buildElementTable(SNAPSHOT);
+    const decision = { ...parseDecision(RESPONSE), clickTarget: 5 };
+    const verdict = validateDecision(decision, table);
+    assert.equal(verdict.ok, false);
+    assert.match(verdict.reason, /不可用|停用/);
+});
+
+check('CLICK 落在不可点的 kind 上 → 拒绝', () => {
+    const table = buildElementTable(SNAPSHOT);
+    const decision = { ...parseDecision(RESPONSE), clickTarget: 4 }; // textbox
+    const verdict = validateDecision(decision, table);
+    assert.equal(verdict.ok, false);
+});
+
+check('DONE / BLOCKED 不需要目标', () => {
+    const table = buildElementTable(SNAPSHOT);
+    for (const operation of ['DONE', 'BLOCKED', 'SCROLL_UP', 'WAIT']) {
+        const decision = { ...parseDecision(RESPONSE), operation };
+        assert.deepEqual(validateDecision(decision, table), { ok: true, targetIndex: null });
+    }
 });
 
 if (failures.length > 0) {

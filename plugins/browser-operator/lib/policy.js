@@ -169,3 +169,91 @@ export function buildQuestions({ goal, table }) {
     },
   };
 }
+
+/** 需要目标的三个操作与它们各自读取的字段名。 */
+const TARGET_FOR_OPERATION = {
+  CLICK: 'clickTarget',
+  TYPE_TEXT: 'typeTextTarget',
+  SELECT: 'selectTarget',
+};
+
+/** 从 answers 里安全取一个 choice 值;缺了返回 undefined。 */
+function choiceOf(answers, key) {
+  const value = answers?.[key]?.choice;
+  return value === undefined ? undefined : value;
+}
+
+/**
+ * 从 answers 里安全取一个概率。`noul` 是概率原语的字段名;`choice` 类回答把
+ * 概率放在 `confidence` 上,两处都要认。都缺时返回 0 —— 缺概率不该把回路憋死。
+ */
+function probabilityOf(answers, key) {
+  const answer = answers?.[key];
+  const value = typeof answer?.noul === 'number' ? answer.noul : answer?.confidence;
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+/**
+ * 元素目标的回答是 criteria 的**标签**(字符串),而标签就是元素序号的十进制写法。
+ * 不是纯数字的标签一律当作「没给目标」返回 undefined —— 由 validateDecision 拒绝。
+ */
+function indexOfLabel(label) {
+  return typeof label === 'string' && /^\d+$/.test(label) ? Number(label) : undefined;
+}
+
+/**
+ * 解析一次 Jev 响应。形状不对就**抛** —— 宁可停下,也不要拿半个决策去点页面。
+ * @param {object} response `systemOne` 的返回值
+ */
+export function parseDecision(response) {
+  const answers = response?.answers;
+  if (answers === null || typeof answers !== 'object') {
+    throw new Error('browser-operator: Jev 响应里没有 answers');
+  }
+  const operation = choiceOf(answers, 'operation');
+  if (!ACTION_SPACE.includes(operation)) {
+    throw new Error(`browser-operator: Jev 给出了动作空间外的 operation: ${String(operation)}`);
+  }
+  return {
+    operation,
+    clickTarget: indexOfLabel(choiceOf(answers, 'click_target')),
+    typeTextTarget: indexOfLabel(choiceOf(answers, 'type_text_target')),
+    selectTarget: indexOfLabel(choiceOf(answers, 'select_target')),
+    goalMet: probabilityOf(answers, 'goal_met'),
+    stuck: probabilityOf(answers, 'stuck'),
+    confidence: probabilityOf(answers, 'operation'),
+  };
+}
+
+/**
+ * 执行前校验:操作合法、目标在本次提供的白名单里、且当前真的可用。
+ * 这是「模型输出永远不直接变成选择器 / 坐标 / JS」的那道闸。
+ *
+ * @returns `{ ok: true, targetIndex: number|null }` 或 `{ ok: false, reason: string }`
+ */
+export function validateDecision(decision, table) {
+  const field = TARGET_FOR_OPERATION[decision.operation];
+  if (field === undefined) return { ok: true, targetIndex: null };
+
+  const targetIndex = decision[field];
+  if (!Number.isInteger(targetIndex)) {
+    return {
+      ok: false,
+      reason: `${decision.operation} 需要一个整数目标,拿到 ${String(targetIndex)}`,
+    };
+  }
+
+  const allowed = table.eligible[decision.operation];
+  if (!allowed.includes(targetIndex)) {
+    const element = table.byIndex.get(targetIndex);
+    if (element === undefined) {
+      return { ok: false, reason: `目标 ${targetIndex} 不在本次观察到的元素里` };
+    }
+    return {
+      ok: false,
+      reason: `目标 ${targetIndex} 不可用(停用或不是 ${decision.operation} 支持的类型)`,
+    };
+  }
+
+  return { ok: true, targetIndex };
+}
