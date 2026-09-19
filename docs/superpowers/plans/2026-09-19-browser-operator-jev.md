@@ -18,6 +18,7 @@
 - **凭证规则(AGENTS.md)**:凭证只进 `~/.dsh/.credentials.yaml` 或 `.env`;任何 key/token **绝不**写进代码、文档或 git。本插件**不接受** `apiKey` 配置项。
 - **文档路径约定(AGENTS.md)**:文档与配置里**绝不写本机绝对路径**,一律 `<repo-abs-path>`。
 - **门禁口径(ADR-0009 决策点 4)**:`just check` = lint + test + audit,**必须保持离线**:不需要浏览器、不需要网络、不需要 API key。`tests/smoke.mjs` **不在**门禁里,只能手动跑。
+- **页面侧函数不许引用模块作用域标识符**:`lib/snapshot.js` 的 `pageProbe` 会被 Playwright **只按函数源码**序列化进页面执行,页面里没有模块作用域的名字 —— 引用常量(哪怕只是 `const MAX_NAME_CHARS = 120`)会让读模式对**任何非空页面**抛 `ReferenceError`。需要参数就从 `options` 传,需要上限就写字面量。T6 的第一轮实现正是栽在这里;`tests/policy.test.mjs` 现在用「重新求值 `pageProbe.toString()` 再真调一次读模式」的用例把这条钉住。
 - **门禁不 glob**:新测试必须显式加进 **三处** —— `justfile` 的 `test` recipe、根 `package.json` 的 `scripts.test`、根 `package.json` 的 `scripts.check`。
 - **新用例插在尾部 runner 之前**(T5 起):`tests/policy.test.mjs` 的末尾有一段统一 `await` 异步用例、再打印摘要并可能 `exit(1)` 的 runner。**在它之后注册的用例永远不会运行、零痕迹、exit 0** —— 正是「门禁无声变瞎」。追加前先看一眼那段的起点,把用例插在它**前面**;runner 之后会被 guard 直接抛错(而不是静默跳过)。
 - **工具定义四件套**:`tests/smoke.mjs:225-231` 断言每个注册的工具都有数值 `timeoutMs`、`output.schema`、`output.render`(函数)、`presentCall`(函数)。新工具必须齐全。
@@ -1350,13 +1351,39 @@ check('元素在执行前消失时抛错', async () => {
   await assert.rejects(() => elementHandle(page, 3), /元素 3/);
 });
 
-check('pageProbe 是不依赖闭包的普通函数(可被序列化进页面)', () => {
-  assert.equal(typeof pageProbe, 'function');
-  const source = pageProbe.toString();
-  assert.ok(!source.includes('require('), '不该引用 Node 模块');
-  assert.ok(!source.includes('import '), '不该有 import');
+check('pageProbe 真的能被序列化进页面并跑通读模式', () => {
+  // 只查源码里有没有 `require(` / `import` 是**空转的**:它检测不出函数体引用了
+  // 模块作用域的标识符,而那正是 Playwright 序列化时唯一会炸的东西。
+  // 这里复刻 Playwright 的做法:只拿函数源码,在一个**只有页面全局、没有模块作用域**
+  // 的环境里重新求值,再拿假 DOM 真调一次读模式。
+  const factory = new Function(
+    'document',
+    'window',
+    'location',
+    `return (${pageProbe.toString()});`,
+  );
+  const fakeDocument = {
+    querySelectorAll: () => [
+      {
+        tagName: 'BUTTON',
+        innerText: 'Round trip',
+        value: '',
+        disabled: false,
+        isContentEditable: false,
+        getAttribute: () => null,
+        getBoundingClientRect: () => ({ width: 10, height: 10 }),
+      },
+    ],
+  };
+  const fakeWindow = { getComputedStyle: () => ({ visibility: 'visible', display: 'block' }) };
+  const fn = factory(fakeDocument, fakeWindow, { href: 'https://example.test/' });
+  const snapshot = fn({ selector: ELEMENT_SELECTOR, limit: MAX_ELEMENTS });
+  assert.equal(snapshot.elements.length, 1);
+  assert.equal(snapshot.elements[0].name, 'Round trip');
 });
 ```
+
+> ⚠ **`pageProbe` 的函数体里不许出现任何模块作用域标识符,连数字常量也不行。** Playwright 只把函数源码序列化进页面,`120` 这类名字在页面里**不存在**,读模式会对**任何非空页面**抛 `ReferenceError`。字符串截断上限就写**字面量**(120 / 200 / 4000),或者通过 `options` 传进去 —— 上面这条用例就是用来钉死这一点的。
 
 > **为什么读快照与解析元素共用一个函数**:序号是「按同一个选择器 + 同一个可见性判定数出来的第 n 个」。两处各写一份,迟早会在某次改动后错位 —— 那时点到的是**别的元素**。共用一个函数,错位在结构上不可能发生。
 
@@ -1391,9 +1418,8 @@ export const ELEMENT_SELECTOR =
 /** 元素数量上限,挡住超长页面。 */
 export const MAX_ELEMENTS = 200;
 
-const MAX_NAME_CHARS = 120;
-const MAX_VALUE_CHARS = 200;
-const MAX_TEXT_CHARS = 4000;
+// ⚠ 截断上限**不能**放在模块作用域:pageProbe 会被 Playwright 序列化进页面,
+// 页面里没有这些名字。它们一律以字面量写进函数体(见下)。
 
 /**
  * 页面侧探测函数。两种模式:
@@ -1434,7 +1460,7 @@ export function pageProbe(options) {
     )
       .trim()
       .replace(/\s+/g, ' ')
-      .slice(0, MAX_NAME_CHARS);
+      .slice(0, 120);
   const kindOf = (element) => {
     const tag = element.tagName.toLowerCase();
     const role = (element.getAttribute('role') || '').toLowerCase();
@@ -1453,13 +1479,11 @@ export function pageProbe(options) {
     index: position + 1,
     role: (element.getAttribute('role') || element.tagName.toLowerCase()).trim(),
     name: nameOf(element),
-    value: typeof element.value === 'string' ? element.value.slice(0, MAX_VALUE_CHARS) : '',
+    value: typeof element.value === 'string' ? element.value.slice(0, 200) : '',
     disabled: element.disabled === true || element.getAttribute('aria-disabled') === 'true',
     kind: kindOf(element),
   }));
-  const text = (document.body ? document.body.innerText : '')
-    .replace(/\s+/g, ' ')
-    .slice(0, MAX_TEXT_CHARS);
+  const text = (document.body ? document.body.innerText : '').replace(/\s+/g, ' ').slice(0, 4000);
 
   return {
     url: location.href,
