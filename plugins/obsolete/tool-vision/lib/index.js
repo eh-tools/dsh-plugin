@@ -140,7 +140,11 @@ export function apply(ctx, config = {}) {
     const command = serverCommand || defaultServerCommand(baseUrl);
     const proc = spawn(command, {
       shell: true,
-      detached: true,
+      // Detach on POSIX only: there `process.kill(-pid)` needs the child to lead
+      // its own process group. On Windows `detached: true` makes the child
+      // allocate its own console window, which `windowsHide` cannot suppress —
+      // teardown there uses `taskkill /T` (see stopServer) and needs no detach.
+      detached: process.platform !== 'win32',
       windowsHide: true, // no console window flashing on Windows
       stdio: ['ignore', 'ignore', 'pipe'],
     });

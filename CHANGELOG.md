@@ -37,6 +37,13 @@
   整节搬进各自归档目录(`plugins/obsolete/<插件>/CONTEXT.md`),`docs/adr/0002`–`0006` 标注「插件已归档,
   仅作历史记录」
 
+### Fixed
+
+- `tool-vision`:autoStart 拉起服务**不再用 `detached: true`**(Windows 侧改为仅 POSIX 启用)——
+  Windows 上 `detached` 会让子进程获得自己的控制台窗口,`windowsHide` 挡不住
+  (`CREATE_NO_WINDOW` 与 `CREATE_NEW_CONSOLE` 并存时前者被忽略),`just test` / `just check` /
+  pre-push 冒烟每次闪 2~3 个黑窗;Windows 整树清理本就走 `taskkill /T /F`,不受影响
+
 ## [0.4.0] - 2026-09-17
 
 ### Changed
