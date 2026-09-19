@@ -178,8 +178,10 @@ just check
 - `model` 配置留空时自动 `GET /v1/models` 取第一个 id,兼容 llama-server 任意 `--alias`。
 - 超时与取消:调用方 `exec.signal` 与 `timeoutMs` 合并为单个 AbortSignal(手写合并,兼容 Node 20,不用 `AbortSignal.any`),请求结束即清理定时器。
 - 配置校验失败在 `apply` 时立即抛错(配置错误要响亮失败,不静默)。
-- **on-demand 进程管理**:`spawn(command, { shell: true, detached: true })`,以进程组
-  `SIGTERM`(5s 后 `SIGKILL` 兜底)整树清理,不会残留 shell 或 llama-server;
+- **on-demand 进程管理**:`spawn(command, { shell: true, detached: process.platform !== 'win32' })`
+  —— Windows 侧**刻意不 detached**(否则子进程自开一个黑控制台窗口,`windowsHide` 挡不住),
+  整树清理走 `taskkill /T /F`;POSIX 侧用 detached 进程组 `SIGTERM`(5s 后 `SIGKILL` 兜底);
+  不会残留 shell 或 llama-server;
   请求计数保证并发调用共享一个子进程、最后一个请求结束后才退出;`ctx.on('dispose')`
   兜底清理,插件卸载不泄漏进程。
 
