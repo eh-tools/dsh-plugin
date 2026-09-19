@@ -1551,7 +1551,7 @@ git commit -m "feat(browser-operator): 加页面快照 reader 与 freshness toke
 - Produces:
   - `TYPESAFE_REF = 'TYPESAFE_API_KEY'`
   - `resolveApiKey(credentials) -> Promise<{ value: string, source: string }>` —— `credentials` 为 `undefined` 时 throw 消息含 `凭证服务`;`resolve` 返回空时 throw 消息含 `TYPESAFE_API_KEY`。
-  - `createDecide({ apiKey, model, timeoutMs, clientFactory }) -> (request) => Promise<response>` —— `clientFactory` 默认 `(options) => new TypeSafeClient(options)`,测试注入假的。**会显式关掉 SDK 默认重试。**
+  - `createDecide({ apiKey, model, timeoutMs, clientFactory }) -> (request) => Promise<response>` —— `clientFactory` 默认 `(options) => new TypeSafeClient(options)`,测试注入假的。**会显式关掉 SDK 默认重试**(实测:不传 `retry` 时 `client.retry.maxRetries` 是 **2**,显式传 0 才是 0),并把模型写成构造器的 **`defaultModel`**(`model` 键会被静默忽略)。
 
 - [ ] **Step 1: 写失败的测试**
 
@@ -1606,6 +1606,9 @@ check('创建客户端时显式关掉 SDK 默认重试并传显式超时', () =>
   });
   assert.equal(seen.apiKey, 'k-1');
   assert.equal(seen.model, 'jev-latest');
+  // 真正生效的是 `defaultModel`;`model` 会被构造器静默忽略。两条都断言,免得日后
+  // 有人把「看起来重复」的那个删掉 —— 删掉 defaultModel 就等于模型配置无声失效。
+  assert.equal(seen.defaultModel, 'jev-latest');
   assert.equal(seen.timeout, 5000);
   assert.deepEqual(seen.retry, { maxRetries: 0 });
   assert.equal(typeof decide, 'function');
@@ -1697,6 +1700,10 @@ export function createDecide({ apiKey, model, timeoutMs, clientFactory }) {
   const make = clientFactory ?? ((options) => new TypeSafeClient(options));
   const client = make({
     apiKey,
+    // ⚠ 构造器上的模型配置键是 `defaultModel`,**不是** `model` —— 传 `model` 会被
+    // **静默忽略**(实测:defaultModel 仍是 'jev-latest')。`model` 只在 per-call 的
+    // systemOne 请求上有效。这里两个都给:`defaultModel` 才是真正生效的那个。
+    defaultModel: model,
     model,
     timeout: timeoutMs,
     retry: { maxRetries: 0 },
