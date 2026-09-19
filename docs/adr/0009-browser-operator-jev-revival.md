@@ -223,6 +223,10 @@ DSH 现有循环是「主模型决定 → 调一个浏览器工具 → 看结果
     那批条目 —— 它们记的是当时发生了什么。
 - **本机数据**:`~/.dsh/.agent-presets/browser-operator/` 需要按 ADR-0008 的步骤重建;`$DSH_HOME/browser-operator/`
   下的独立 Chrome profile 在 ADR-0008 里已被删除,所以要**重新登录一次**。
-- **回滚**:删掉 `lib/policy.js` / `lib/jev.js` / `lib/snapshot.js` 与 `browser_act` 的注册块、
-  `tests/policy.test.mjs`、`@typesafe-ai/sdk` 依赖,把 `smoke.mjs` 的 `EXPECTED_TOOLS` 与三处门禁接线改回去,
-  即回到退役前的行为;要连复活一起回滚,就把整个目录移回 `plugins/obsolete/` 并恢复 ADR-0008 的其余步骤。
+- **回滚**:删掉 `lib/policy.js` / `lib/jev.js` / `lib/snapshot.js` / `lib/loop.js` 与 `browser_act` 的注册块、
+  `tests/policy.test.mjs` / `tests/harness.mjs` / `tests/harness.test.mjs`、`@typesafe-ai/sdk` 依赖,
+  把 `smoke.mjs` 的 `EXPECTED_TOOLS` 与三处门禁接线改回去,即回到退役前的行为;要连复活一起回滚,就把整个目录
+  移回 `plugins/obsolete/` 并恢复 ADR-0008 的其余步骤。
+  (`lib/loop.js` 与那两个 harness 文件是同一批新增的:`browser_act` 的注册块 import `loop.js`,
+  `policy.test.mjs` 又 import `./harness.mjs` —— 只删前者会在插件加载时留下悬空 import,只删后者
+  会让 `harness.test.mjs` 变成孤儿,两者都进 `just check`。)

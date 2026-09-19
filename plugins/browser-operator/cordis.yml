@@ -15,7 +15,7 @@
 # (Windows 形如 `E:\path\to\dsh-plugin`)。
 #
 # 首次使用前在插件目录装一次依赖:`pnpm --dir <repo-abs-path>/plugins/browser-operator install`
-# (只需要 playwright-core;浏览器用系统装好的 Chrome,不下载额外二进制)。
+# (两个:`@typesafe-ai/sdk` 与 `playwright-core`;浏览器用系统装好的 Chrome,不下载额外二进制)。
 
 - id: browser-operator
   name: <repo-abs-path>/plugins/browser-operator/lib/index.js

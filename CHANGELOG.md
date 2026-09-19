@@ -46,9 +46,10 @@
   仅作历史记录」
 - `browser-operator`:**复活** —— 从 `plugins/obsolete/` 移回 `plugins/browser-operator/`
   (ADR-0008 写明的回滚路径),源码行为除新增 `browser_act` 外未改;它的 preset 快照改造成在役模板
-- `justfile`:`test` / `check` 加入 `browser-operator` 的离线单测;
-  `audit` 加跑插件目录(`pnpm --dir plugins/browser-operator audit`)—— 仓库没有 pnpm workspace,
-  根 `pnpm audit` 覆盖不到插件的依赖
+- 测试接线:`justfile` 的 `test` / 根 `package.json` 的 `scripts.test` 与 `scripts.check` 三处都加入
+  `browser-operator` 的离线单测;
+  `audit` 只在 `justfile` 里加跑插件目录(`pnpm --dir plugins/browser-operator audit`)—— 仓库没有
+  pnpm workspace,根 `pnpm audit` 覆盖不到插件的依赖
 - `.pre-commit-config.yaml` / `.prettierignore`:两处针对 browser-operator preset 的排除路径
   随插件移出 `obsolete/` 而更新
 

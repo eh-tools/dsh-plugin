@@ -22,8 +22,9 @@ cp -r plugins/browser-operator/preset ~/.dsh/.agent-presets/browser-operator
 仓库里这份用 `<repo-abs-path>` 占位符,符合仓库的路径约定。
 
 ⚠ **`agent.cordis.yml`** 带 `!!js` 自定义标签(`disabled: !!js process.platform === 'win32'`),
-PyYAML 解析不了,所以 `.pre-commit-config.yaml` 的 `check-yaml` 把它排除了 —— 排除项**只有它**这一个
-文件(`preset.yml` 与本文件都不在那个排除项里)。
+PyYAML 解析不了,所以 `.pre-commit-config.yaml` 的 `check-yaml` 把它排除了 —— **本目录里只有它**这一个
+文件在那个排除项里(`preset.yml` 与本文件都不在;仓库范围内该 exclude 另有一条 alternation 分支,
+排除的是 `plugins/obsolete/tool-vision/cordis.yml`)。
 
 ⚠ `.prettierignore` 另外排除的是**整个 `preset/` 目录**,与上面的 `check-yaml` 是两套机制:
 理由是 prettier 会重排 YAML,包括 persona 的 `>-` 折叠块缩进,那会改变语义。
