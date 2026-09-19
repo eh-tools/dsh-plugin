@@ -128,10 +128,12 @@ const OPERATION_HINTS = Object.freeze({
  *
  * ⚠ **criteria 会为空的 choice 一律不发**(实测:服务端对空 criteria 的 choice 回 400
  * `Choice question must have at least one choice`)。一个操作在此页没有可选目标时,它那一问
- * 整个消失 —— 不补占位项、也不发空对象:模型因此**没有机会**挑一个不存在的目标;它若仍旧
- * 答了那个操作(operation 那一问照旧列出全部 8 个操作),`validateDecision` 会照常拒掉,
- * 走「重新观察 → 重试额度用尽 → `status: 'error'`」那条路。`operation` / `goal_met` /
- * `stuck` 永远有内容,不会被省。
+ * 整个消失 —— 不补占位项、也不发空对象:模型因此**没有机会**挑一个不存在的目标。
+ *
+ * 同一条原则**也适用于 `operation` 那一问**:没有合法目标的操作(CLICK / TYPE_TEXT / SELECT)
+ * 不再出现在它的 criteria 里 —— 留着就是请模型挑一个必然失败的答案。`goal_met` / `stuck`
+ * 永远有内容;`operation` 也永远非空(SCROLL_UP / SCROLL_DOWN / WAIT / DONE / BLOCKED
+ * 五个都不需要目标)。
  *
  * 文本那一问(`type_text_value`)的标签是**候选列表里的下标**(`'0'` / `'1'` …),
  * 描述才是片段本身 —— 与元素目标同一套十进制标签口径,于是 `parseDecision` /
@@ -157,8 +159,18 @@ export function buildQuestions({ goal, table, typeTextCandidates: candidates = [
     });
     return criteria;
   };
+  // 只摆出**本页真的能执行**的操作 —— 与下面 `askTarget` 是同一条原则。一个没有合法目标的
+  // 操作出现在选项里,就是请模型挑一个必然失败的答案:实测踩到过(页面已无可填元素,模型仍选
+  // TYPE_TEXT,目标那一问根本没发,校验连拒三次,整次调用收在 `error`)。
+  //
+  // ⚠ `TYPE_TEXT` 的**文本候选为空**不在此列:那种情况有专门的终止信号 `text_unavailable`,
+  // 它会把调用方指去 `browser_fill`(ADR-0009 决策点 6)。挡掉它反而丢了一条可行动的信息。
   const operationCriteria = {};
-  for (const operation of ACTION_SPACE) operationCriteria[operation] = OPERATION_HINTS[operation];
+  for (const operation of ACTION_SPACE) {
+    const targeted = TARGET_FOR_OPERATION[operation];
+    if (targeted !== undefined && table.eligible[operation].length === 0) continue;
+    operationCriteria[operation] = OPERATION_HINTS[operation];
+  }
 
   const questions = {
     operation: {

@@ -39,6 +39,10 @@
 
 ### Changed
 
+- `browser-operator`:`browser_act` 的 `operation` 那一问**只列本页真的能执行的操作** —— 没有合法
+  目标的 `CLICK` / `TYPE_TEXT` / `SELECT` 不再出现。与既有的「空 `criteria` 的 choice 一律不发」
+  是同一条原则往上一层:留着它等于请模型挑一个必然失败的答案。实测踩到过这条死路(页面已无可填
+  元素,模型仍选 `TYPE_TEXT`,目标那一问根本没发,校验连拒三次,整次调用收在 `error`)
 - `browser-operator`:`browser_act` 的载荷上限变成配置项 —— 新增 `maxElements`(默认 `200`)与
   `jevMaxTextChars`(默认 `4000`)。两者都只作用于 Jev 决策回路,且 **state 与 questions 每一步
   都整份重发**,所以调它们就是直接买 token;它们与 `maxTextChars`(单步工具按需返回的正文量)

@@ -539,8 +539,15 @@ check('没有任何 eligible 目标时,question 集仍然有效:operation/goal_m
     const questions = buildQuestions({ goal: 'g', table });
     // 四道目标问全被省掉 —— 但它们本来也无从可选。
     assert.deepEqual(Object.keys(questions).sort(), ['goal_met', 'operation', 'stuck']);
-    // operation 照旧列出全部 8 个操作(交给 Jev 选 DONE / BLOCKED),说明永远有内容。
-    assert.deepEqual(Object.keys(questions.operation.criteria), [...ACTION_SPACE]);
+    // operation 仍然非空(不需要目标的那五个操作永远合法),说明它永远不会被省;
+    // 但**没有合法目标的三个操作不再出现** —— 留着就是请模型挑一个必然失败的答案。
+    assert.deepEqual(Object.keys(questions.operation.criteria), [
+        'SCROLL_UP',
+        'SCROLL_DOWN',
+        'WAIT',
+        'DONE',
+        'BLOCKED',
+    ]);
     assert.equal(questions.operation.type, 'choice');
     assert.ok(questions.goal_met.instructions.length > 0);
     assert.ok(questions.stuck.instructions.length > 0);
@@ -548,15 +555,34 @@ check('没有任何 eligible 目标时,question 集仍然有效:operation/goal_m
     assert.equal(questions.stuck.type, 'noul');
 });
 
+check('没有可填元素时 TYPE_TEXT 不出现在 operation 选项里(实测死路)', () => {
+    // 实测(维基搜索页):两次 TYPE_TEXT 之后页面已无 typeable 元素,模型仍选了 TYPE_TEXT;
+    // 目标那一问因此根本没发,校验连拒三次,整次调用收在 error —— 选项里就不该有它。
+    const table = buildElementTable(pageOf('clickable'));
+    const questions = buildQuestions({ goal: 'g', table });
+    assert.equal('type_text_target' in questions, false);
+    assert.deepEqual(Object.keys(questions.operation.criteria), [
+        'CLICK',
+        'SCROLL_UP',
+        'SCROLL_DOWN',
+        'WAIT',
+        'DONE',
+        'BLOCKED',
+    ]);
+});
+
 check('选了目标问被省掉的操作 → 校验拒绝(没问过 = 没答,不回落)', () => {
     const table = buildElementTable(pageOf('clickable'));
     const questions = buildQuestions({ goal: 'g', table });
     // 「没有 selectable 元素」正是一张典型真实页面的样子(绝大多数页面没有 <select>)。
     assert.equal('select_target' in questions, false);
-    assert.deepEqual(Object.keys(questions.operation.criteria), [...ACTION_SPACE]);
+    // SELECT 没有合法目标 → 它**不再出现在 operation 那一问的选项里**。留着就会被选中,
+    // 然后目标那一问没发、校验连拒三次、整次调用收在 error —— 实测踩过这条死路。
+    assert.equal('SELECT' in questions.operation.criteria, false);
+    assert.ok('CLICK' in questions.operation.criteria, '本页有 clickable,CLICK 照旧可选');
 
-    // Jev 仍旧可以答 SELECT —— operation 那一问列出全部 8 个操作。但那一问没发出去,
-    // 于是回答里没有 select_target,parseDecision 不许因此抛错,只当作「没给目标」。
+    // Jev 仍**可能**答一个没列出的操作(parseDecision 只要求它在 ACTION_SPACE 里)。
+    // 那一问没发出去,于是回答里没有 select_target;parseDecision 不许因此抛错,只当作「没给目标」。
     const decision = parseDecision({
         answers: {
             operation: { choice: 'SELECT', confidence: 0.9 },
