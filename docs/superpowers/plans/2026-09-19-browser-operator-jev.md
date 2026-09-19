@@ -31,6 +31,14 @@
   ③ `noul` 问题**不带** `criteria`。
   对应地 `ChoiceResponse.choice` 是**字符串标签**(`keyof T & string`)并另带数值 `confidence`,`NoulResponse.noul` 是数值;
   **元素目标的标签就是元素序号的十进制写法**。
+- **question 的键就是这七个,不多不少**:`operation` / `click_target` / `type_text_target` /
+  `type_text_value` / `select_target` / `goal_met` / `stuck`。
+  **`TYPE_TEXT` 的文本由 Jev 从逐字候选里选**(ADR-0009 决策点 6):候选 = `goal` 的逐字片段
+  **加上**页面字段标签 / 占位符切出的片段,由代码枚举后以 `choice` 问出去;`type_text_value` 的
+  criteria 键是**候选下标的十进制写法**(`'0'` / `'1'` …),描述才是片段本身(与元素目标同一套
+  十进制标签口径,于是映射逻辑不必分叉)。校验必须对着**本次真的问过的那份候选**判下标越界,
+  越界 / 没答一律拒绝,**绝不回落到 `candidates[0]`**;候选一个都没有才停 `text_unavailable`,
+  并在文案里指明改用 `browser_fill` 单步工具。
 - **代码风格**:prettier `{ semi, singleQuote, trailingComma: 'all', printWidth: 100 }`;eslint `@eslint/js` recommended + node globals。**`.mjs` 一律 4 空格** —— prettier 3 会读 `.editorconfig`,其 `[*]` 是 `indent_size = 4` 而 JS glob 不含 `.mjs`;`.js` 保持 2 空格。以 `node node_modules/prettier/bin/prettier.cjs --write` 的结果为准。
 - **提交规范**:Conventional Commits,subject ≤ 72 字符、不以句号结尾。
 
@@ -343,7 +351,7 @@ git commit -m "feat(browser-operator): 加 Jev 策略层的动作空间与索引
 - Consumes: `buildElementTable(snapshot) -> table`(Task 1)。
 - Produces:
   - `buildState({ goal, snapshot, table, steps }) -> object` —— 交给 `systemOne({ state })` 的那个 state。
-  - `buildQuestions({ goal, table }) -> Record<string, object>` —— 交给 `systemOne({ questions })` 的那个 questions。键固定为 `operation` / `click_target` / `type_text_target` / `select_target` / `goal_met` / `stuck`。
+  - `buildQuestions({ goal, table }) -> Record<string, object>` —— 交给 `systemOne({ questions })` 的那个 questions。键固定为 `operation` / `click_target` / `type_text_target` / `type_text_value` / `select_target` / `goal_met` / `stuck`(**七个**;`type_text_value` 是后续评审补上的那一问,见 Global Constraints 的「question 的键就是这七个」与 ADR-0009 决策点 6 的 `TYPE_TEXT` 条款 —— 本节下面的用例清单是当时的快照,按六个键写,已由 `tests/policy.test.mjs` 的现行版本取代)。
 
 - [ ] **Step 1: 写失败的测试**
 

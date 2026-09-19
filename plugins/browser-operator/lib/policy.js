@@ -112,14 +112,26 @@ const OPERATION_HINTS = Object.freeze({
  * 每个问题都带 `type`;`choice` 的 `criteria` 是「标签 → 描述」的对象;`noul` 不带
  * criteria。**标签就是元素序号的十进制写法** —— `parseDecision` 靠它把回答映射回索引。
  *
- * @param {{ goal: string, table: object }} options
+ * 文本那一问(`type_text_value`)的标签是**候选列表里的下标**(`'0'` / `'1'` …),
+ * 描述才是片段本身 —— 与元素目标同一套十进制标签口径,于是 `parseDecision` /
+ * `validateDecision` 的映射逻辑不必分叉,而一个乱答的标签也没有任何机会变成被输入的文本。
+ *
+ * @param {{ goal: string, table: object, typeTextCandidates?: string[] }} options
  */
-export function buildQuestions({ goal, table }) {
+export function buildQuestions({ goal, table, typeTextCandidates: candidates = [] }) {
   const criteriaFor = (indexes) => {
     const criteria = {};
     for (const index of indexes) {
       criteria[String(index)] = renderLine(table.byIndex.get(index));
     }
+    return criteria;
+  };
+  /** 文本候选:键是**候选下标**的十进制写法,值是片段本身(逐字,不加工)。 */
+  const candidateCriteria = (fragments) => {
+    const criteria = {};
+    fragments.forEach((fragment, position) => {
+      criteria[String(position)] = fragment;
+    });
     return criteria;
   };
   const operationCriteria = {};
@@ -149,6 +161,15 @@ export function buildQuestions({ goal, table }) {
         'Which element should receive text? Answer with the element number. ' +
         'Only meaningful when operation is TYPE_TEXT.',
       criteria: criteriaFor(table.eligible.TYPE_TEXT),
+    },
+    type_text_value: {
+      type: 'choice',
+      instructions:
+        'Which of these verbatim fragments should be typed into the target element? ' +
+        'Answer with the fragment number. The fragments come from the goal and from the ' +
+        'target field label; pick exactly one and it is typed unchanged. ' +
+        'Only meaningful when operation is TYPE_TEXT.',
+      criteria: candidateCriteria(candidates),
     },
     select_target: {
       type: 'choice',
@@ -218,6 +239,8 @@ export function parseDecision(response) {
     operation,
     clickTarget: indexOfLabel(choiceOf(answers, 'click_target')),
     typeTextTarget: indexOfLabel(choiceOf(answers, 'type_text_target')),
+    // 文本那一问的标签是**候选下标**,与元素目标同一套十进制映射。
+    typeTextValue: indexOfLabel(choiceOf(answers, 'type_text_value')),
     selectTarget: indexOfLabel(choiceOf(answers, 'select_target')),
     goalMet: probabilityOf(answers, 'goal_met'),
     stuck: probabilityOf(answers, 'stuck'),
@@ -229,9 +252,15 @@ export function parseDecision(response) {
  * 执行前校验:操作合法、目标在本次提供的白名单里、且当前真的可用。
  * 这是「模型输出永远不直接变成选择器 / 坐标 / JS」的那道闸。
  *
- * @returns `{ ok: true, targetIndex: number|null }` 或 `{ ok: false, reason: string }`
+ * `TYPE_TEXT` 还要过第二道:选中的文本下标必须落在**本次真的问过的那份候选**里 ——
+ * 越界或没答一律拒绝,绝不回落到 `candidates[0]`(那正是把「Jev 选」偷换成
+ * 「代码猜第一个词」的地方)。通过时把**逐字片段**交回给回路,回路不再自己挑。
+ *
+ * @param {object} options.candidates 本次问过 Jev 的文本候选列表,顺序即标签
+ * @returns `{ ok: true, targetIndex: number|null, text?: string }`
+ *   或 `{ ok: false, reason: string }`
  */
-export function validateDecision(decision, table) {
+export function validateDecision(decision, table, { candidates = [] } = {}) {
   const field = TARGET_FOR_OPERATION[decision.operation];
   if (field === undefined) return { ok: true, targetIndex: null };
 
@@ -255,13 +284,40 @@ export function validateDecision(decision, table) {
     };
   }
 
+  if (decision.operation === 'TYPE_TEXT') {
+    const chosen = validateTypeTextValue(decision.typeTextValue, candidates);
+    if (!chosen.ok) return chosen;
+    return { ok: true, targetIndex, text: chosen.text };
+  }
+
   return { ok: true, targetIndex };
 }
 
+/**
+ * `TYPE_TEXT` 的第二道闸:选中下标 → 逐字片段。
+ *
+ * 没答时回落到候选里的第一个 —— 那是**在本次真的给出的候选内**选择,不是凭空生成;
+ * 而越界(包括候选整个为空)一律拒绝,由回路重新观察,不许静默降级。
+ */
+function validateTypeTextValue(value, candidates) {
+  if (value === undefined && candidates.length > 0) {
+    return { ok: true, text: candidates[0] };
+  }
+  if (!Number.isInteger(value) || value < 0 || value >= candidates.length) {
+    return {
+      ok: false,
+      reason:
+        `TYPE_TEXT 的文本下标 ${String(value)} 不在本次提供的 ${candidates.length} 个候选里 ` +
+        '(候选来自 goal 与目标字段标签的逐字片段)',
+    };
+  }
+  return { ok: true, text: candidates[value] };
+}
+
 /** 逐字候选片段的最小长度。2 个字符的英文虚词(of / to / on / in)当候选没有意义。 */
-const MIN_CANDIDATE_CHARS = 3;
+export const MIN_CANDIDATE_CHARS = 3;
 /** 逐字候选的数量上限,挡住超长 goal 把 questions 撑爆。 */
-const MAX_CANDIDATES = 20;
+export const MAX_CANDIDATES = 20;
 
 /**
  * 从 goal 里切出**逐字片段**候选。
@@ -285,6 +341,38 @@ export function textCandidates(goal) {
     seen.add(piece);
     candidates.push(piece);
     if (candidates.length >= MAX_CANDIDATES) break;
+  }
+  return candidates;
+}
+
+/**
+ * `TYPE_TEXT` 的**完整**候选列表 = `textCandidates(goal)` + 目标字段标签切出的片段。
+ *
+ * 后半截就是 spec 说的「按页面字段旁的标签 / 占位符切出的片段」:元素名(`name`)在
+ * `snapshot.js` 里已经是 `aria-label` → `placeholder` → `innerText` → `value` 的
+ * 首选结果,所以读它就等于读了页面上的标签 / 占位符。仍取**逐字**口径(只切词、不改写),
+ * 并按出现顺序去重、封顶 —— 标签在候选里排在 goal 之后,是「补足」而不是「顶掉」。
+ *
+ * 调用方把这份列表**同时**交给 `buildQuestions`(生成 criteria)与 `validateDecision`
+ * (校验选中的下标),三处必须是同一份,否则校验会对着另一份清单放行。
+ *
+ * ⚠ `element` 传哪一个是调用方的事,但要与它随后校验、随后输入的那一份一致:
+ * `lib/loop.js` 在请求发出**之前**就定下候选,所以它先用第一个能切出标签的可填字段
+ * 做代表 —— 目标字段是 Jev 在同一个请求里才选的,请求体不可能等它。
+ *
+ * @param {{ goal?: string, element?: object }} options
+ * @returns {string[]}
+ */
+export function typeTextCandidates({ goal, element } = {}) {
+  const seen = new Set();
+  const candidates = [];
+  for (const source of [goal, element?.name]) {
+    for (const fragment of textCandidates(source)) {
+      if (seen.has(fragment)) continue;
+      seen.add(fragment);
+      candidates.push(fragment);
+      if (candidates.length >= MAX_CANDIDATES) return candidates;
+    }
   }
   return candidates;
 }

@@ -69,8 +69,29 @@ pnpm --dir <repo-abs-path>/plugins/browser-operator install
 canvas、文件上传、弹窗新 tab、嵌套滚动、任意键盘控件**都不在它的能力内** —— 遇到这些用对应的
 单步工具。
 
-**它不做文本生成。** `TYPE_TEXT` 的文本必须是 `goal` 里的**逐字片段**;没有可用片段时它会以
-`status: 'text_unavailable'` 停下,这时改用 `browser_fill`。
+**它的动作空间是闭合的 8 个** —— 策略层只会发出、也只会接受这 8 个操作:
+
+| 操作          | 做什么                                   |
+| ------------- | ---------------------------------------- |
+| `CLICK`       | 点一个可点元素                           |
+| `TYPE_TEXT`   | 往一个可填元素里输入**逐字片段**         |
+| `SELECT`      | 取目标元素的**第一个**选项(见下面的边界) |
+| `SCROLL_UP`   | 向上滚一屏                               |
+| `SCROLL_DOWN` | 向下滚一屏                               |
+| `WAIT`        | 等页面稳定(单次 1000 ms)                 |
+| `DONE`        | 回路认为目标已达成                       |
+| `BLOCKED`     | 卡在需要人的一步(登录 / SSO / 验证码)    |
+
+没有 `NAVIGATE`、没有任意键盘、没有 JS 求值 —— 要那些用对应的单步工具。
+
+**它不做文本生成。** `TYPE_TEXT` 的文本必须**由 Jev 从逐字候选里挑**一个:候选由代码枚举
+(goal 的片段 + 页面字段标签 / 占位符切出的片段),选中哪一份就原样输入哪一份。没有可用片段时
+它会以 `status: 'text_unavailable'` 停下,这时改用 `browser_fill`。
+
+**`SELECT` 只取第一个选项,不挑值。** 这是**有意保留**的边界,不是 bug:回路不会去问「你想选
+哪一个」。普通 `<select>` 的第一项常是「请选择…」占位项,于是那一步等于没选;`role="combobox"`
+的自定义下拉甚至会直接抛。**要选确切的值,请用单步工具**(`browser_fill` 填输入框、`browser_eval`
+改状态,或 `browser_click` 点自定义下拉的选项)。`SELECT` 仍然留在动作空间里,只是别指望它替你选值。
 
 **`status: 'done'` 不代表目标真的达成** —— 那只是回路停了。返回里带 `goalMet` 概率,要确认就
 自己 `browser_snapshot` 复核一次。
@@ -137,24 +158,24 @@ git 不可用时才退化到本地 `.gitignore` 解析。
 
 ## 配置项
 
-| 键                    | 默认值                               | 说明                                                              |
-| --------------------- | ------------------------------------ | ----------------------------------------------------------------- |
-| `browser`             | `chrome`                             | `chrome` / `edge` / `chromium`(Playwright 自带)                   |
-| `executablePath`      | `''`                                 | 指定浏览器可执行文件;填了就忽略 `browser` 通道                    |
-| `headless`            | `false`                              | 有头可见(SSO / 验证码需人工接管,默认就该看得见)                   |
-| `profileDir`          | `$DSH_HOME/browser-operator/profile` | 独立 profile;登录态就存在这里                                     |
-| `artifactDir`         | `''`                                 | 指定产物目录;省略 = 上面的自动探测                                |
-| `artifactCandidates`  | 见上                                 | 覆盖候选目录名列表                                                |
-| `logCap`              | `500`                                | console / network 环形缓冲条数上限                                |
-| `navigationTimeoutMs` | `60000`                              | 导航超时                                                          |
-| `actionTimeoutMs`     | `15000`                              | 动作(点击 / 填充 / 元素截图)超时                                  |
-| `launchTimeoutMs`     | `60000`                              | 拉起浏览器超时                                                    |
-| `maxTextChars`        | `20000`                              | 文本 / 求值结果的截断上限                                         |
-| `maxSteps`            | `12`                                 | `browser_act` 回路的步数上限(硬上限 `40`,超了截断)                |
-| `budgetMs`            | `100000`                             | `browser_act` 回路的时间预算;必须严格小于工具声明的 `120000` 超时 |
-| `jevTimeoutMs`        | `5000`                               | 单次 Jev 决策请求的超时                                           |
-| `jevModel`            | `jev-latest`                         | Jev 模型名                                                        |
-| `locale`              | `zh-CN`                              | 浏览器 locale                                                     |
+| 键                    | 默认值                               | 说明                                                                             |
+| --------------------- | ------------------------------------ | -------------------------------------------------------------------------------- |
+| `browser`             | `chrome`                             | `chrome` / `edge` / `chromium`(Playwright 自带)                                  |
+| `executablePath`      | `''`                                 | 指定浏览器可执行文件;填了就忽略 `browser` 通道                                   |
+| `headless`            | `false`                              | 有头可见(SSO / 验证码需人工接管,默认就该看得见)                                  |
+| `profileDir`          | `$DSH_HOME/browser-operator/profile` | 独立 profile;登录态就存在这里                                                    |
+| `artifactDir`         | `''`                                 | 指定产物目录;省略 = 上面的自动探测                                               |
+| `artifactCandidates`  | 见上                                 | 覆盖候选目录名列表                                                               |
+| `logCap`              | `500`                                | console / network 环形缓冲条数上限                                               |
+| `navigationTimeoutMs` | `60000`                              | 导航超时                                                                         |
+| `actionTimeoutMs`     | `15000`                              | 动作(点击 / 填充 / 元素截图)超时                                                 |
+| `launchTimeoutMs`     | `60000`                              | 拉起浏览器超时                                                                   |
+| `maxTextChars`        | `20000`                              | 文本 / 求值结果的截断上限                                                        |
+| `maxSteps`            | `12`                                 | `browser_act` 回路的步数上限(硬上限 `40`,超了截断)                               |
+| `budgetMs`            | `100000`                             | `browser_act` 回路的时间预算;**调用点会夹到工具声明超时前 1 s**,配置本身不设上界 |
+| `jevTimeoutMs`        | `5000`                               | 单次 Jev 决策请求的超时                                                          |
+| `jevModel`            | `jev-latest`                         | Jev 模型名                                                                       |
+| `locale`              | `zh-CN`                              | 浏览器 locale                                                                    |
 
 配错的键会在**加载时**直接报错(不静默),`browser` 只接受那三个值。
 

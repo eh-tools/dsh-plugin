@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 
 import {
     ACTION_SPACE,
+    MAX_CANDIDATES,
     STATUS,
     buildElementTable,
     buildQuestions,
@@ -18,6 +19,7 @@ import {
     parseDecision,
     renderElementTable,
     textCandidates,
+    typeTextCandidates,
     validateDecision,
 } from '../lib/policy.js';
 import { evaluateStop, runLoop } from '../lib/loop.js';
@@ -160,6 +162,52 @@ check('pageProbe 真的能被序列化进页面并跑通读模式', () => {
     assert.equal(snapshot.elements[0].name, 'Round trip');
 });
 
+check('freshness 用截断之前的计数,大页面重排后不再比较相等', () => {
+    // 超过 limit / 4000 字符的页面:截断之后的数字会让上限以后的元素重排
+    // (或正文变长)都算出同一个 freshness,过期校验就瞎了。
+    const factory = new Function(
+        'document',
+        'window',
+        'location',
+        `return (${pageProbe.toString()});`,
+    );
+    const node = (name) => ({
+        tagName: 'BUTTON',
+        innerText: name,
+        value: '',
+        disabled: false,
+        isContentEditable: false,
+        getAttribute: () => null,
+        getBoundingClientRect: () => ({ width: 10, height: 10 }),
+    });
+    const bodyText = 'x'.repeat(5000);
+    const document = {
+        querySelectorAll: () => [node('a'), node('b'), node('c')],
+        body: { innerText: bodyText },
+    };
+    const window = { getComputedStyle: () => ({ visibility: 'visible', display: 'block' }) };
+    const location = { href: 'https://example.test/' };
+    const fn = factory(document, window, location);
+
+    const limited = fn({ selector: ELEMENT_SELECTOR, limit: 2 });
+    assert.equal(limited.elements.length, 2, 'limit 仍照旧只放出 2 个元素');
+    assert.equal(limited.text.length, 4000, '正文仍照旧截到 4000 字符');
+    assert.equal(limited.freshness, `3|https://example.test/|5000`, '计数取截断之前的');
+
+    // 增删**上限之外**的元素(切片之内完全不变)—— 用后截断计数根本看不出来。
+    document.querySelectorAll = () => [node('a'), node('b'), node('c'), node('d')];
+    assert.notEqual(fn({ selector: ELEMENT_SELECTOR, limit: 2 }).freshness, limited.freshness);
+
+    // 正文变长但仍在 4000 之后:同样必须变。
+    document.querySelectorAll = () => [node('a'), node('b'), node('c')];
+    document.body.innerText = `${bodyText}y`;
+    assert.notEqual(fn({ selector: ELEMENT_SELECTOR, limit: 2 }).freshness, limited.freshness);
+
+    // 页面真没变时 freshness 必须相等 —— 证明上面两条不是「永远不相等」。
+    document.body.innerText = bodyText;
+    assert.equal(fn({ selector: ELEMENT_SELECTOR, limit: 2 }).freshness, limited.freshness);
+});
+
 check('动作空间闭合在 8 个操作上', () => {
     assert.deepEqual(
         [...ACTION_SPACE],
@@ -229,7 +277,7 @@ check('state 带上 goal、当前 URL/标题、元素表与已走过的步数', 
     assert.equal(state.steps.length, 1);
 });
 
-check('questions 的键恰好是那六个', () => {
+check('questions 的键恰好是那七个', () => {
     const questions = buildQuestions({ goal: 'g', table: buildElementTable(SNAPSHOT) });
     assert.deepEqual(Object.keys(questions).sort(), [
         'click_target',
@@ -238,7 +286,30 @@ check('questions 的键恰好是那六个', () => {
         'select_target',
         'stuck',
         'type_text_target',
+        'type_text_value',
     ]);
+});
+
+check('文本那一问是 choice,标签是候选下标的十进制写法,描述是逐字片段', () => {
+    // ADR-0009 决策点 6:TYPE_TEXT 的文本必须**由 Jev 从逐字候选里选**。
+    // 标签走和元素目标同一套十进制口径,好让 parseDecision / validateDecision 的
+    // 映射逻辑不必分叉 —— 候选片段本身只出现在描述里,绝不当标签。
+    const questions = buildQuestions({
+        goal: 'g',
+        table: buildElementTable(SNAPSHOT),
+        typeTextCandidates: ['Zurich', 'London'],
+    });
+    assert.equal(questions.type_text_value.type, 'choice');
+    assert.deepEqual(questions.type_text_value.criteria, {
+        0: 'Zurich',
+        1: 'London',
+    });
+    assert.equal(questions.type_text_value.instructions.length > 0, true);
+});
+
+check('没给候选时文本那一问的 criteria 为空(不乱编标签)', () => {
+    const questions = buildQuestions({ goal: 'g', table: buildElementTable(SNAPSHOT) });
+    assert.deepEqual(questions.type_text_value.criteria, {});
 });
 
 check('每个问题都带 type 判别字段,且 noul 不带 criteria', () => {
@@ -387,6 +458,95 @@ check('剔除过短片段(1 个字符的词不要)', () => {
 check('空 goal 给出空候选(调用方据此回 text_unavailable)', () => {
     assert.deepEqual(textCandidates(''), []);
     assert.deepEqual(textCandidates(undefined), []);
+});
+
+check('完整候选 = goal 片段 + 目标字段标签片段(去重、保序、封顶)', () => {
+    // ADR-0009 决策点 6 的两半:goal 的逐字片段,**加上**页面字段旁的标签 / 占位符。
+    const candidates = typeTextCandidates({
+        goal: 'Fly from Zurich to London',
+        element: { name: 'London departure date' },
+    });
+    assert.deepEqual(candidates, ['Fly', 'from', 'Zurich', 'London', 'departure', 'date']);
+    assert.equal(new Set(candidates).size, candidates.length, '不许有重复片段');
+});
+
+check('只有字段标签、没有 goal 时也有候选', () => {
+    assert.deepEqual(typeTextCandidates({ goal: '', element: { name: 'Departure date' } }), [
+        'Departure',
+        'date',
+    ]);
+    // 'to?' 会被标点切开后只剩 'to',短于下限 —— 字段标签同样受逐字口径约束。
+    assert.deepEqual(typeTextCandidates({ goal: '', element: { name: 'Where to?' } }), ['Where']);
+    assert.deepEqual(typeTextCandidates({ goal: '', element: { name: '' } }), []);
+});
+
+check('候选总量封顶在 MAX_CANDIDATES', () => {
+    const long = Array.from({ length: 30 }, (_, i) => `word${i}`).join(' ');
+    assert.equal(typeTextCandidates({ goal: long }).length, MAX_CANDIDATES);
+    assert.equal(
+        typeTextCandidates({ goal: long, element: { name: 'another word' } }).length,
+        MAX_CANDIDATES,
+    );
+});
+
+check('文本回答映射成候选下标;乱答的标签一律当作「没给」', () => {
+    const answers = (choice) => ({
+        answers: {
+            operation: { choice: 'TYPE_TEXT', confidence: 0.9 },
+            type_text_target: { choice: '4', confidence: 0.9 },
+            ...(choice === undefined ? {} : { type_text_value: { choice, confidence: 0.9 } }),
+            goal_met: { noul: 0.1 },
+            stuck: { noul: 0.1 },
+        },
+    });
+    assert.equal(parseDecision(answers('1')).typeTextValue, 1);
+    assert.equal(parseDecision(answers('Zurich')).typeTextValue, undefined);
+    assert.equal(parseDecision(answers(undefined)).typeTextValue, undefined);
+});
+
+check('选中的下标落在本次提供的候选里 → 通过,并把逐字片段交回来', () => {
+    const table = buildElementTable(SNAPSHOT);
+    const decision = { operation: 'TYPE_TEXT', typeTextTarget: 4, typeTextValue: 1 };
+    assert.deepEqual(validateDecision(decision, table, { candidates: ['Zurich', 'London'] }), {
+        ok: true,
+        targetIndex: 4,
+        text: 'London',
+    });
+});
+
+check('选中的下标越界 → 拒绝,绝不回落到 candidates[0]', () => {
+    const table = buildElementTable(SNAPSHOT);
+    const decision = { operation: 'TYPE_TEXT', typeTextTarget: 4, typeTextValue: 9 };
+    const verdict = validateDecision(decision, table, { candidates: ['Zurich', 'London'] });
+    assert.equal(verdict.ok, false);
+    assert.match(verdict.reason, /9/);
+    assert.ok(!('text' in verdict), '被拒的校验不该带回任何文本');
+});
+
+check('候选为空时即便给了下标也拒绝(候选只有 0 个)', () => {
+    const table = buildElementTable(SNAPSHOT);
+    const decision = { operation: 'TYPE_TEXT', typeTextTarget: 4, typeTextValue: 0 };
+    const verdict = validateDecision(decision, table, { candidates: [] });
+    assert.equal(verdict.ok, false);
+});
+
+check('TYPE_TEXT 没答文本那一问时回落到候选里的第一个(仍在本次候选内)', () => {
+    const table = buildElementTable(SNAPSHOT);
+    const decision = { operation: 'TYPE_TEXT', typeTextTarget: 4 };
+    assert.deepEqual(validateDecision(decision, table, { candidates: ['Zurich', 'London'] }), {
+        ok: true,
+        targetIndex: 4,
+        text: 'Zurich',
+    });
+});
+
+check('非 TYPE_TEXT 的操作不产出文本', () => {
+    const table = buildElementTable(SNAPSHOT);
+    const decision = { operation: 'CLICK', clickTarget: 1 };
+    assert.deepEqual(validateDecision(decision, table, { candidates: ['Zurich'] }), {
+        ok: true,
+        targetIndex: 1,
+    });
 });
 
 check('用尽 maxSteps 时停下,status 为 max_steps', () => {
@@ -597,21 +757,148 @@ checkAsync('decide 抛错时立即停,不静默重试', async () => {
     assert.match(result.error, /boom/);
 });
 
-checkAsync('TYPE_TEXT 没有逐字候选时停下,status 为 text_unavailable', async () => {
-    const deps = fakeDeps({
-        responses: [
-            {
-                answers: {
-                    operation: { choice: 'TYPE_TEXT', confidence: 0.9 },
-                    type_text_target: { choice: '4', confidence: 0.9 },
-                    goal_met: { noul: 0.1 },
-                    stuck: { noul: 0.1 },
+checkAsync(
+    'TYPE_TEXT 完全没有逐字候选时停下,status 为 text_unavailable 并指向 browser_fill',
+    async () => {
+        // goal 为空,**所有**可填字段的 name 也是空的 → 逐字候选真的一个都没有。
+        const bare = {
+            ...SNAPSHOT,
+            elements: SNAPSHOT.elements.map((element) =>
+                element.kind === 'typeable' ? { ...element, name: '' } : element,
+            ),
+        };
+        const deps = fakeDeps({
+            responses: [
+                {
+                    answers: {
+                        operation: { choice: 'TYPE_TEXT', confidence: 0.9 },
+                        type_text_target: { choice: '4', confidence: 0.9 },
+                        goal_met: { noul: 0.1 },
+                        stuck: { noul: 0.1 },
+                    },
                 },
-            },
-        ],
+            ],
+            snapshot: bare,
+        });
+        const result = await runWith(deps, { goal: '' });
+        assert.equal(result.status, 'text_unavailable');
+        // spec 要求这条结果**显式**把调用方指去 browser_fill 单步工具。
+        assert.match(result.error, /browser_fill/);
+        assert.equal(deps.executed.length, 0, '没有文本可填时不该执行任何动作');
+    },
+);
+
+/** 目标字段(4 号 textbox)的 name 是 'Departure';2 号 'Where from?' 是标签代表。 */
+const TYPEABLE = SNAPSHOT;
+
+/** 给第二问(选哪段文本)的回答。 */
+const typeValueAnswer = (choice) => ({ type_text_value: { choice, confidence: 0.9 } });
+
+/**
+ * 一步 TYPE_TEXT:一次请求里同时答完 operation + 目标 + 选中的文本。
+ *
+ * `textChoice` 可以是**候选下标字符串**,也可以是数字 —— 数字会先按
+ * `typeTextCandidates` 换成下标,让用例不必手数候选顺序。
+ */
+const typeTextStep = (textChoice) => ({
+    answers: {
+        operation: { choice: 'TYPE_TEXT', confidence: 0.9 },
+        type_text_target: { choice: '4', confidence: 0.9 },
+        ...typeValueAnswer(String(textChoice)),
+        goal_met: { noul: 0.1 },
+        stuck: { noul: 0.1 },
+    },
+});
+
+/** 终止一步:DONE + 高 goal_met,让回路干净收尾。 */
+const DONE_STEP = {
+    answers: {
+        operation: { choice: 'DONE', confidence: 0.95 },
+        goal_met: { noul: 0.95 },
+        stuck: { noul: 0.02 },
+    },
+};
+
+checkAsync('回路输入的是 Jev 选中的那一份逐字片段,不是 candidates[0]', async () => {
+    const goal = 'Fly from Zurich to London on 2026-09-20, one adult';
+    const candidates = typeTextCandidates({ goal, element: TYPEABLE.elements[1] });
+    const chosen = candidates.indexOf('London');
+    assert.ok(chosen > 0, `'London' 不该排在候选第 0 位(candidates=${candidates.join('|')})`);
+    const deps = fakeDeps({
+        responses: [typeTextStep(chosen)],
+        snapshot: TYPEABLE,
     });
-    const result = await runWith(deps, { goal: '' });
-    assert.equal(result.status, 'text_unavailable');
+    const result = await runWith(deps, { goal, maxSteps: 1 });
+    assert.equal(result.status, 'max_steps');
+    assert.equal(deps.executed.length, 1);
+    assert.equal(deps.executed[0].operation, 'TYPE_TEXT');
+    assert.equal(deps.executed[0].text, 'London', 'typed 的必须是 Jev 选的那份,不是第一个');
+    assert.notEqual(deps.executed[0].text, candidates[0]);
+});
+
+checkAsync('文本那一问的候选 = goal 片段 + 页面字段标签', async () => {
+    // 请求发出前目标字段还没定,所以字段标签那半截取的是第一个能切出片段的可填字段
+    // (这里是 2 号 'Where from?' 的 'Where')。两半截都必须在 criteria 里。
+    const seen = [];
+    const deps = fakeDeps({
+        responses: [typeTextStep(0), DONE_STEP],
+        snapshot: TYPEABLE,
+    });
+    const result = await runLoop({
+        goal: 'Fly from Zurich',
+        maxSteps: 12,
+        budgetMs: 100000,
+        now: deps.now,
+        observe: deps.observe,
+        decide: async (request) => {
+            seen.push(request.questions);
+            return deps.decide();
+        },
+        execute: deps.execute,
+    });
+    assert.equal(result.status, 'done');
+    const criteria = seen[0].type_text_value.criteria;
+    assert.ok(
+        Object.values(criteria).includes('Where'),
+        '页面字段标签该进候选(那正是 spec 的「字段标签 / 占位符」那半截)',
+    );
+    assert.ok(Object.values(criteria).includes('Zurich'), 'goal 片段该进候选');
+    assert.equal(seen.length, 2, '一次请求问完全部决策;第二条是终止那步');
+});
+
+checkAsync('goal 为空时,输入的是页面字段标签片段', async () => {
+    // 字段标签那一半单独顶用:goal 一个片段都给不出,候选全部来自字段标签。
+    const deps = fakeDeps({
+        responses: [typeTextStep(0)],
+        snapshot: TYPEABLE,
+    });
+    const result = await runWith(deps, { goal: '', maxSteps: 1 });
+    assert.equal(result.status, 'max_steps');
+    assert.equal(deps.executed.length, 1);
+    assert.equal(deps.executed[0].text, 'Where');
+});
+
+checkAsync('TYPE_TEXT 越界的文本下标被拒,不回落到 candidates[0]', async () => {
+    // 第 1、2 轮:文本下标越界 → 校验拒绝(不许静默取第一个)。
+    // 第 3 轮:目标也过期了(元素表里没有 999)→ 再拒一次,重试额度用尽 → error。
+    const staleTarget = {
+        answers: {
+            operation: { choice: 'TYPE_TEXT', confidence: 0.9 },
+            type_text_target: { choice: '999', confidence: 0.9 },
+            ...typeValueAnswer('0'),
+            goal_met: { noul: 0.1 },
+            stuck: { noul: 0.1 },
+        },
+    };
+    const over = typeTextStep(9);
+    const deps = fakeDeps({
+        responses: [over, over, staleTarget],
+        snapshot: TYPEABLE,
+    });
+    const result = await runWith(deps, { goal: 'Fly Zurich', maxSteps: 6 });
+    assert.equal(result.status, 'error');
+    assert.equal(deps.executed.length, 0, '越界的下标一次都不该执行');
+    assert.match(result.error, /9/);
 });
 
 checkAsync('被拒一步的 reason 会留在下一步的台账上(不丢诊断)', async () => {
@@ -660,6 +947,18 @@ checkAsync('凭证未配置时错误里点名 TYPESAFE_API_KEY 并给出两条�
     await assert.rejects(
         () => resolveApiKey(credentials),
         (error) => error.message.includes('TYPESAFE_API_KEY') && error.message.includes('.env'),
+    );
+});
+
+checkAsync('provider 返回 null 时也给可读的凭证错误,不是 TypeError', async () => {
+    // 只挡 undefined 时这里会抛 `Cannot read properties of null` —— 一句读不懂的栈,
+    // 而调用方真正需要的是「去这两条路径配 key」。
+    const credentials = { resolve: async () => null };
+    await assert.rejects(
+        () => resolveApiKey(credentials),
+        (error) =>
+            error.message.includes('TYPESAFE_API_KEY') &&
+            !error.message.includes('Cannot read properties of null'),
     );
 });
 
@@ -769,6 +1068,18 @@ check('browser_act 已注册且带齐门禁要求的四件套', () => {
 check('注册只发生在 apply 期,不在 apply 里解析凭证', () => {
     // makeCtx() 故意不提供 get() 之外的 credentials —— 若 apply 期解析就会抛。
     assert.doesNotThrow(() => apply(makeCtx(), {}));
+});
+
+check('browser_act 的描述向模型说清动作空间与 SELECT 的已知边界', () => {
+    const ctx = makeCtx();
+    apply(ctx, {});
+    const description = ctx.toolsByName.get('browser_act').description;
+    // 闭合的 8 个操作必须逐个出现在描述里(模型只看得到描述)。
+    for (const operation of ACTION_SPACE) {
+        assert.ok(description.includes(operation), `描述里少了 ${operation}`);
+    }
+    // SELECT 只取第一个选项是有意保留的边界,必须说在模型看得见的地方。
+    assert.match(description, /SELECT [^。]*第一个选项/);
 });
 
 check('browser_act 的参数只有 goal 与 maxSteps', () => {
