@@ -344,6 +344,22 @@ check('questions 只装当前合法的操作与目标', () => {
     );
 });
 
+check('operation.criteria 的每个值都是非空字符串(加了第 9 个动作却没写说明就红)', () => {
+    // 只比**键集**是不够的:往 `ACTION_SPACE` 里加了操作、却忘了在 `OPERATION_HINTS` 里
+    // 写说明时,`criteria[新操作]` 会是 `undefined`,而键集照样与 `ACTION_SPACE` 相等 ——
+    // 「每个动作都有一句说明」这件事就没有任何用例钉住了。
+    //
+    // 这里从**公开面**逐值检查(`buildQuestions` 的返回值),而不是导出私有的
+    // `OPERATION_HINTS` 去比两处常量 —— 那样只是把同一个事实写两遍。
+    const questions = buildQuestions({ goal: 'g', table: buildElementTable(SNAPSHOT) });
+    const criteria = questions.operation.criteria;
+    assert.deepEqual(Object.keys(criteria), [...ACTION_SPACE]);
+    for (const [operation, hint] of Object.entries(criteria)) {
+        assert.equal(typeof hint, 'string', `${operation} 的说明不是字符串:${String(hint)}`);
+        assert.ok(hint.trim() !== '', `${operation} 的说明是空字符串`);
+    }
+});
+
 check('criteria 的值就是元素表里那一行', () => {
     const questions = buildQuestions({ goal: 'g', table: buildElementTable(SNAPSHOT) });
     assert.equal(questions.click_target.criteria['1'], '[1] button "Round trip"');
