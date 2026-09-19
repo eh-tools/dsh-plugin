@@ -2152,13 +2152,20 @@ git commit -m "test(browser-operator): 自检补 browser_act 与两条错误路�
 
 > `package.json` 那里的「8 个」本来就是错的(README 一直写 9)—— 顺手纠到 10。
 
-⚠ **别只按行号改**:本任务前面的编辑会让后面几行的行号漂移。改完用这条兜底,它必须**没有任何输出**:
+⚠ **别只按行号改**:本任务前面的编辑会让后面几行的行号漂移。改完用这条兜底:
 
 ```sh
-grep -rn "9 个\|All 9\|注册 8 个\|九个工具" plugins/browser-operator/ || echo "OK: 没有残留的旧工具数"
+grep -rn "All 9\|注册 8 个\|九个工具\|9 个 browser_\* 工具\|## 9 个工具" plugins/browser-operator/ || echo "OK: 没有残留的旧工具数"
 ```
 
-(上面这条会连 `tests/smoke.mjs` 一起扫;那个文件里没有工具数文案,所以扫到就是漏了。)
+它必须**没有任何输出**。它只覆盖**明确表示"总数是 9"**的那几种写法 —— 上面那张 10 处的表才是权威清单。
+
+⚠ **`9 个` 本身不是陈旧标志。**「前 9 个都是单步工具」「其余 9 个工具照常可用」「另外 9 个
+`browser_*` 工具不受影响」都是在陈述一个**真事实**(除 `browser_act` 外确实有 9 个单步工具),
+把它们改成 10 反而是错的。所以兜底模式刻意不含裸的 `9 个`。
+
+⚠ 已知一处陈旧但**不归本任务**:`plugins/browser-operator/CONTEXT.md:18` 的「那 9 个工具」——
+该文件由 Task 11 `git rm`,其词条会并入根 `CONTEXT.md`,Task 11 搬词条时要顺手改掉这句。
 
 - [ ] **Step 2: 去掉归档横幅、修路径、补 `browser_act` 小节**
 
@@ -2250,7 +2257,7 @@ cp -r plugins/browser-operator/preset ~/.dsh/.agent-presets/browser-operator
 拷过去之后**新建会话**即可生效。改插件源码要**重启 DSH**(host 侧插件不热更)。
 
 - `preset.yml`:preset 的名字与描述(选择器里显示的那两行)。
-- `agent.cordis.yml`:一份 **shipped `standard` preset 的副本**,只改了三处 —— 开头的 `persona`
+- `agent.cordis.yml`:一份 **shipped `standard` preset 的副本**,只改了**两处** —— 开头的 `persona`
   (人设换成「浏览器操作员」,并在人设里申明产物目录规则与 `browser_act` 的用法)与末尾的
   `browser-operator` 插件行。**其余行不是本插件的东西**,是那份 `standard` 的样子,别当成仓库配置来读。
 
@@ -2324,7 +2331,8 @@ git show 7a2c457^:README.md | grep -n "browser-operator"      # 7a2c457 = browse
 - [ ] **Step 2: 根 `CONTEXT.md`**
 
 - 第 3 行:把「纯 host 插件挂进 **agent preset**(本仓库当前没有在役的纯 host 插件;归档例子见 `plugins/obsolete/browser-operator/`)」改为「纯 host 插件挂进 **agent preset**(在役例子见 `plugins/browser-operator/`)」。
-- 追加一节,词条从 `plugins/browser-operator/CONTEXT.md` 搬来说明并去掉「留档」字样(四条:**浏览器会话** / **独立浏览器 profile** / **浏览器操作预设** / **浏览器产物目录**),再按同样的「正名 + `_Avoid_`」格式补三条新词条:
+- 追加一节,词条从 `plugins/browser-operator/CONTEXT.md` 搬来说明并去掉「留档」字样(四条:**浏览器会话** / **独立浏览器 profile** / **浏览器操作预设** / **浏览器产物目录**),再按同样的「正名 + `_Avoid_`」格式补三条新词条。
+- ⚠ 搬**浏览器操作预设**那条时顺手改掉它里面的陈旧计数:原文写「给一个会话装上**那 9 个工具**」,而现在是 10 个。这是 T10 明确留给本任务的一处(T10 不许碰 `CONTEXT.md`,因为它归本任务 `git rm`)。
 
 ```markdown
 ## browser-operator(浏览器操作插件 + 预设)
