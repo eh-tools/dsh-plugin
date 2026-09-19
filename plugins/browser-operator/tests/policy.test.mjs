@@ -780,6 +780,25 @@ check('browser_act 的参数只有 goal 与 maxSteps', () => {
     assert.equal(parameters.additionalProperties, false);
 });
 
+check('配置里的 maxSteps / budgetMs 非有限值在装载期就被拒(R1 的配置那一半)', () => {
+    // 模型给的 maxSteps 由 argMaxSteps 挡;这里是**配置**那一半。两者都挡不住的话,
+    // 非有限界会让 runLoop 永不返回,而且会饿死 Node 的 timer 阶段、从内部无法中断。
+    // 注意:真正挡住非有限值的是 `positiveInt` / `maxStepsConfig`,**不是**调用点那句
+    // `Math.min(...)` —— `Math.min(NaN, 119000)` 仍然是 NaN。
+    for (const bad of [
+        Number.NaN,
+        Number.POSITIVE_INFINITY,
+        Number.NEGATIVE_INFINITY,
+        0,
+        -3,
+        6.5,
+    ]) {
+        assert.throws(() => apply(makeCtx(), { maxSteps: bad }), /browser-operator:/);
+        assert.throws(() => apply(makeCtx(), { budgetMs: bad }), /browser-operator:/);
+    }
+    assert.doesNotThrow(() => apply(makeCtx(), { budgetMs: 100000, maxSteps: 12 }));
+});
+
 checkAsync('没打开页面时 browser_act 指向 browser_navigate(而不是先抱怨缺 key)', async () => {
     const ctx = makeCtx();
     apply(ctx, {});
@@ -817,6 +836,61 @@ checkAsync('未被执行器实现的 operation 一律失败,不静默成功(R2 d
         () => executeAction({ operation: 'NAVIGATE', page, settings: {}, snapshot: {} }),
         /NAVIGATE/,
     );
+});
+
+checkAsync('执行前重读快照:同 URL 下 freshness 变了就必须抛,不许点错元素', async () => {
+    // 离线用假页面:readSnapshot 会经 page.evaluate 拿快照,这里按调用顺序喂两份。
+    // 两次 URL 相同、freshness 不同 —— 正是「只比 URL」漏掉的那种页面变动
+    // (同 URL 的 DOM 变化会让序号指向另一个元素,点错还记成成功)。
+    const snapshotAt = (freshness) => ({
+        url: 'https://example.com/list',
+        title: 'list',
+        freshness,
+        text: '',
+        elements: [],
+    });
+    const pageProbeSnapshots = [];
+    let clicked = 0;
+    const page = {
+        evaluate: async () => {
+            if (pageProbeSnapshots.length === 0) throw new Error('快照读取次数超出预期');
+            return pageProbeSnapshots.shift();
+        },
+        evaluateHandle: async () => {
+            throw new Error('不该解析元素:过期校验必须排在元素解析之前');
+        },
+    };
+
+    pageProbeSnapshots.push(snapshotAt('3|https://example.com/list|120'));
+    await assert.rejects(
+        () =>
+            executeAction({
+                operation: 'CLICK',
+                targetIndex: 2,
+                page,
+                settings: { actionTimeoutMs: 1000 },
+                snapshot: snapshotAt('2|https://example.com/list|120'),
+            }),
+        /页面在执行前变了/,
+    );
+
+    // 反过来:新鲜度一致时动作照常执行(证明上面那条不是「永远抛」)。
+    pageProbeSnapshots.push(snapshotAt('2|https://example.com/list|120'));
+    page.evaluateHandle = async () => ({
+        asElement: () => ({
+            click: async () => {
+                clicked += 1;
+            },
+        }),
+    });
+    await executeAction({
+        operation: 'CLICK',
+        targetIndex: 2,
+        page,
+        settings: { actionTimeoutMs: 1000 },
+        snapshot: snapshotAt('2|https://example.com/list|120'),
+    });
+    assert.equal(clicked, 1, 'freshness 一致时该真的点到元素');
 });
 
 // 回路用例:全部登记完再统一 await,失败才算数(见 harness.mjs 的 checkAsync)。

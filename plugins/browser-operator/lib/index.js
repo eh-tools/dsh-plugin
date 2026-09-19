@@ -1042,9 +1042,10 @@ export function apply(ctx, config = {}) {
       const goal = assertString(args.goal, 'goal');
       // 参数校验排在一切 I/O 之前:非有限的 maxSteps 绝不许离开这个函数(见 argMaxSteps)。
       const maxSteps = argMaxSteps(args.maxSteps, settings.maxSteps);
-      // 预算同样在进回路前夹一次:配置是常量,但回路一旦收到非有限预算就再也回不来,
-      // 而宿主声明的调用预算是 TOOL_TIMEOUT_MS —— 回路自己的 status:'timeout' 必须
-      // 先于宿主掐调用发生(ADR-0009 决策点 6)。
+      // 预算同样在进回路前夹一次,但**别指望这句挡非有限值** —— `Math.min(NaN, 119000)`
+      // 仍然是 NaN。真正挡住非有限 / 非正 / 非整数配置的是 `positiveInt`(装载期,见
+      // readConfig);这里保证的是上限:回路自己的 status:'timeout' 必须严格先于宿主
+      // 掐调用发生(ADR-0009 决策点 6),而宿主声明的调用预算是 TOOL_TIMEOUT_MS。
       const budgetMs = Math.min(settings.budgetMs, TOOL_TIMEOUT_MS - 1000);
 
       // 先确认会话里真的有页面:没页面时说「先 browser_navigate」比说「缺 key」有用。
@@ -1219,18 +1220,28 @@ const PAGE_OPERATIONS = Object.freeze([
 ]);
 
 /**
- * 把回路选定的动作落到页面上。执行前重新校验页面未变,过期就抛(回路会重来)。
+ * 把回路选定的动作落到页面上。
  *
  * **default-deny**:不认识的操作一律抛,绝不静默返回。静默返回等于把一次没发生的
- * 动作记成成功 —— 回路的台账、goalMet 与最终结果全会跟着错。以后新增操作必须同时
- * 加 `ACTION_SPACE` 与这里的 case,否则它会在第一次真实调用时当场炸掉。
+ * 动作记成成功 —— 回路的台账、goalMet 与最终结果全会跟着错。
  *
- * 导出只为让离线用例能证明上面这条(R2):离线测试造不出「模型给出空间外操作」的
- * 真实链路 —— `parseDecision` 会先把它拦掉 —— 所以直接对执行器本身设防。
+ * **执行前必须重读一次快照并比对 `freshness`** —— 只比 URL 是不够的:同 URL 下的
+ * DOM 变动会让 `elementHandle(page, n)` 解析到**当前**第 n 个可见可交互元素,于是
+ * 执行器点到的元素与决策所指的不是同一个,而且**不报错、还把那一步记成已执行**。
+ * `snapshot.js` 的 `freshness`(元素数|URL|文本长度)就是为这一刻准备的信号;不用它,
+ * 「模型输出永不直接变成选择器」这道闸就漏在了序号上。
+ *
+ * **分支必须穷尽**并显式列出:上面那张表决定放行谁,这里的每个分支决定怎么做。
+ * 两者一旦漂移(往列表里加了项却没加分支),末尾的 `WAIT` 会把这一步**静默吞掉并
+ * 记成成功** —— 那正是「静默成功」的失败模式。所以 WAIT 显式成支,末尾**无条件抛错**。
+ *
+ * 导出只为让离线用例能证明上面两条(R2 与过期校验):离线测试造不出「模型给出空间外
+ * 操作」的真实链路 —— `parseDecision` 会先把它拦掉 —— 所以直接对执行器本身设防。
  *
  * @param {{ operation: string, targetIndex?: number|null, text?: string, page: object, settings: object, snapshot?: object }} options
  */
 export async function executeAction({ operation, targetIndex, text, page, settings, snapshot }) {
+  // 不认识的操作连页面都不碰(同 R2 的离线用例:假页面的 evaluate 会当场抛)。
   if (!PAGE_OPERATIONS.includes(operation)) {
     throw new Error(
       `browser-operator: 执行器没有实现 operation ${String(operation)} —— ` +
@@ -1239,11 +1250,12 @@ export async function executeAction({ operation, targetIndex, text, page, settin
     );
   }
 
-  // 这个回调整段在页面上下文执行,`location` 只有进了页面才存在(同 lib/snapshot.js)。
-  // eslint-disable-next-line no-undef
-  const current = await page.evaluate(() => location.href);
-  if (typeof snapshot?.url === 'string' && current !== snapshot.url) {
-    throw new Error(`browser-operator: 页面在执行前变了(${snapshot.url} → ${current})`);
+  // 重读快照:序号只在「同一份快照」内有效,过期就抛,让回路重来一轮。
+  const current = await readSnapshot(page);
+  if (typeof snapshot?.freshness === 'string' && current.freshness !== snapshot.freshness) {
+    throw new Error(
+      `browser-operator: 页面在执行前变了(${snapshot.freshness} → ${current.freshness})`,
+    );
   }
 
   if (operation === 'CLICK') {
@@ -1266,6 +1278,11 @@ export async function executeAction({ operation, targetIndex, text, page, settin
     await page.mouse.wheel(0, delta);
     return;
   }
-  // 只剩 WAIT:PAGE_OPERATIONS 已保证这里没有别的可能。
-  await new Promise((resolve) => setTimeout(resolve, 1000));
+  if (operation === 'WAIT') {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    return;
+  }
+
+  // 走到这里说明上面的表与分支漂移了 —— 大声失败,别把这一步静默当成 WAIT 记成成功。
+  throw new Error(`browser-operator: 执行器没有实现 operation ${String(operation)}`);
 }
