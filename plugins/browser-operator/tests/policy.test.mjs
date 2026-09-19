@@ -144,31 +144,66 @@ check('state 带上 goal、当前 URL/标题、元素表与已走过的步数', 
     assert.equal(state.steps.length, 1);
 });
 
+check('questions 的键恰好是那六个', () => {
+    const questions = buildQuestions({ goal: 'g', table: buildElementTable(SNAPSHOT) });
+    assert.deepEqual(Object.keys(questions).sort(), [
+        'click_target',
+        'goal_met',
+        'operation',
+        'select_target',
+        'stuck',
+        'type_text_target',
+    ]);
+});
+
+check('每个问题都带 type 判别字段,且 noul 不带 criteria', () => {
+    const questions = buildQuestions({ goal: 'g', table: buildElementTable(SNAPSHOT) });
+    for (const [name, question] of Object.entries(questions)) {
+        assert.ok(
+            ['choice', 'noul'].includes(question.type),
+            `${name} 的 type 不对:${question.type}`,
+        );
+    }
+    assert.equal(questions.operation.type, 'choice');
+    assert.equal(questions.goal_met.type, 'noul');
+    assert.ok(!('criteria' in questions.goal_met), 'noul 问题不该带 criteria');
+});
+
 check('questions 只装当前合法的操作与目标', () => {
     const table = buildElementTable(SNAPSHOT);
     const questions = buildQuestions({ goal: 'g', table });
-    assert.deepEqual(questions.operation.criteria, [...ACTION_SPACE]);
+    assert.deepEqual(Object.keys(questions.operation.criteria), [...ACTION_SPACE]);
+    // criteria 的键就是元素序号的十进制写法 —— parseDecision 靠它把回答映射回索引。
     assert.deepEqual(
-        questions.click_target.criteria.map((c) => c.index),
-        table.eligible.CLICK,
+        Object.keys(questions.click_target.criteria),
+        table.eligible.CLICK.map(String),
     );
     assert.deepEqual(
-        questions.type_text_target.criteria.map((c) => c.index),
-        table.eligible.TYPE_TEXT,
+        Object.keys(questions.type_text_target.criteria),
+        table.eligible.TYPE_TEXT.map(String),
     );
+    assert.deepEqual(
+        Object.keys(questions.select_target.criteria),
+        table.eligible.SELECT.map(String),
+    );
+});
+
+check('criteria 的值就是元素表里那一行', () => {
+    const questions = buildQuestions({ goal: 'g', table: buildElementTable(SNAPSHOT) });
+    assert.equal(questions.click_target.criteria['1'], '[1] button "Round trip"');
 });
 
 check('没有合法目标时依然给出 questions(交给 Jev 选 DONE/BLOCKED)', () => {
     const table = buildElementTable({ elements: [] });
     const questions = buildQuestions({ goal: 'g', table });
-    assert.deepEqual(questions.click_target.criteria, []);
-    assert.deepEqual(questions.operation.criteria, [...ACTION_SPACE]);
+    assert.deepEqual(questions.click_target.criteria, {});
+    assert.deepEqual(Object.keys(questions.operation.criteria), [...ACTION_SPACE]);
 });
 
-check('questions 里带 goal_met 与 stuck 两个概率问题', () => {
+check('goal_met 与 stuck 是带实质文案的概率问题', () => {
     const questions = buildQuestions({ goal: 'g', table: buildElementTable(SNAPSHOT) });
-    assert.equal(typeof questions.goal_met.instructions, 'string');
-    assert.equal(typeof questions.stuck.instructions, 'string');
+    assert.ok(questions.goal_met.instructions.length > 0);
+    assert.ok(questions.stuck.instructions.length > 0);
 });
 
 if (failures.length > 0) {

@@ -88,41 +88,81 @@ export function buildState({ goal, snapshot, table, steps }) {
   };
 }
 
-/** 一次请求里同时问完 operation 与所有兼容 target —— 两个决策,一次网络往返。 */
+/**
+ * 8 个操作的说明文案。
+ *
+ * `@typesafe-ai/sdk` 的 `ChoiceCriteria` 是**「标签 → 描述」的对象**(不是数组),
+ * 所以 choice 的 criteria 就得长这样:键是模型要原样回给我们的标签。
+ */
+const OPERATION_HINTS = Object.freeze({
+  CLICK: 'Press one clickable element.',
+  TYPE_TEXT: 'Fill one typeable element with a verbatim fragment of the goal.',
+  SELECT: 'Choose an option in one selectable element.',
+  SCROLL_UP: 'Scroll the page up. Makes no selection.',
+  SCROLL_DOWN: 'Scroll the page down. Makes no selection.',
+  WAIT: 'Wait for the page to settle. Makes no selection.',
+  DONE: 'The goal is already met; stop.',
+  BLOCKED: 'A human is required (login, SSO, captcha); stop.',
+});
+
+/**
+ * 一次请求里同时问完 operation 与所有兼容 target —— 两个决策,一次网络往返。
+ *
+ * ⚠ 形状必须与 SDK 的 `Question` 联合一致(见 `@typesafe-ai/sdk/dist/index.d.mts`):
+ * 每个问题都带 `type`;`choice` 的 `criteria` 是「标签 → 描述」的对象;`noul` 不带
+ * criteria。**标签就是元素序号的十进制写法** —— `parseDecision` 靠它把回答映射回索引。
+ *
+ * @param {{ goal: string, table: object }} options
+ */
 export function buildQuestions({ goal, table }) {
-  const criteriaFor = (indexes) =>
-    indexes.map((index) => {
-      const element = table.byIndex.get(index);
-      return { index, label: renderLine(element) };
-    });
+  const criteriaFor = (indexes) => {
+    const criteria = {};
+    for (const index of indexes) {
+      criteria[String(index)] = renderLine(table.byIndex.get(index));
+    }
+    return criteria;
+  };
+  const operationCriteria = {};
+  for (const operation of ACTION_SPACE) operationCriteria[operation] = OPERATION_HINTS[operation];
 
   return {
     operation: {
+      type: 'choice',
       instructions:
         `Choose the single next operation that best advances this goal: ${goal}\n` +
         'Only operations that are legal on the current page are offered. ' +
         'CLICK presses a clickable element, TYPE_TEXT fills a typeable one, SELECT picks an ' +
         'option, SCROLL/WAIT make no selection, DONE means the goal is already met, and ' +
         'BLOCKED means a human is required (login, SSO, captcha).',
-      criteria: [...ACTION_SPACE],
+      criteria: operationCriteria,
     },
     click_target: {
-      instructions: 'Which element should be clicked? Only meaningful when operation is CLICK.',
+      type: 'choice',
+      instructions:
+        'Which element should be clicked? Answer with the element number. ' +
+        'Only meaningful when operation is CLICK.',
       criteria: criteriaFor(table.eligible.CLICK),
     },
     type_text_target: {
+      type: 'choice',
       instructions:
-        'Which element should receive text? Only meaningful when operation is TYPE_TEXT.',
+        'Which element should receive text? Answer with the element number. ' +
+        'Only meaningful when operation is TYPE_TEXT.',
       criteria: criteriaFor(table.eligible.TYPE_TEXT),
     },
     select_target: {
-      instructions: 'Which element should be selected? Only meaningful when operation is SELECT.',
+      type: 'choice',
+      instructions:
+        'Which element should be selected? Answer with the element number. ' +
+        'Only meaningful when operation is SELECT.',
       criteria: criteriaFor(table.eligible.SELECT),
     },
     goal_met: {
+      type: 'noul',
       instructions: `The goal is already satisfied by the page as it stands: ${goal}`,
     },
     stuck: {
+      type: 'noul',
       instructions:
         'No offered operation can make further progress on this goal, and repeating the ' +
         'last operation would not help.',
