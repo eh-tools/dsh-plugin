@@ -6,10 +6,10 @@ pnpm-lock.yaml
 justfile
 # 挂载示例文档:markdown 内容, 并非 YAML 文件, prettier 会解析失败
 plugins/obsolete/tool-vision/cordis.yml
-# 退役留档的 preset 快照: 保持原样才算"那份 preset 当时长什么样"。
+# browser-operator 的 preset 模板: 不归 prettier 管。
 # prettier 会重排 YAML(含 persona 的 `>-` 折叠块缩进, 那会改变语义); check-yaml 也因
 # `!!js` 自定义标签把它排除了。同款口径见上面那条。
-plugins/obsolete/browser-operator/preset/
+plugins/browser-operator/preset/
 # 静态插件的 client bundle: 手写浏览器闭包, 不归 prettier 管
 # (与 eslint.config.js 里 client bundle 整体豁免的约定一致)
 plugins/ds-balance/lib/client.js
