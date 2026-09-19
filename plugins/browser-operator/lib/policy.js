@@ -296,19 +296,18 @@ export function validateDecision(decision, table, { candidates = [] } = {}) {
 /**
  * `TYPE_TEXT` 的第二道闸:选中下标 → 逐字片段。
  *
- * 没答时回落到候选里的第一个 —— 那是**在本次真的给出的候选内**选择,不是凭空生成;
- * 而越界(包括候选整个为空)一律拒绝,由回路重新观察,不许静默降级。
+ * **没答**(`undefined`,标签不是十进制下标时会解析成它)与越界(包括候选整个为空)
+ * 走同一条路:一律拒绝,由回路重新观察;重试额度用尽即 `status: 'error'`。这里**没有**
+ * 「取候选第一个顶上」的回落 —— 那等于把「Jev 选」偷换成「代码猜第一个词」,正是本
+ * 工具不生成文本的立场要排除的事。
  */
 function validateTypeTextValue(value, candidates) {
-  if (value === undefined && candidates.length > 0) {
-    return { ok: true, text: candidates[0] };
-  }
   if (!Number.isInteger(value) || value < 0 || value >= candidates.length) {
     return {
       ok: false,
       reason:
-        `TYPE_TEXT 的文本下标 ${String(value)} 不在本次提供的 ${candidates.length} 个候选里 ` +
-        '(候选来自 goal 与目标字段标签的逐字片段)',
+        `browser-operator: TYPE_TEXT 的文本下标 ${String(value)} ` +
+        `不在本次提供的 ${candidates.length} 个候选里(候选来自 goal 与目标字段标签的逐字片段)`,
     };
   }
   return { ok: true, text: candidates[value] };

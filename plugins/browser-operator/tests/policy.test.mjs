@@ -530,14 +530,33 @@ check('候选为空时即便给了下标也拒绝(候选只有 0 个)', () => {
     assert.equal(verdict.ok, false);
 });
 
-check('TYPE_TEXT 没答文本那一问时回落到候选里的第一个(仍在本次候选内)', () => {
+check('TYPE_TEXT 没答文本那一问 → 拒绝,绝不回落到 candidates[0]', () => {
     const table = buildElementTable(SNAPSHOT);
     const decision = { operation: 'TYPE_TEXT', typeTextTarget: 4 };
-    assert.deepEqual(validateDecision(decision, table, { candidates: ['Zurich', 'London'] }), {
-        ok: true,
-        targetIndex: 4,
-        text: 'Zurich',
-    });
+    const verdict = validateDecision(decision, table, { candidates: ['Zurich', 'London'] });
+    assert.equal(verdict.ok, false, '没答文本那一问时必须拒绝,不许静默填第一个候选');
+    assert.match(verdict.reason, /browser-operator:/, '拒绝理由要带浏览器操作员前缀');
+    assert.ok(!('text' in verdict), '被拒的校验不该带回任何文本');
+});
+
+check('文本标签不是十进制下标(答成片段文本)→ 拒绝,绝不回落到 candidates[0]', () => {
+    const table = buildElementTable(SNAPSHOT);
+    // Jev 答的是片段**文本**而不是位置:`parseDecision` 按 indexOfLabel 把它当作「没给」。
+    const response = {
+        answers: {
+            operation: { choice: 'TYPE_TEXT', confidence: 0.9 },
+            type_text_target: { choice: '4', confidence: 0.9 },
+            type_text_value: { choice: 'Zurich', confidence: 0.9 },
+            goal_met: { noul: 0.1 },
+            stuck: { noul: 0.1 },
+        },
+    };
+    const decision = parseDecision(response);
+    assert.equal(decision.typeTextValue, undefined, '非十进制标签该解析成「没给」');
+    const verdict = validateDecision(decision, table, { candidates: ['Zurich', 'London'] });
+    assert.equal(verdict.ok, false, '答成片段文本时必须拒绝');
+    assert.match(verdict.reason, /browser-operator:/);
+    assert.ok(!('text' in verdict), '被拒的校验不该带回任何文本');
 });
 
 check('非 TYPE_TEXT 的操作不产出文本', () => {
@@ -899,6 +918,31 @@ checkAsync('TYPE_TEXT 越界的文本下标被拒,不回落到 candidates[0]', a
     assert.equal(result.status, 'error');
     assert.equal(deps.executed.length, 0, '越界的下标一次都不该执行');
     assert.match(result.error, /9/);
+});
+
+checkAsync('回路里没答文本那一问 → 收在 error,绝不敲进 candidates[0]', async () => {
+    // 三轮都答 TYPE_TEXT、目标合法,但**每次都没答「填哪段文本」**(标签整个缺失)。
+    // 校验拒绝 → 重新观察;重试额度用尽 → error。这一条钉的是回路层面的结果:
+    // 绝不能出现「敲了候选第一个」这种静默降级。
+    const noTextAnswer = {
+        answers: {
+            operation: { choice: 'TYPE_TEXT', confidence: 0.9 },
+            type_text_target: { choice: '4', confidence: 0.9 },
+            goal_met: { noul: 0.1 },
+            stuck: { noul: 0.1 },
+        },
+    };
+    const goal = 'Fly from Zurich to London';
+    const firstCandidate = typeTextCandidates({ goal, element: TYPEABLE.elements[1] })[0];
+    const deps = fakeDeps({
+        responses: [noTextAnswer, noTextAnswer, noTextAnswer],
+        snapshot: TYPEABLE,
+    });
+    const result = await runWith(deps, { goal, maxSteps: 6 });
+    assert.equal(result.status, 'error', '没答文本那一问必须收在 error');
+    assert.equal(deps.executed.length, 0, '一次都不该执行,更不该敲进候选第一个');
+    assert.match(result.error, /TYPE_TEXT/, '错误里要能看出是哪道闸拦的');
+    assert.notEqual(firstCandidate, undefined, '这条用例的前提是确实存在候选');
 });
 
 checkAsync('被拒一步的 reason 会留在下一步的台账上(不丢诊断)', async () => {
