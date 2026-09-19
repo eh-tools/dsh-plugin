@@ -2,6 +2,11 @@
 pnpm-lock.yaml
 # worktree 工作区
 .worktrees/
+# superpowers 技能的工作区(plan brief / report / ledger 等运行期产物)。
+# 它自己带一个 `*` 的 .gitignore,所以 git 已经不看它了;但 **prettier 只读顶层
+# ignore 文件、不读嵌套 .gitignore**,不写在这里 `prettier --check .` 会因这些
+# markdown 直接 exit 1,把门禁搞红。与上面 `.worktrees/` 同源处理。
+.superpowers/
 # justfile 用 just 语法, prettier 无对应 parser 会解析失败, 不归 prettier 管
 justfile
 # 挂载示例文档:markdown 内容, 并非 YAML 文件, prettier 会解析失败

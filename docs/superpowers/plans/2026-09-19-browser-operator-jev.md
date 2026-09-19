@@ -19,6 +19,7 @@
 - **文档路径约定(AGENTS.md)**:文档与配置里**绝不写本机绝对路径**,一律 `<repo-abs-path>`。
 - **门禁口径(ADR-0009 决策点 4)**:`just check` = lint + test + audit,**必须保持离线**:不需要浏览器、不需要网络、不需要 API key。`tests/smoke.mjs` **不在**门禁里,只能手动跑。
 - **门禁不 glob**:新测试必须显式加进 **三处** —— `justfile` 的 `test` recipe、根 `package.json` 的 `scripts.test`、根 `package.json` 的 `scripts.check`。
+- **新用例插在尾部 runner 之前**(T5 起):`tests/policy.test.mjs` 的末尾有一段统一 `await` 异步用例、再打印摘要并可能 `exit(1)` 的 runner。**在它之后注册的用例永远不会运行、零痕迹、exit 0** —— 正是「门禁无声变瞎」。追加前先看一眼那段的起点,把用例插在它**前面**;runner 之后会被 guard 直接抛错(而不是静默跳过)。
 - **工具定义四件套**:`tests/smoke.mjs:225-231` 断言每个注册的工具都有数值 `timeoutMs`、`output.schema`、`output.render`(函数)、`presentCall`(函数)。新工具必须齐全。
 - **契约常量(照抄,别自创)**:`TOOL_TIMEOUT_MS = 120000`(已有,`lib/index.js:57`);`maxSteps` 默认 **12** / 硬上限 **40**;`budgetMs` 默认 **100000**(必须严格小于 120000);`jevTimeoutMs` **5000**;`actionTimeoutMs` 默认 **15000**(已有);`goalMet` / `stuck` 停止阈值 **0.8**;低置信度阈值 **0.35**、连续 **3** 步;校验失败最多重试 **2** 次;`WAIT` 单次上限 **1000 ms**;`jevModel` 默认 `'jev-latest'`。
 - **闭合枚举**:动作空间 8 个(`CLICK` / `TYPE_TEXT` / `SELECT` / `SCROLL_UP` / `SCROLL_DOWN` / `WAIT` / `DONE` / `BLOCKED`);`status` 8 个(`done` / `stuck` / `blocked` / `max_steps` / `timeout` / `error` / `uncertain` / `text_unavailable`)。
