@@ -263,7 +263,7 @@ check('动作空间闭合在 8 个操作上', () => {
     );
 });
 
-check('status 闭合在 8 个取值上', () => {
+check('status 闭合在 9 个取值上', () => {
     assert.deepEqual(
         [...STATUS],
         [
@@ -275,6 +275,7 @@ check('status 闭合在 8 个取值上', () => {
             'error',
             'uncertain',
             'text_unavailable',
+            'no_progress',
         ],
     );
 });
@@ -1274,6 +1275,54 @@ checkAsync('decide 不带 usage 时按 0 计,不产生 NaN', async () => {
     const deps = fakeDeps({ responses: CLICK_THEN_DONE });
     const result = await runWith(deps);
     assert.deepEqual(result.usage, { inputTokens: 0, outputTokens: 0, calls: 2 });
+});
+
+/** 同一页面上的一次滚动:没有目标。 */
+const SCROLL_ANSWER = {
+    answers: {
+        operation: { choice: 'SCROLL_DOWN', confidence: 0.9 },
+        goal_met: { noul: 0.1 },
+        stuck: { noul: 0.1 },
+    },
+};
+
+checkAsync('同一个操作+同一个目标、页面毫无变化 → 连续 3 次即收在 no_progress', async () => {
+    // 实测现场:HN 落点页上 [185] 解析到另一个元素(页内锚点),点它不改元素数 / URL /
+    // 正文长度,`freshness` 因此看不见,回路连点 11 次直到步数上限。
+    const frozen = { ...SNAPSHOT, freshness: '9|u|99' };
+    const deps = fakeDeps({
+        responses: Array.from({ length: 12 }, () => CLICK_ANSWER),
+        snapshot: frozen,
+    });
+    const result = await runWith(deps, { maxSteps: 12 });
+    assert.equal(result.status, 'no_progress');
+    // 第 1 步先建立 lastActionKey,第 2/3/4 步各命中一次 —— 第 4 步收场。
+    assert.equal(result.steps.length, 4);
+    assert.equal(deps.executed.length, 3, '最后一次被识别为重复,不再执行');
+});
+
+checkAsync('页面没变但换了操作或目标 → 不算原地踏步', async () => {
+    // 只看 freshness 会把「点了没用、改去滚动」也判成打转 —— 键里必须有操作与目标。
+    const frozen = { ...SNAPSHOT, freshness: '9|u|99' };
+    const alternating = Array.from({ length: 8 }, (_, i) =>
+        i % 2 === 0 ? CLICK_ANSWER : SCROLL_ANSWER,
+    );
+    const deps = fakeDeps({ responses: alternating, snapshot: frozen });
+    const result = await runWith(deps, { maxSteps: 4 });
+    assert.equal(result.status, 'max_steps', '交替的操作不该被判成原地踏步');
+});
+
+checkAsync('同一个操作重复但页面每步都在变 → 不算原地踏步', async () => {
+    let step = 0;
+    const deps = fakeDeps({
+        responses: Array.from({ length: 12 }, () => CLICK_ANSWER),
+        snapshot: SNAPSHOT,
+    });
+    const result = await runWith(deps, {
+        maxSteps: 4,
+        observe: async () => ({ ...SNAPSHOT, freshness: `9|u|${(step += 1)}` }),
+    });
+    assert.equal(result.status, 'max_steps', '页面在动就不算原地踏步');
 });
 
 /** 目标字段(4 号 textbox)的 name 是 'Departure';2 号 'Where from?' 是标签代表。 */

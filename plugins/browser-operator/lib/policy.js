@@ -29,6 +29,9 @@ export const STATUS = Object.freeze([
   'error',
   'uncertain',
   'text_unavailable',
+  // 与 `stuck` **分开**:`stuck` 是 Jev 自报「再走也没用」,这个是回路自己观测到
+  // 「同一个操作 + 同一个目标,页面一点没变」。混用会让台账读不出到底是哪一种。
+  'no_progress',
 ]);
 
 /** 哪些 kind 支持哪些操作。`CLICK` 对 kind 无要求(由 eligible 决定)。 */

@@ -1001,7 +1001,8 @@ export function apply(ctx, config = {}) {
             type: 'string',
             enum: [...STATUS],
             description:
-              'done / stuck / blocked / max_steps / timeout / error / uncertain / text_unavailable。',
+              'done / stuck / blocked / max_steps / timeout / error / uncertain / text_unavailable / no_progress。' +
+              'no_progress = 同一个操作与目标被反复重复而页面毫无变化(区别于 Jev 自报的 stuck)。',
           },
           steps: {
             type: 'array',

@@ -31,6 +31,11 @@ const STALE_FLAG = 'stale';
 /** goal_met / stuck 达到这个概率就停。 */
 const STOP_PROBABILITY = 0.8;
 /**
+ * 连续这么多步「同一个操作 + 同一个目标,且页面观测完全没变」即判为原地踏步。
+ * 与 `LOW_CONFIDENCE_RUN` 同取 3:两次可能只是重试,三次就是在原地打转。
+ */
+const NO_PROGRESS_RUN = 3;
+/**
  * `text_unavailable` 的文案。spec(ADR-0009 决策点 6)要求它**显式**把调用方指去
  * `browser_fill` 单步工具 —— 「凭空生成文本」这条路本工具是**有意**不走的。
  */
@@ -94,6 +99,13 @@ export async function runLoop({ goal, maxSteps, budgetMs, now, observe, decide, 
    * 校验失败发生在 `recordStep` 之后,要让下一次记录带上它,否则那几轮白花。
    */
   let lastReason = '';
+  /**
+   * 无进展探测:上一步**执行成功**后,页面观测变没变、模型有没有又选同一个操作与目标。
+   * 只记执行成功的那一步 —— 执行前校验失败的轮次本身就说明页面变了。
+   */
+  let lastActionKey = null;
+  let lastActionFreshness = null;
+  let noProgressRun = 0;
 
   /**
    * 记一步。**每个被接受的决策都记**,包括终止的那一步(DONE / 高概率 goal_met /
@@ -199,6 +211,29 @@ export async function runLoop({ goal, maxSteps, budgetMs, now, observe, decide, 
           continue; // 重新观察
         }
 
+        // 原地踏步:上一步执行过、这一份观测与它决策时那份**完全相同**、模型又选了**同一个
+        // 操作与同一个目标** —— 那一步什么都没改变,再执行一次只会再来一遍。实测踩到过:
+        // 落点页上同一个下标解析到另一个可点元素(页内锚点),点它不改元素数 / URL / 正文长度,
+        // `freshness` 因此看不见,回路连点 11 次直到步数上限。
+        //
+        // ⚠ 不能只看 freshness:往输入框打字同样不改这三样,所以必须同时要求操作与目标相同。
+        const actionKey = `${decision.operation}:${checked.targetIndex ?? ''}`;
+        if (
+          lastActionKey !== null &&
+          actionKey === lastActionKey &&
+          snapshot.freshness === lastActionFreshness
+        ) {
+          noProgressRun += 1;
+        } else {
+          noProgressRun = 0;
+        }
+        if (noProgressRun >= NO_PROGRESS_RUN) {
+          // 记这一步:台账要看得出「就是它被重复了」。它**没有**被执行 —— 与其余终止分支
+          // 一致,`steps` 是「决策过什么」的台账,不是「执行过什么」。
+          recordStep(decision, checked.targetIndex, checked.text, lastReason);
+          return done('no_progress', steps, goalMet, now() - startedAt);
+        }
+
         // 文本是 **Jev 选中的**那一份逐字片段 —— 不是候选里的第一个。
         recordStep(decision, checked.targetIndex, checked.text, lastReason);
         lastReason = ''; // 已写进台账,下一步从干净状态开始
@@ -241,6 +276,10 @@ export async function runLoop({ goal, maxSteps, budgetMs, now, observe, decide, 
       }
       // 执行成功即清零:额度限的是**连续**失败。
       staleFailures = 0;
+      // 记下这一步供下一次观测做无进展比对。只在执行成功后才记 —— 上面那条 continue
+      // 的轮次本身就说明页面变了,不该算进「什么都没发生」。
+      lastActionKey = `${action.operation}:${action.targetIndex ?? ''}`;
+      lastActionFreshness = action.snapshot?.freshness ?? null;
 
       const elapsedAfter = now() - startedAt;
       if (elapsedAfter >= budgetMs) return done('timeout', steps, goalMet, elapsedAfter);
