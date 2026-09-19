@@ -10,6 +10,9 @@ export default [
       'node_modules',
       'test-results',
       'playwright-report',
+      // 个人 demo 目录(已 gitignore): 与仓库门禁无关, 不该因为个人脚本的风格问题
+      // 把 `just check` 搞红。与 test-results 同款处理。
+      'demos',
       // playwright 登录脚本: page.evaluate 回调在浏览器上下文运行,
       // localStorage 等静态 no-undef 检查无意义
       'plugins/ds-balance/scripts/deepseek-login.cjs',

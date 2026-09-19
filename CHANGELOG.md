@@ -8,6 +8,9 @@
 
 ### Added
 
+- `scripts/index.md`:新增 `scripts/` 目录索引 —— 5 个仓库工具脚本(两个离线自检 + 三条钩子入口)
+  各自的用途、**谁调用**(`just test` / `just check` / `pnpm test` / pre-commit 的哪个阶段)与维护约定。
+  没有这页时,「这个脚本还有人用吗」只能靠全仓库搜路径回答
 - `browser-operator`:`browser_act` 新增可选参数 **`text`** —— 给了就**只用它一个候选**作为 `TYPE_TEXT`
   要输入的逐字文本,不再从 goal 切片段。**中文目标句往往没有分隔符**,切词只能切出整句指令:实测
   `goal: "在搜索框输入哥德尔不完备定理并搜索"` 时,候选里唯一 goal 片段就是这一整句,于是整句被填进了
@@ -43,6 +46,12 @@
 
 ### Changed
 
+- 个人脚本与仓库工具分家:个人自动化/试验脚本移出 `scripts/`,改放仓库根的 **`demos/`**(与
+  `docs/` 平级)并整目录写入 `.gitignore`;`scripts/` 只留仓库自己的工具。**原来的做法是忽略
+  `scripts/` 整个目录,那是无效规则** —— 该目录下 5 个门禁/自检脚本早已被 git 跟踪,`gitignore`
+  对已跟踪文件不生效,规则形同虚设,还会误导后来者
+- `eslint.config.js`:ignores 新增 `demos`。**prettier 读 `.gitignore` 会自动跳过,eslint 不会**
+  —— 不显式加,个人脚本的风格问题会把 `just check` 搞红(与 `test-results` 同款处理)
 - `browser-operator`:`browser_act` 新增终止状态 **`no_progress`** —— 同一个操作与同一个目标被反复
   重复、而页面观测(`freshness`)完全没变,连着 3 次即停。**与 Jev 自报的 `stuck` 分开**(来源不同,
   混用会让台账读不准)。实测:HN 上一个目标第 1 步就达成、之后空转 11 步到步数上限,两次运行都复现;
