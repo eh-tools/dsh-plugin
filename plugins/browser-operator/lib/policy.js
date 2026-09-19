@@ -75,3 +75,57 @@ function renderLine(element) {
 export function renderElementTable(table) {
   return table.lines.join('\n');
 }
+
+/** 交给 Jev 的 state。键名是代码用的,模型只看得到内容。 */
+export function buildState({ goal, snapshot, table, steps }) {
+  return {
+    goal,
+    url: snapshot?.url ?? '',
+    title: snapshot?.title ?? '',
+    visibleText: typeof snapshot?.text === 'string' ? snapshot.text : '',
+    elementTable: renderElementTable(table),
+    steps: Array.isArray(steps) ? steps : [],
+  };
+}
+
+/** 一次请求里同时问完 operation 与所有兼容 target —— 两个决策,一次网络往返。 */
+export function buildQuestions({ goal, table }) {
+  const criteriaFor = (indexes) =>
+    indexes.map((index) => {
+      const element = table.byIndex.get(index);
+      return { index, label: renderLine(element) };
+    });
+
+  return {
+    operation: {
+      instructions:
+        `Choose the single next operation that best advances this goal: ${goal}\n` +
+        'Only operations that are legal on the current page are offered. ' +
+        'CLICK presses a clickable element, TYPE_TEXT fills a typeable one, SELECT picks an ' +
+        'option, SCROLL/WAIT make no selection, DONE means the goal is already met, and ' +
+        'BLOCKED means a human is required (login, SSO, captcha).',
+      criteria: [...ACTION_SPACE],
+    },
+    click_target: {
+      instructions: 'Which element should be clicked? Only meaningful when operation is CLICK.',
+      criteria: criteriaFor(table.eligible.CLICK),
+    },
+    type_text_target: {
+      instructions:
+        'Which element should receive text? Only meaningful when operation is TYPE_TEXT.',
+      criteria: criteriaFor(table.eligible.TYPE_TEXT),
+    },
+    select_target: {
+      instructions: 'Which element should be selected? Only meaningful when operation is SELECT.',
+      criteria: criteriaFor(table.eligible.SELECT),
+    },
+    goal_met: {
+      instructions: `The goal is already satisfied by the page as it stands: ${goal}`,
+    },
+    stuck: {
+      instructions:
+        'No offered operation can make further progress on this goal, and repeating the ' +
+        'last operation would not help.',
+    },
+  };
+}

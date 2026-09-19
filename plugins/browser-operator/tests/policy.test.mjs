@@ -9,7 +9,14 @@
 
 import assert from 'node:assert/strict';
 
-import { ACTION_SPACE, STATUS, buildElementTable, renderElementTable } from '../lib/policy.js';
+import {
+    ACTION_SPACE,
+    STATUS,
+    buildElementTable,
+    buildQuestions,
+    buildState,
+    renderElementTable,
+} from '../lib/policy.js';
 
 let passed = 0;
 const failures = [];
@@ -120,6 +127,48 @@ check('renderElementTable 输出多行文本', () => {
     const text = renderElementTable(table);
     assert.equal(text.split('\n').length, 5);
     assert.match(text, /\[5\] button "Search"/);
+});
+
+check('state 带上 goal、当前 URL/标题、元素表与已走过的步数', () => {
+    const table = buildElementTable(SNAPSHOT);
+    const state = buildState({
+        goal: 'Find one-way flights',
+        snapshot: SNAPSHOT,
+        table,
+        steps: [{ step: 1, operation: 'CLICK', targetIndex: 1, reason: '', confidence: 0.9 }],
+    });
+    assert.equal(state.goal, 'Find one-way flights');
+    assert.equal(state.url, SNAPSHOT.url);
+    assert.equal(state.title, SNAPSHOT.title);
+    assert.match(state.elementTable, /\[1\] button "Round trip"/);
+    assert.equal(state.steps.length, 1);
+});
+
+check('questions 只装当前合法的操作与目标', () => {
+    const table = buildElementTable(SNAPSHOT);
+    const questions = buildQuestions({ goal: 'g', table });
+    assert.deepEqual(questions.operation.criteria, [...ACTION_SPACE]);
+    assert.deepEqual(
+        questions.click_target.criteria.map((c) => c.index),
+        table.eligible.CLICK,
+    );
+    assert.deepEqual(
+        questions.type_text_target.criteria.map((c) => c.index),
+        table.eligible.TYPE_TEXT,
+    );
+});
+
+check('没有合法目标时依然给出 questions(交给 Jev 选 DONE/BLOCKED)', () => {
+    const table = buildElementTable({ elements: [] });
+    const questions = buildQuestions({ goal: 'g', table });
+    assert.deepEqual(questions.click_target.criteria, []);
+    assert.deepEqual(questions.operation.criteria, [...ACTION_SPACE]);
+});
+
+check('questions 里带 goal_met 与 stuck 两个概率问题', () => {
+    const questions = buildQuestions({ goal: 'g', table: buildElementTable(SNAPSHOT) });
+    assert.equal(typeof questions.goal_met.instructions, 'string');
+    assert.equal(typeof questions.stuck.instructions, 'string');
 });
 
 if (failures.length > 0) {
