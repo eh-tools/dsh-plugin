@@ -66,3 +66,10 @@
 - **回滚**:把 `plugins/obsolete/browser-operator` 移回 `plugins/browser-operator`;把 `preset/agent.cordis.yml`
   里的占位符换回绝对路径后放回 `~/.dsh/.agent-presets/browser-operator/`;再在 `justfile` / `package.json`
   里加回那条 smoke —— 源码一个字符未改(纯重命名 + 注释内的路径)。
+
+## 后续
+
+- **2026-09-19:本决策被部分回滚。** 插件已移回 `plugins/browser-operator/`,并接上一层 Jev 决策回路
+  (`browser_act` 目标级工具)。上面那段回滚步骤里**前两条照做、第三条有意不照做** —— 门禁要保持
+  「离线、不需要浏览器」,补回来的是一条离线纯策略层单测,而不是会拉起有头窗口的那条 smoke。
+  完整决策、代价与同步改动清单见 `docs/adr/0009`。本节只作指针,不修改上面的原始记录。
