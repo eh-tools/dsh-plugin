@@ -849,6 +849,11 @@ checkAsync(
         // spec 要求这条结果**显式**把调用方指去 browser_fill 单步工具。
         assert.match(result.error, /browser_fill/);
         assert.equal(deps.executed.length, 0, '没有文本可填时不该执行任何动作');
+        // 这一步从没走到校验(Jev 答的 `type_text_target` 是 '4'),而台账里只有**校验过**
+        // 的目标 —— 记原始值会让读轨迹的人以为「已经确认要填 4 号元素」。
+        const [step] = result.steps;
+        assert.equal(step.operation, 'TYPE_TEXT');
+        assert.equal(step.targetIndex, undefined, '没校验过的目标不该写进轨迹');
     },
 );
 

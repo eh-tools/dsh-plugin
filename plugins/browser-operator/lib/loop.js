@@ -156,7 +156,10 @@ export async function runLoop({ goal, maxSteps, budgetMs, now, observe, decide, 
 
         if (decision.operation === 'TYPE_TEXT' && candidates.length === 0) {
           // 候选整个为空:goal 与所有可填字段的标签都没给出可用片段,这一步只能停下。
-          recordStep(decision, decision.typeTextTarget, undefined, lastReason);
+          // 这一步**没走到校验**,`decision.typeTextTarget` 还是 Jev 的原始回答 —— 记它会让
+          // 读轨迹的人以为「已经确认要填 3 号元素」。所以这里不记目标(与别的分支一致:
+          // 只有 `checked.targetIndex` 那种校验过的值才进台账)。
+          recordStep(decision, null, undefined, lastReason);
           return finish('text_unavailable', steps, decision.goalMet, now() - startedAt, NO_TEXT);
         }
 
