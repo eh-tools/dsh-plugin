@@ -21,6 +21,13 @@ import {
     validateDecision,
 } from '../lib/policy.js';
 import { evaluateStop, runLoop } from '../lib/loop.js';
+import {
+    ELEMENT_SELECTOR,
+    MAX_ELEMENTS,
+    elementHandle,
+    pageProbe,
+    readSnapshot,
+} from '../lib/snapshot.js';
 import { createHarness } from './harness.mjs';
 
 /**
@@ -71,6 +78,61 @@ const SNAPSHOT = {
         { index: 5, role: 'button', name: 'Search', value: '', disabled: true, kind: 'clickable' },
     ],
 };
+
+checkAsync('readSnapshot 把选择器作为参数传进页面,并透传结果', async () => {
+    const canned = { ...SNAPSHOT };
+    let seen;
+    const page = {
+        evaluate: async (fn, arg) => {
+            seen = arg;
+            return canned;
+        },
+    };
+    assert.deepEqual(await readSnapshot(page), canned);
+    assert.equal(seen.selector, ELEMENT_SELECTOR);
+    assert.equal(seen.limit, MAX_ELEMENTS);
+    assert.equal(seen.index, undefined, '读快照时不该带 index');
+});
+
+checkAsync('page.evaluate 返回非对象时抛错', async () => {
+    const page = { evaluate: async () => null };
+    await assert.rejects(() => readSnapshot(page), /browser-operator:/);
+});
+
+checkAsync('elementHandle 用同一个选择器按序号解析元素', async () => {
+    const fakeElement = { click: async () => {} };
+    let seen;
+    const page = {
+        evaluateHandle: async (fn, arg) => {
+            seen = arg;
+            return { asElement: () => fakeElement };
+        },
+    };
+    assert.equal(await elementHandle(page, 3), fakeElement);
+    assert.equal(seen.selector, ELEMENT_SELECTOR);
+    assert.equal(seen.index, 3);
+});
+
+checkAsync('元素在执行前消失时抛错', async () => {
+    let disposed = false;
+    const page = {
+        evaluateHandle: async () => ({
+            asElement: () => null,
+            dispose: async () => {
+                disposed = true;
+            },
+        }),
+    };
+    await assert.rejects(() => elementHandle(page, 3), /元素 3/);
+    assert.ok(disposed, '拿不到元素时该把句柄清掉,不能泄漏');
+});
+
+check('pageProbe 是不依赖闭包的普通函数(可被序列化进页面)', () => {
+    assert.equal(typeof pageProbe, 'function');
+    const source = pageProbe.toString();
+    assert.ok(!source.includes('require('), '不该引用 Node 模块');
+    assert.ok(!source.includes('import '), '不该有 import');
+});
 
 check('动作空间闭合在 8 个操作上', () => {
     assert.deepEqual(
