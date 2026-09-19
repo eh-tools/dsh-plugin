@@ -1793,6 +1793,18 @@ check('browser_act 的参数只有 goal 与 maxSteps', () => {
   assert.equal(parameters.additionalProperties, false);
 });
 
+check('配置里的 maxSteps / budgetMs 非有限值在装载期就被拒(R1 的配置那一半)', () => {
+  // 模型给的 maxSteps 由 argMaxSteps 挡;这里是**配置**那一半。两者都挡不住的话,
+  // 非有限界会让 runLoop 永不返回,而且会饿死 Node 的 timer 阶段、从内部无法中断。
+  // 注意:真正挡住非有限值的是 `positiveInt` / `maxStepsConfig`,**不是**调用点那句
+  // `Math.min(...)` —— `Math.min(NaN, 119000)` 仍然是 NaN。
+  for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, 0, -3, 6.5]) {
+    assert.throws(() => apply(makeCtx(), { maxSteps: bad }), /browser-operator:/);
+    assert.throws(() => apply(makeCtx(), { budgetMs: bad }), /browser-operator:/);
+  }
+  assert.doesNotThrow(() => apply(makeCtx(), { budgetMs: 100000, maxSteps: 12 }));
+});
+
 check('没打开页面时 browser_act 指向 browser_navigate(而不是先抱怨缺 key)', async () => {
   const ctx = makeCtx();
   apply(ctx, {});
@@ -1964,12 +1976,26 @@ ctx.tools.register({
   },
 });
 
-/** 把回路选定的动作落到页面上。执行前重新校验页面未变,过期就抛(回路会重来)。 */
+/**
+ * 把回路选定的动作落到页面上。
+ *
+ * **执行前必须重读一次快照并比对 `freshness`** —— 只比 URL 是不够的:同 URL 下的 DOM
+ * 变动会让 `elementHandle(page, n)` 解析到**当前**第 n 个可见可交互元素,于是执行器点到
+ * 的元素与决策所指的不是同一个,而且**不报错、还把那一步记成已执行**。
+ * `snapshot.js` 的 `freshness`(元素数|URL|文本长度)就是为这一刻准备的信号;不用它,
+ * 「模型输出永不直接变成选择器」这道闸就漏在了序号上。对不上就抛,回路会记成 error。
+ *
+ * 分支必须**穷尽**并显式列出:`PAGE_OPERATIONS` 决定放行谁,这里的每个分支决定怎么做。
+ * 两者一旦漂移(往列表里加了项却没加分支),最后那个无条件 WAIT 会把这一步**静默吞掉
+ * 并记成成功** —— 那正是「静默成功」的失败模式。所以:WAIT 显式成支,末尾**无条件抛错**。
+ */
 async function executeAction({ operation, targetIndex, text, snapshot }) {
   const page = existingPage();
-  const current = await page.evaluate(() => location.href);
-  if (typeof snapshot?.url === 'string' && current !== snapshot.url) {
-    throw new Error(`browser-operator: 页面在执行前变了(${snapshot.url} → ${current})`);
+  const current = await readSnapshot(page);
+  if (typeof snapshot?.freshness === 'string' && current.freshness !== snapshot.freshness) {
+    throw new Error(
+      `browser-operator: 页面在执行前变了(${snapshot.freshness} → ${current.freshness})`,
+    );
   }
 
   if (operation === 'CLICK') {
@@ -1994,7 +2020,11 @@ async function executeAction({ operation, targetIndex, text, snapshot }) {
   }
   if (operation === 'WAIT') {
     await new Promise((resolve) => setTimeout(resolve, 1000));
+    return;
   }
+
+  // 走到这里说明 PAGE_OPERATIONS 与分支漂移了 —— 大声失败,别静默当成 WAIT。
+  throw new Error(`browser-operator: 执行器没有实现 operation ${String(operation)}`);
 }
 ```
 
