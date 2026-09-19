@@ -6,6 +6,20 @@
 
 ## [Unreleased]
 
+### Added
+
+- `browser-operator`:`browser_act` 新增可选参数 **`text`** —— 给了就**只用它一个候选**作为 `TYPE_TEXT`
+  要输入的逐字文本,不再从 goal 切片段。**中文目标句往往没有分隔符**,切词只能切出整句指令:实测
+  `goal: "在搜索框输入哥德尔不完备定理并搜索"` 时,候选里唯一 goal 片段就是这一整句,于是整句被填进了
+  搜索框,而 `status` 是 `done`、`goalMet=0.53`,**看起来像成功**。要填确切文字时请传 `text`
+- `browser-operator`:新增目标级工具 `browser_act` —— 给一个目标,内部用 TypeSafe 的 Jev
+  连跑「观察 → 决策 → 执行」,最多 12 步(上限 40),返回精简轨迹与 `goalMet` 概率。需要
+  `TYPESAFE_API_KEY`;没有它时只有这个工具报错,其余 9 个照常。决策与边界见 `docs/adr/0009`
+- `browser-operator`:新增离线单测 `tests/policy.test.mjs`(策略层 + 回路 + 注册形状)与
+  `tests/harness.test.mjs`(测试脚手架自身),进 `just check`
+- `browser-operator`:`browser_act` 的返回值新增 `usage = { inputTokens, outputTokens, calls }` ——
+  整次回路的 Jev token 开销(含校验失败后重新观察的那几轮),不必再去 console 查用量
+
 ### Removed
 
 - `file-git-explorer`:**退役归档** —— 源码、装配护栏(`verify-client-bundles`)与 3 条用例整体搬进
@@ -17,8 +31,37 @@
   **同时把它的 agent preset 也从本机拿掉**(`~/.dsh/.agent-presets/browser-operator/`);
   退役当天的两份 yml 快照留档在该目录 `preset/` 下(绝对路径已换成 `<repo-abs-path>`)。决策见 `docs/adr/0008`
 
+### Fixed
+
+- `browser-operator`:`browser_act` 的 render **补上每步的 `reason`** —— 此前它只渲染
+  `序号/操作/目标/置信度`,而「上一次被拒的原因」明明算出来、也过了 schema 校验,却在渲染时被丢掉,
+  于是模型永远看不到重试发生过。门禁里唯一碰 render 的断言只是 `typeof === 'function'`,从不调用它,
+  所以这个缺口一直测不出来;现补一条**真正调用 render** 的用例钉住模型可见面
+- `browser-operator`:`browser_act` 的校验失败理由分开报两种成因 —— 「本页没有可选目标(那一问
+  根本没发出)」与「模型没给整数目标」此前都渲染成同一句 `拿到 undefined`,读的人会误判成模型
+  乱答。实机跑维基搜索页时就被这条误导向过一次
+
 ### Changed
 
+- `browser-operator`:`browser_act` 新增终止状态 **`no_progress`** —— 同一个操作与同一个目标被反复
+  重复、而页面观测(`freshness`)完全没变,连着 3 次即停。**与 Jev 自报的 `stuck` 分开**(来源不同,
+  混用会让台账读不准)。实测:HN 上一个目标第 1 步就达成、之后空转 11 步到步数上限,两次运行都复现;
+  落点页上同一个下标解析到了另一个可点击元素(页内锚点),点它不改元素数 / URL / 正文长度,原有判据
+  对此完全盲。判据不只看 `freshness` —— 往输入框打字同样不改那三样,所以同时要求操作与目标都相同
+- `browser-operator`:`browser_act` 的 `operation` 那一问**只列本页真的能执行的操作** —— 没有合法
+  目标的 `CLICK` / `TYPE_TEXT` / `SELECT` 不再出现。与既有的「空 `criteria` 的 choice 一律不发」
+  是同一条原则往上一层:留着它等于请模型挑一个必然失败的答案。实测踩到过这条死路(页面已无可填
+  元素,模型仍选 `TYPE_TEXT`,目标那一问根本没发,校验连拒三次,整次调用收在 `error`)
+- `browser-operator`:`browser_act` 的载荷上限变成配置项 —— 新增 `maxElements`(默认 `200`)与
+  `jevMaxTextChars`(默认 `4000`)。两者都只作用于 Jev 决策回路,且 **state 与 questions 每一步
+  都整份重发**,所以调它们就是直接买 token;它们与 `maxTextChars`(单步工具按需返回的正文量)
+  不能合并成同一个键
+- `browser-operator`:`browser_act` 各目标问的 `criteria` 不再重复写元素序号与值(`[3] ` / ` · 值`),
+  只留 `role "name"` —— 序号本来就是 criteria 的键,完整描述在 state 的元素表里;上限页面实测省
+  约 1.5 KB(全载荷 4.8%)
+- `browser-operator`:`browser_act` 的「动作执行前校验」(页面过期 / 目标已不在)失败不再直接把整次
+  调用收成 `status: 'error'`,改为**重新观察、重试最多 2 次** —— 与动作校验失败共用同一额度,对齐
+  `docs/adr/0009` 决策点 6;真正的执行失败(点击超时等)不带该标记,仍然立即收场不重试
 - `just check` / `pnpm test`:browser-operator 的自检**从门禁里摘掉** —— 它会真的拉起一个有头浏览器窗口,
   门禁不再要求本机装有 Chrome / Edge / Playwright chromium;要跑请手动
   `node plugins/obsolete/browser-operator/tests/smoke.mjs`
@@ -36,6 +79,14 @@
   插件、补上 `plugins/obsolete/` 归档口径;根 `CONTEXT.md` 的 § file-git-explorer 与 § browser-operator 词表
   整节搬进各自归档目录(`plugins/obsolete/<插件>/CONTEXT.md`),`docs/adr/0002`–`0006` 标注「插件已归档,
   仅作历史记录」
+- `browser-operator`:**复活** —— 从 `plugins/obsolete/` 移回 `plugins/browser-operator/`
+  (ADR-0008 写明的回滚路径),源码行为除新增 `browser_act` 外未改;它的 preset 快照改造成在役模板
+- 测试接线:`justfile` 的 `test` / 根 `package.json` 的 `scripts.test` 与 `scripts.check` 三处都加入
+  `browser-operator` 的离线单测;
+  `audit` 只在 `justfile` 里加跑插件目录(`pnpm --dir plugins/browser-operator audit`)—— 仓库没有
+  pnpm workspace,根 `pnpm audit` 覆盖不到插件的依赖
+- `.pre-commit-config.yaml` / `.prettierignore`:两处针对 browser-operator preset 的排除路径
+  随插件移出 `obsolete/` 而更新
 
 ### Fixed
 

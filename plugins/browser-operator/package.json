@@ -1,7 +1,7 @@
 {
   "name": "dsh-browser-operator",
   "version": "0.4.0",
-  "description": "浏览器操作预设的宿主侧插件: 注册 8 个 browser_* 工具, 共享一个常驻有头浏览器会话(独立 profile 复用登录态), 产物落项目已 ignore 的目录。纯 host 插件。",
+  "description": "浏览器操作预设的宿主侧插件: 注册 10 个 browser_* 工具, 共享一个常驻有头浏览器会话(独立 profile 复用登录态), 产物落项目已 ignore 的目录。纯 host 插件。",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -19,6 +19,7 @@
     "README.md"
   ],
   "dependencies": {
+    "@typesafe-ai/sdk": "^0.6.0",
     "playwright-core": "1.60.0"
   },
   "engines": {

@@ -10,7 +10,6 @@ export default [
       'node_modules',
       'test-results',
       'playwright-report',
-      '.worktrees',
       // playwright 登录脚本: page.evaluate 回调在浏览器上下文运行,
       // localStorage 等静态 no-undef 检查无意义
       'plugins/ds-balance/scripts/deepseek-login.cjs',

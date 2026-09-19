@@ -8,11 +8,18 @@ importers:
 
   .:
     dependencies:
+      '@typesafe-ai/sdk':
+        specifier: ^0.6.0
+        version: 0.6.0
       playwright-core:
         specifier: 1.60.0
         version: 1.60.0
 
 packages:
+
+  '@typesafe-ai/sdk@0.6.0':
+    resolution: {integrity: sha512-IddX+Q0XM+VagOUZFeP7wZjaO4SHMdvnh2zEBdrZZnXedWI3BNK1lKhMx3ayrkFWvVLbVcUHJy6AVZlY+e6Jaw==}
+    engines: {node: '>=20'}
 
   playwright-core@1.60.0:
     resolution: {integrity: sha512-9bW6zvX/m0lEbgTKJ6YppOKx8H3VOPBMOCFh2irXFOT4BbHgrx5hPjwJYLT40Lu+4qtD36qKc/Hn56StUW57IA==}
@@ -20,5 +27,7 @@ packages:
     hasBin: true
 
 snapshots:
+
+  '@typesafe-ai/sdk@0.6.0': {}
 
   playwright-core@1.60.0: {}

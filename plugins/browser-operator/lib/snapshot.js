@@ -1,0 +1,157 @@
+/**
+ * 页面快照与元素解析。
+ *
+ * `pageProbe` 会经 `page.evaluate` / `page.evaluateHandle` 在**页面上下文**执行,
+ * 所以它不许引用任何闭包变量、也不许加载任何模块(Playwright 只序列化函数
+ * 源码)。选择器从 Node 侧作为参数传进去。
+ *
+ * **读快照与解析元素共用这一个函数** —— 序号是「按同一选择器 + 同一可见性判定
+ * 数出来的第 n 个」。两处各写一份,迟早会错位;那时点到的是**别的元素**。
+ *
+ * @module dsh-browser-operator/snapshot
+ */
+
+/** 可交互元素的唯一选择器。 */
+export const ELEMENT_SELECTOR =
+  'a[href],button,input,select,textarea,[role="button"],[role="link"],[role="combobox"],' +
+  '[role="textbox"],[role="checkbox"],[role="tab"],[contenteditable="true"]';
+
+/** 元素数量上限,挡住超长页面。默认值,可被插件配置的 `maxElements` 覆盖。 */
+export const MAX_ELEMENTS = 200;
+
+/**
+ * 进 Jev state 的页面正文上限(字符)。默认值,可被插件配置的 `jevMaxTextChars` 覆盖。
+ *
+ * ⚠ 它与单步工具的 `maxTextChars`(默认 20000)是**两套经济学**,不要合并:
+ * 这个管的是**决策回路每一步**都要重发一遍的正文(每步都付,12 步就是 12 次),
+ * 那个管的是单步工具**按需**返回给主模型的正文量(只付一次)。
+ */
+export const JEV_STATE_TEXT_CHARS = 4000;
+
+// ⚠ 截断上限**不能**放在模块作用域:pageProbe 会被 Playwright 序列化进页面,
+// 页面里没有这些名字。它们一律以字面量写进函数体(见下)。
+
+/**
+ * 页面侧探测函数。两种模式:
+ * - `options.index` 是数字 → 返回该序号的 DOM 元素,越界返回 `null`(解析模式)
+ * - 否则 → 返回完整快照(观察模式)
+ *
+ * @param {{ selector: string, limit?: number, maxTextChars?: number, index?: number }} options
+ */
+/* eslint-disable no-undef -- 函数体整段在页面上下文执行,`document` / `window` /
+   `location` 只有进了页面才存在,静态 no-undef 在这一段没有意义。豁免只包住本函数:
+   下面的 readSnapshot / elementHandle 跑在 Node 侧,照旧受检。 */
+export function pageProbe(options) {
+  const selector = options.selector;
+  const visible = (element) => {
+    const rect = element.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return false;
+    const style = window.getComputedStyle(element);
+    return style.visibility !== 'hidden' && style.display !== 'none';
+  };
+  const collect = () => {
+    const found = [];
+    for (const element of document.querySelectorAll(selector)) {
+      if (visible(element)) found.push(element);
+    }
+    return found;
+  };
+
+  const nodes = collect();
+  if (typeof options.index === 'number') {
+    return nodes[options.index - 1] ?? null;
+  }
+
+  const nameOf = (element) =>
+    (
+      element.getAttribute('aria-label') ||
+      element.getAttribute('placeholder') ||
+      element.innerText ||
+      element.value ||
+      element.getAttribute('name') ||
+      ''
+    )
+      .trim()
+      .replace(/\s+/g, ' ')
+      .slice(0, 120);
+  const kindOf = (element) => {
+    const tag = element.tagName.toLowerCase();
+    const role = (element.getAttribute('role') || '').toLowerCase();
+    if (tag === 'select' || role === 'combobox' || role === 'listbox') return 'selectable';
+    if (tag === 'input' || tag === 'textarea' || role === 'textbox' || element.isContentEditable) {
+      const type = (element.getAttribute('type') || 'text').toLowerCase();
+      if (type === 'checkbox' || type === 'radio' || type === 'submit' || type === 'button') {
+        return 'clickable';
+      }
+      return 'typeable';
+    }
+    return 'clickable';
+  };
+
+  // 两个计数都取**截断之前**的:`all.length` 是 `limit` 切片**之前**的可见可交互元素数,
+  // `fullText.length` 是 4000 字符截断**之前**的整页文本长度。用截断后的数字会让超过上限
+  // 的大页面在重排、换序之后算出同一个 freshness —— 上限之后的变化就再也看不见了,而序号
+  // 正是靠它挡住「拿过期索引去点别的元素」。
+  const all = collect();
+  const fullText = (document.body ? document.body.innerText : '').replace(/\s+/g, ' ');
+  const elements = all.slice(0, options.limit).map((element, position) => ({
+    index: position + 1,
+    role: (element.getAttribute('role') || element.tagName.toLowerCase()).trim(),
+    name: nameOf(element),
+    value: typeof element.value === 'string' ? element.value.slice(0, 200) : '',
+    disabled: element.disabled === true || element.getAttribute('aria-disabled') === 'true',
+    kind: kindOf(element),
+  }));
+  // 上限以**字面量**写在函数体里(见上面的 ⚠):这个函数会被序列化进页面执行。
+  const textChars = typeof options.maxTextChars === 'number' ? options.maxTextChars : 4000;
+  const text = fullText.slice(0, textChars);
+
+  return {
+    url: location.href,
+    title: document.title,
+    // freshness 由元素数 / URL / 可见文本长度拼成:执行前对不上就说明快照过期。
+    freshness: `${all.length}|${location.href}|${fullText.length}`,
+    text,
+    elements,
+  };
+}
+/* eslint-enable no-undef */
+
+/**
+ * 读一次页面快照。
+ *
+ * 两个上限都由调用方给:决策回路的每一步与「执行前重读」必须用**同一套**上限,
+ * 否则两边数出来的元素序号会错位 —— 那正是 freshness 要拦的事,不该由我们自己制造。
+ *
+ * @param {{ evaluate: (fn: Function, arg: object) => Promise<unknown> }} page
+ */
+export async function readSnapshot(
+  page,
+  selector = ELEMENT_SELECTOR,
+  limit = MAX_ELEMENTS,
+  maxTextChars = JEV_STATE_TEXT_CHARS,
+) {
+  const snapshot = await page.evaluate(pageProbe, { selector, limit, maxTextChars });
+  if (snapshot === null || typeof snapshot !== 'object' || !Array.isArray(snapshot.elements)) {
+    throw new Error('browser-operator: 页面快照读取失败(没拿到 elements 数组)');
+  }
+  return snapshot;
+}
+
+/**
+ * 按序号拿到**当前**的 DOM 元素句柄。序号已失效时抛错 —— 调用方据此重来一轮。
+ * @param {{ evaluateHandle: (fn: Function, arg: object) => Promise<object> }} page
+ */
+export async function elementHandle(page, index, selector = ELEMENT_SELECTOR) {
+  const handle = await page.evaluateHandle(pageProbe, { selector, index });
+  const element = handle.asElement();
+  if (element === null) {
+    await handle.dispose();
+    const error = new Error(`browser-operator: 元素 ${index} 在执行前已经不在了`);
+    // 与 executeAction 的 freshness 失败同类:动作还没落下去,重试无副作用,
+    // 所以回路会重新观察重试(ADR-0009 决策点 6 的「目标仍在」)。
+    error.stale = true;
+    throw error;
+  }
+  return element;
+}

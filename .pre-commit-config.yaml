@@ -14,9 +14,10 @@ repos:
       - id: trailing-whitespace
       - id: end-of-file-fixer
       # exclude 两种特例: tool-vision 的 cordis.yml 是 markdown 内容并非 YAML;
-      # browser-operator 的 preset 快照带 `!!js` 自定义标签, PyYAML 解析不了。
+      # browser-operator 的 preset 模板带 `!!js` 自定义标签, PyYAML 解析不了
+      # (该插件退役后又复活, 所以它不再是 obsolete 下的路径 —— 见 docs/adr/0009)。
       - id: check-yaml
-        exclude: ^plugins/obsolete/(tool-vision/cordis\.yml|browser-operator/preset/agent\.cordis\.yml)$
+        exclude: ^plugins/(obsolete/tool-vision/cordis\.yml|browser-operator/preset/agent\.cordis\.yml)$
       - id: check-json
       - id: check-merge-conflict
       - id: check-added-large-files

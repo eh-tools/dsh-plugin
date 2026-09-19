@@ -1,7 +1,7 @@
 /**
  * 浏览器操作预设(browser-operator)的宿主侧插件。
  *
- * 注册 9 个 `browser_*` 工具,背后是**一个常驻、有头、可跨轮次**的浏览器会话:
+ * 注册 10 个 `browser_*` 工具,背后是**一个常驻、有头、可跨轮次**的浏览器会话:
  * 独立 profile 目录长期复用登录态,与用户日常浏览器并存互不干扰。
  *
  * ## 为什么是 Playwright `launchPersistentContext`
@@ -46,6 +46,16 @@ import {
   listArtifacts,
   resolveArtifactDir,
 } from './artifacts.js';
+import { createDecide, resolveApiKey } from './jev.js';
+import { runLoop } from './loop.js';
+import { ACTION_SPACE, STATUS } from './policy.js';
+import {
+  ELEMENT_SELECTOR,
+  JEV_STATE_TEXT_CHARS,
+  MAX_ELEMENTS,
+  elementHandle,
+  readSnapshot,
+} from './snapshot.js';
 
 /** 插件名:loader 行标识与日志标签。 */
 export const name = 'browser-operator';
@@ -57,9 +67,16 @@ export const inject = ['tools'];
 const TOOL_TIMEOUT_MS = 120000;
 
 /**
+ * `browser_act` 一步一单位,这是**硬上限**(模型给的 `maxSteps` 超了就截到这里)。
+ * `budgetMs` 的默认值(100000)必须严格小于 `TOOL_TIMEOUT_MS` —— 否则宿主会在回路
+ * 自己返回 `status:'timeout'` 的同一刻掐掉调用(ADR-0009 决策点 6)。
+ */
+const MAX_STEPS = 40;
+
+/**
  * `playwright-core` 的候选解析起点。
  *
- * 正常情况下它就是本插件的依赖(`plugins/obsolete/browser-operator/node_modules`);
+ * 正常情况下它就是本插件的依赖(`plugins/browser-operator/node_modules`);
  * 本机已经全局装了 `@playwright/test`,所以顺带留两条兜底路径,免得忘记
  * `pnpm install` 就完全用不了。
  */
@@ -88,7 +105,7 @@ function loadPlaywright() {
   }
   throw new Error(
     'browser-operator: 找不到 playwright-core。请在插件目录跑一次 `pnpm install`' +
-      `(plugins/obsolete/browser-operator),或全局装 @playwright/test。已尝试:\n  ${tried.join('\n  ')}`,
+      `(plugins/browser-operator),或全局装 @playwright/test。已尝试:\n  ${tried.join('\n  ')}`,
   );
 }
 
@@ -129,6 +146,17 @@ function readConfig(config) {
     launchTimeoutMs: positiveInt(config.launchTimeoutMs, 60000, 'launchTimeoutMs'),
     logCap: positiveInt(config.logCap, 500, 'logCap'),
     maxTextChars: positiveInt(config.maxTextChars, 20000, 'maxTextChars'),
+    // 下面两个只作用于 `browser_act` 的 Jev 决策回路,与上面的 `maxTextChars`
+    // (单步工具按需返回的正文量)是两套经济学:回路每一步都要重发一遍 state。
+    maxElements: positiveInt(config.maxElements, MAX_ELEMENTS, 'maxElements'),
+    jevMaxTextChars: positiveInt(config.jevMaxTextChars, JEV_STATE_TEXT_CHARS, 'jevMaxTextChars'),
+    maxSteps: maxStepsConfig(config.maxSteps),
+    budgetMs: positiveInt(config.budgetMs, 100000, 'budgetMs'),
+    jevTimeoutMs: positiveInt(config.jevTimeoutMs, 5000, 'jevTimeoutMs'),
+    jevModel:
+      typeof config.jevModel === 'string' && config.jevModel !== ''
+        ? config.jevModel
+        : 'jev-latest',
     locale: typeof config.locale === 'string' && config.locale !== '' ? config.locale : 'zh-CN',
   };
 }
@@ -932,6 +960,177 @@ export function apply(ctx, config = {}) {
       };
     },
   });
+
+  // 目标级工具:一次给一个目标,内部用 Jev 连跑 N 步。
+  // 与上面 9 个单步工具共用同一个浏览器会话,但不替代它们 —— jev-ultrafast 的
+  // MVP 不支持 shadow DOM / iframe / canvas / 上传 / 弹窗 tab,那些走单步工具。
+  ctx.tools.register({
+    name: 'browser_act',
+    description:
+      '给一个目标,让 Jev 决策回路在当前页面上连跑若干步(观察 → 决策 → 执行),把精简的步进轨迹交回来。' +
+      '适合"在这个页面上完成某件事"这种一次能说清的目标;要精确控制单步(指定选择器、读 console、截图)' +
+      '就用对应的 browser_* 单步工具。**本工具不导航** —— 先去哪个页面请自己用 browser_navigate 决定。' +
+      '它的动作空间是闭合的 8 个:' +
+      `${ACTION_SPACE.join(' / ')};没有 NAVIGATE、没有任意键盘、没有 JS 求值 —— 要那些用单步工具。` +
+      '**SELECT 只会取目标元素的第一个选项**,不会去挑你想选的那个值(常见 `<select>` 的第一项就是' +
+      '"请选择…"占位项,于是那一步等于没选);**要选确切的值,请用单步工具**(browser_fill 填输入框、' +
+      'browser_eval 改状态,或 browser_click 点自定义下拉的选项)。' +
+      'TYPE_TEXT 的文本要么由 text 参数给定,要么从 goal 与字段标签的逐字片段里挑 —— ' +
+      '本工具**不生成**文本,要凭空生成请用 browser_fill。' +
+      '返回的 status 为 done 时**不代表目标真的达成**,那只是回路停了;需要确认就用 browser_snapshot 复核。',
+    timeoutMs: TOOL_TIMEOUT_MS,
+    parameters: {
+      type: 'object',
+      properties: {
+        goal: {
+          type: 'string',
+          description: '要用自然语言说清的目标,例如「找到 2026-09-20 苏黎世到伦敦的单程机票」。',
+        },
+        maxSteps: {
+          type: 'integer',
+          description: `最多跑多少步,默认 12、上限 ${MAX_STEPS}。每一步都计一个单位。`,
+        },
+        text: {
+          type: 'string',
+          description:
+            'TYPE_TEXT 要输入的**逐字文本**;给了就只用它,不再从 goal 里切片段。' +
+            '需要往输入框填具体文字(搜索词、名称、地址…)时传它 —— 中文目标句往往没有分隔符,' +
+            '不传的话回路只能从 goal 的字面片段里挑,可能把整句指令填进去。',
+        },
+      },
+      required: ['goal'],
+      additionalProperties: false,
+    },
+    output: {
+      schema: {
+        type: 'object',
+        properties: {
+          status: {
+            type: 'string',
+            enum: [...STATUS],
+            description:
+              'done / stuck / blocked / max_steps / timeout / error / uncertain / text_unavailable / no_progress。' +
+              'no_progress = 同一个操作与目标被反复重复而页面毫无变化(区别于 Jev 自报的 stuck)。',
+          },
+          steps: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                step: { type: 'integer' },
+                operation: { type: 'string' },
+                targetIndex: { type: 'integer' },
+                text: { type: 'string' },
+                reason: { type: 'string' },
+                confidence: { type: 'number' },
+              },
+              required: ['step', 'operation', 'reason', 'confidence'],
+              additionalProperties: false,
+            },
+          },
+          goalMet: { type: 'number', description: 'Jev 报的目标达成概率;不是断言。' },
+          elapsedMs: { type: 'integer' },
+          error: { type: 'string' },
+          usage: {
+            type: 'object',
+            description: '本次回路花掉的 Jev token 总量,含校验失败后重新观察的那几次。',
+            properties: {
+              inputTokens: { type: 'integer' },
+              outputTokens: { type: 'integer' },
+              calls: { type: 'integer', description: 'Jev 请求次数(含重试)。' },
+            },
+            required: ['inputTokens', 'outputTokens', 'calls'],
+            additionalProperties: false,
+          },
+        },
+        required: ['status', 'steps', 'goalMet', 'elapsedMs', 'usage'],
+        additionalProperties: false,
+      },
+      render: (_args, value) => [
+        {
+          type: 'text',
+          text:
+            `${value.status} · ${value.steps.length} 步 · goalMet=${value.goalMet} · ${value.elapsedMs}ms` +
+            (value.usage
+              ? ` · Jev ${value.usage.calls} 次 ${value.usage.inputTokens} in / ${value.usage.outputTokens} out`
+              : '') +
+            (value.error ? `\n${value.error}` : '') +
+            (value.steps.length > 0
+              ? '\n' +
+                value.steps
+                  .map(
+                    (step) =>
+                      `${step.step}. ${step.operation}` +
+                      (step.targetIndex === null || step.targetIndex === undefined
+                        ? ''
+                        : ` [${step.targetIndex}]`) +
+                      ` (${step.confidence})` +
+                      // reason 只有被拒过之后才有值。**必须渲染** —— 模型看到的是 render,
+                      // 不是 schema 声明的那份结构值;漏在这里,那几轮重试就白花了。
+                      (step.reason ? ` · ${step.reason}` : ''),
+                  )
+                  .join('\n')
+              : ''),
+        },
+      ],
+    },
+    presentCall: (args) => ({
+      card: 'generic',
+      title: 'Browser act',
+      kind: 'fetch',
+      rawInput: typeof args.goal === 'string' ? args.goal : undefined,
+    }),
+    async execute(args) {
+      const goal = assertString(args.goal, 'goal');
+      // 可选的逐字文本。给了就只用它一个候选 —— 这一步的校验同样排在一切 I/O 之前。
+      const text = args.text === undefined ? undefined : assertString(args.text, 'text');
+      // 参数校验排在一切 I/O 之前:非有限的 maxSteps 绝不许离开这个函数(见 argMaxSteps)。
+      const maxSteps = argMaxSteps(args.maxSteps, settings.maxSteps);
+      // 预算同样在进回路前夹一次,但**别指望这句挡非有限值** —— `Math.min(NaN, 119000)`
+      // 仍然是 NaN。真正挡住非有限 / 非正 / 非整数配置的是 `positiveInt`(装载期,见
+      // readConfig);这里保证的是上限:回路自己的 status:'timeout' 必须严格先于宿主
+      // 掐调用发生(ADR-0009 决策点 6),而宿主声明的调用预算是 TOOL_TIMEOUT_MS。
+      const budgetMs = Math.min(settings.budgetMs, TOOL_TIMEOUT_MS - 1000);
+
+      // 先确认会话里真的有页面:没页面时说「先 browser_navigate」比说「缺 key」有用。
+      existingPage();
+      // 凭证在执行期解析:服务契约要求每次操作重新解析,且 apply 期没有 ctx.get。
+      const credentials = ctx.get('credentials');
+      const { value: apiKey } = await resolveApiKey(credentials);
+      const decide = createDecide({
+        apiKey,
+        model: settings.jevModel,
+        timeoutMs: settings.jevTimeoutMs,
+      });
+
+      return await runLoop({
+        goal,
+        text,
+        maxSteps,
+        budgetMs,
+        now: () => Date.now(),
+        observe: async () => {
+          const page = existingPage();
+          return await readSnapshot(
+            page,
+            ELEMENT_SELECTOR,
+            settings.maxElements,
+            settings.jevMaxTextChars,
+          );
+        },
+        decide: async ({ state, questions }) => await decide({ state, questions }),
+        execute: async ({ operation, targetIndex, text, snapshot }) =>
+          await executeAction({
+            operation,
+            targetIndex,
+            text,
+            snapshot,
+            page: existingPage(),
+            settings,
+          }),
+      });
+    },
+  });
 }
 
 // ── 纯函数辅助 ──────────────────────────────────────────────────────────────
@@ -1027,4 +1226,120 @@ function positiveInt(value, fallback, key) {
     throw new Error(`browser-operator: config.${key} 必须是正整数(got ${JSON.stringify(value)})`);
   }
   return value;
+}
+
+/** `maxSteps`:默认 12,硬上限 40(超了按上限截断,不报错)。 */
+function maxStepsConfig(value) {
+  if (value === undefined || value === null || value === '') return 12;
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`browser-operator: config.maxSteps 必须是正整数(got ${JSON.stringify(value)})`);
+  }
+  return Math.min(value, MAX_STEPS);
+}
+
+/**
+ * 模型给的 `maxSteps` 参数。
+ *
+ * **非有限值一律拒**,不接受「截断成上限」的宽容处理:`Infinity` / `NaN` 若进了回路,
+ * `attempts >= maxSteps` 永不成立 → 回路不返回,还会占住 Node 的 timer 相位,连从
+ * 内部打断都做不到(配置路径已由 `positiveInt` / `maxStepsConfig` 拦死,这里是模型
+ * 唯一能碰到回路上限的那条入口)。`undefined` / `null` 是「没给」,回落到配置值。
+ */
+function argMaxSteps(value, fallback) {
+  if (value === undefined || value === null) return fallback;
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(
+      `browser-operator: maxSteps 必须是 1..${MAX_STEPS} 的整数(got ${JSON.stringify(value)})`,
+    );
+  }
+  return Math.min(value, MAX_STEPS);
+}
+
+/**
+ * 真的需要落到页面上的 6 个操作 —— 3 个要目标(CLICK / TYPE_TEXT / SELECT),
+ * 3 个不要(SCROLL_UP / SCROLL_DOWN / WAIT)—— 与它们各自的实现,**只此一张表**。
+ *
+ * 之前这里是「一个字符串列表决定放行谁 + 一条 if 链决定怎么做」两处并列:两者一旦漂移,
+ * 后果是**静默**的 —— 列表放行了、链上没有对应的分支,那一步就等于没做,却会被记成成功。
+ * 现在放行与实现同出一张表,漂移在结构上不可能发生。
+ *
+ * `DONE` / `BLOCKED` 不在表里:它们是终止决策,由回路收下并结束,永远不该走到执行器。
+ */
+const PAGE_HANDLERS = Object.freeze({
+  CLICK: async ({ targetIndex, page, settings }) => {
+    const element = await elementHandle(page, targetIndex);
+    await element.click({ timeout: settings.actionTimeoutMs });
+  },
+  TYPE_TEXT: async ({ targetIndex, text, page, settings }) => {
+    const element = await elementHandle(page, targetIndex);
+    await element.fill(text, { timeout: settings.actionTimeoutMs });
+  },
+  SELECT: async ({ targetIndex, page, settings }) => {
+    // 已知限制(见 README 的边界小节):**只取第 0 项,不挑值** —— 回路不会去问
+    // 「你想选哪一个」,所以这里没有可挑的值。
+    const element = await elementHandle(page, targetIndex);
+    await element.selectOption({ index: 0 }, { timeout: settings.actionTimeoutMs });
+  },
+  SCROLL_UP: async ({ page }) => {
+    await page.mouse.wheel(0, -600);
+  },
+  SCROLL_DOWN: async ({ page }) => {
+    await page.mouse.wheel(0, 600);
+  },
+  WAIT: async () => {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  },
+});
+
+/**
+ * 把回路选定的动作落到页面上。
+ *
+ * **default-deny**:不认识的操作一律抛,绝不静默返回。静默返回等于把一次没发生的
+ * 动作记成成功 —— 回路的台账、goalMet 与最终结果全会跟着错。
+ *
+ * **执行前必须重读一次快照并比对 `freshness`** —— 只比 URL 是不够的:同 URL 下的
+ * DOM 变动会让 `elementHandle(page, n)` 解析到**当前**第 n 个可见可交互元素,于是
+ * 执行器点到的元素与决策所指的不是同一个,而且**不报错、还把那一步记成已执行**。
+ * `snapshot.js` 的 `freshness`(元素数|URL|文本长度)就是为这一刻准备的信号;不用它,
+ * 「模型输出永不直接变成选择器」这道闸就漏在了序号上。
+ *
+ * 顺序也是契约:操作校验(查 `PAGE_HANDLERS`)排在**一切页面访问之前** —— 不认识的
+ * 操作连 `page.evaluate` 都不该碰。校验过后才执行表里那一份实现。
+ *
+ * 导出只为让离线用例能证明上面两条(R2 与过期校验):离线测试造不出「模型给出空间外
+ * 操作」的真实链路 —— `parseDecision` 会先把它拦掉 —— 所以直接对执行器本身设防。
+ *
+ * @param {{ operation: string, targetIndex?: number|null, text?: string, page: object, settings: object, snapshot?: object }} options
+ */
+export async function executeAction({ operation, targetIndex, text, page, settings, snapshot }) {
+  // 查表用 `Object.hasOwn`,不用裸下标、也不用 `in`:`toString` / `__proto__` 这些
+  // 原型上的键**不是**操作,裸下标会把它们当成「已实现」放行。
+  const handler = Object.hasOwn(PAGE_HANDLERS, operation) ? PAGE_HANDLERS[operation] : undefined;
+  if (handler === undefined) {
+    throw new Error(
+      `browser-operator: 执行器没有实现 operation ${String(operation)} —— ` +
+        `只认识 ${Object.keys(PAGE_HANDLERS).join(' / ')};` +
+        'DONE / BLOCKED 是终止决策,不该走到执行器。',
+    );
+  }
+
+  // 重读快照:序号只在「同一份快照」内有效,过期就抛,让回路重来一轮。
+  // 上限必须与决策那份**同源**:两处不一样,序号就会错位(见 readSnapshot 的说明)。
+  const current = await readSnapshot(
+    page,
+    ELEMENT_SELECTOR,
+    settings?.maxElements,
+    settings?.jevMaxTextChars,
+  );
+  if (typeof snapshot?.freshness === 'string' && current.freshness !== snapshot.freshness) {
+    const error = new Error(
+      `browser-operator: 页面在执行前变了(${snapshot.freshness} → ${current.freshness})`,
+    );
+    // 标记「动作执行前的校验没过」:回路据此重新观察重试(ADR-0009 决策点 6)。
+    // 这里还一次页面操作都没落下去,重试没有副作用。
+    error.stale = true;
+    throw error;
+  }
+
+  await handler({ targetIndex, text, page, settings });
 }
