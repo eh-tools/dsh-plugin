@@ -2129,6 +2129,7 @@ git commit -m "test(browser-operator): 自检补 browser_act 与两条错误路�
 - Modify: `plugins/browser-operator/preset/preset.yml`
 - Modify: `plugins/browser-operator/preset/agent.cordis.yml`
 - Modify: `plugins/browser-operator/lib/index.js`(注释与错误串)
+- Modify: `plugins/browser-operator/tests/smoke.mjs`(**只改注释**,见 Step 7)
 
 **Interfaces:** 无代码接口。
 
@@ -2245,7 +2246,6 @@ canvas、文件上传、弹窗新 tab、嵌套滚动、任意键盘控件**都�
 cp -r plugins/browser-operator/preset ~/.dsh/.agent-presets/browser-operator
 # 然后把 agent.cordis.yml 里的 <repo-abs-path> 换成仓库的绝对路径
 ```
-````
 
 拷过去之后**新建会话**即可生效。改插件源码要**重启 DSH**(host 侧插件不热更)。
 
@@ -2264,7 +2264,6 @@ cp -r plugins/browser-operator/preset ~/.dsh/.agent-presets/browser-operator
 ⚠ 本文件带 `!!js` 自定义标签(`disabled: !!js process.platform === 'win32'`),PyYAML 解析不了,
 所以 `.pre-commit-config.yaml` 的 `check-yaml` 把它排除了;`.prettierignore` 也排除本目录
 (prettier 会重排 persona 的 `>-` 折叠块缩进,那会改变语义)。
-
 ````
 
 - [ ] **Step 5: 修 `lib/index.js` 与 `cordis.yml` 里的归档路径**
@@ -2273,12 +2272,20 @@ cp -r plugins/browser-operator/preset ~/.dsh/.agent-presets/browser-operator
 - `cordis.yml:17`、`:21`:同上。
 - `cordis.yml` 里那段说明「纯 host 插件…不需要 isolate realm」的注释保留不动。
 
-- [ ] **Step 6: 提交**
+- [ ] **Step 6: 修 `tests/smoke.mjs` 的头部注释(只改注释,不动代码)**
+
+它的第 4 行运行命令仍写着 `plugins/obsolete/browser-operator/tests/smoke.mjs`,而插件早已移回
+`plugins/browser-operator/`;同一段还该补一句它**不在**门禁里(会拉起有头浏览器)。这是 T9 评审
+指出的遗留 —— 它在 Task 9 的范围之外,当时正确地没被动。
+
+只改这两处注释,`EXPECTED_TOOLS`、`makeCtx` 与所有用例都不许动(那是 Task 9 的成果)。
+
+- [ ] **Step 7: 提交**
 
 ```bash
-git add plugins/browser-operator/README.md plugins/browser-operator/package.json plugins/browser-operator/cordis.yml plugins/browser-operator/preset plugins/browser-operator/lib/index.js
+git add plugins/browser-operator/README.md plugins/browser-operator/package.json plugins/browser-operator/cordis.yml plugins/browser-operator/preset plugins/browser-operator/lib/index.js plugins/browser-operator/tests/smoke.mjs
 git commit -m "docs(browser-operator): 去归档口径并补 browser_act 的用法与边界"
-````
+```
 
 ---
 
