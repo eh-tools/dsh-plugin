@@ -71,12 +71,15 @@ export async function runLoop({ goal, maxSteps, budgetMs, now, observe, decide, 
    * 记一步。**每个被接受的决策都记**,包括终止的那一步(DONE / 高概率 goal_met /
    * stuck / BLOCKED)—— 所以 steps 是「决策过什么」的完整台账,不只是「执行过什么」。
    * 校验失败的轮次不记(那一轮没有决策),但它照样消耗一个 attempts 单位。
+   *
+   * `reason` 带的是**上一步被拒的原因**(`lastReason`):走到执行这一步之前如果先被
+   * 拒过,多花的那些观察轮次才有据可查。没被拒过时是空串 —— 也就是大多数正常步。
    */
-  const recordStep = (decision, targetIndex, text) => {
+  const recordStep = (decision, targetIndex, text, reason) => {
     const record = {
       step: steps.length + 1,
       operation: decision.operation,
-      reason: '',
+      reason,
       confidence: decision.confidence,
     };
     // targetIndex 只有 CLICK / TYPE_TEXT / SELECT 才有。**不写 null** —— 工具输出的
@@ -114,19 +117,19 @@ export async function runLoop({ goal, maxSteps, budgetMs, now, observe, decide, 
 
         if (decision.goalMet >= STOP_PROBABILITY) {
           goalMet = decision.goalMet;
-          recordStep(decision, null, undefined);
+          recordStep(decision, null, undefined, lastReason);
           return finish('done', steps, goalMet, now() - startedAt);
         }
         if (decision.stuck >= STOP_PROBABILITY) {
-          recordStep(decision, null, undefined);
+          recordStep(decision, null, undefined, lastReason);
           return finish('stuck', steps, decision.goalMet, now() - startedAt);
         }
         if (decision.operation === 'BLOCKED') {
-          recordStep(decision, null, undefined);
+          recordStep(decision, null, undefined, lastReason);
           return finish('blocked', steps, decision.goalMet, now() - startedAt);
         }
         if (decision.operation === 'DONE') {
-          recordStep(decision, null, undefined);
+          recordStep(decision, null, undefined, lastReason);
           return finish('done', steps, decision.goalMet, now() - startedAt);
         }
 
@@ -141,13 +144,13 @@ export async function runLoop({ goal, maxSteps, budgetMs, now, observe, decide, 
         if (decision.operation === 'TYPE_TEXT') {
           const candidates = textCandidates(goal);
           if (candidates.length === 0) {
-            recordStep(decision, checked.targetIndex, undefined);
+            recordStep(decision, checked.targetIndex, undefined, lastReason);
             return finish('text_unavailable', steps, decision.goalMet, now() - startedAt);
           }
           text = candidates[0];
         }
 
-        recordStep(decision, checked.targetIndex, text);
+        recordStep(decision, checked.targetIndex, text, lastReason);
         consecutiveLowConfidence =
           decision.confidence < LOW_CONFIDENCE ? consecutiveLowConfidence + 1 : 0;
         action = {

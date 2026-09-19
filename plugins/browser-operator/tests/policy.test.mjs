@@ -21,39 +21,13 @@ import {
     validateDecision,
 } from '../lib/policy.js';
 import { evaluateStop, runLoop } from '../lib/loop.js';
-
-let passed = 0;
-const failures = [];
-
-/** 记一次结果。同步 check 与异步 check 共用,断言细节由调用方给。 */
-function record(label, error) {
-    if (error === undefined) {
-        passed += 1;
-        console.log('ok - ' + label);
-        return;
-    }
-    failures.push(`${label} :: ${error?.message ?? String(error)}`);
-    console.error('not ok - ' + label + ' :: ' + (error?.message ?? String(error)));
-}
-
-function check(label, fn) {
-    try {
-        fn();
-        record(label);
-    } catch (error) {
-        record(label, error);
-    }
-}
+import { createHarness } from './harness.mjs';
 
 /**
- * 异步 check。`check` 是同步的,喂不了 `await`,所以异步用例在这里登记,
- * 由文件末尾的 runner 统一 await —— 否则失败的断言只会变成未处理的
- * rejection,进程照样 exit 0,门禁就瞎了。
+ * 用例只能登记在这一行之后、文件末尾的 runner 之前。runner 之后再登记会**抛错**,
+ * 而不是被静默丢掉 —— 那条守卫本身由 tests/harness.test.mjs 钉住。
  */
-const pendingChecks = [];
-function checkAsync(label, fn) {
-    pendingChecks.push({ label, fn });
-}
+const { check, checkAsync, run } = createHarness({ assert });
 
 /** 一个固定的页面快照 fixture;形状与 lib/snapshot.js 的 reader 输出一致。 */
 const SNAPSHOT = {
@@ -552,18 +526,43 @@ checkAsync('TYPE_TEXT 没有逐字候选时停下,status 为 text_unavailable', 
     assert.equal(result.status, 'text_unavailable');
 });
 
-// 回路用例:全部登记完再统一 await,失败才算数(见 checkAsync)。
-for (const { label, fn } of pendingChecks) {
-    try {
-        await fn();
-        record(label);
-    } catch (error) {
-        record(label, error);
-    }
-}
+checkAsync('被拒一步的 reason 会留在下一步的台账上(不丢诊断)', async () => {
+    // 第一轮:目标越界 → validateDecision 拒绝,重新观察(这一轮不记步,但花掉一个 attempts);
+    // 第二轮:目标合法 → 记一步并执行。这一步的记录必须带着上一轮被拒的原因,
+    // 否则「为什么多花了一轮」在台账里就查不出来了。
+    const rejected = {
+        answers: {
+            operation: { choice: 'CLICK', confidence: 0.9 },
+            click_target: { choice: '999', confidence: 0.9 },
+            goal_met: { noul: 0.1 },
+            stuck: { noul: 0.1 },
+        },
+    };
+    const accepted = {
+        answers: {
+            operation: { choice: 'CLICK', confidence: 0.9 },
+            click_target: { choice: '1', confidence: 0.9 },
+            goal_met: { noul: 0.1 },
+            stuck: { noul: 0.1 },
+        },
+    };
+    const done = {
+        answers: {
+            operation: { choice: 'DONE', confidence: 0.95 },
+            goal_met: { noul: 0.95 },
+            stuck: { noul: 0.02 },
+        },
+    };
+    const deps = fakeDeps({ responses: [rejected, accepted, done] });
+    // maxSteps=3 = 被拒那轮 + 执行那轮 + 终止那轮。
+    const result = await runWith(deps, { maxSteps: 3 });
+    assert.equal(result.status, 'done');
+    // 被拒的轮次没有决策,不记步(它只花一个 attempts 单位)—— 所以是被接受的两条。
+    assert.equal(result.steps.length, 2);
+    assert.match(result.steps[0].reason, /999/, '被拒的原因该留在下一条记录上');
+    assert.equal(result.steps[1].reason, '', '没被拒过的步 reason 仍为空串');
+});
 
-if (failures.length > 0) {
-    console.error(`\n${failures.length} 项失败 / 共 ${passed + failures.length} 项`);
-    process.exit(1);
-}
-console.log(`\n全部通过:${passed} 项`);
+// 回路用例:全部登记完再统一 await,失败才算数(见 harness.mjs 的 checkAsync)。
+// `run()` 之后就不能再登记用例了 —— 迟到的登记会抛错,不会变成假绿。
+await run();

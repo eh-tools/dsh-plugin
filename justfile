@@ -26,6 +26,7 @@ test:
     node plugins/db-console/tests/smoke.mjs
     node plugins/db-console/tests/editor-metrics.mjs
     node plugins/browser-operator/tests/policy.test.mjs
+    node plugins/browser-operator/tests/harness.test.mjs
 
 # ---- E2E (需真实 llama-server, 仅手动) ----
 e2e:
