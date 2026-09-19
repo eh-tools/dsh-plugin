@@ -20,19 +20,39 @@ import {
     textCandidates,
     validateDecision,
 } from '../lib/policy.js';
+import { evaluateStop, runLoop } from '../lib/loop.js';
 
 let passed = 0;
 const failures = [];
 
+/** 记一次结果。同步 check 与异步 check 共用,断言细节由调用方给。 */
+function record(label, error) {
+    if (error === undefined) {
+        passed += 1;
+        console.log('ok - ' + label);
+        return;
+    }
+    failures.push(`${label} :: ${error?.message ?? String(error)}`);
+    console.error('not ok - ' + label + ' :: ' + (error?.message ?? String(error)));
+}
+
 function check(label, fn) {
     try {
         fn();
-        passed += 1;
-        console.log('ok - ' + label);
+        record(label);
     } catch (error) {
-        failures.push(`${label} :: ${error?.message ?? String(error)}`);
-        console.error('not ok - ' + label + ' :: ' + (error?.message ?? String(error)));
+        record(label, error);
     }
+}
+
+/**
+ * 异步 check。`check` 是同步的,喂不了 `await`,所以异步用例在这里登记,
+ * 由文件末尾的 runner 统一 await —— 否则失败的断言只会变成未处理的
+ * rejection,进程照样 exit 0,门禁就瞎了。
+ */
+const pendingChecks = [];
+function checkAsync(label, fn) {
+    pendingChecks.push({ label, fn });
 }
 
 /** 一个固定的页面快照 fixture;形状与 lib/snapshot.js 的 reader 输出一致。 */
@@ -306,6 +326,241 @@ check('空 goal 给出空候选(调用方据此回 text_unavailable)', () => {
     assert.deepEqual(textCandidates(''), []);
     assert.deepEqual(textCandidates(undefined), []);
 });
+
+check('用尽 maxSteps 时停下,status 为 max_steps', () => {
+    assert.deepEqual(
+        evaluateStop({
+            attempts: 12,
+            elapsedMs: 0,
+            maxSteps: 12,
+            budgetMs: 100000,
+            consecutiveLowConfidence: 0,
+        }),
+        { stop: true, status: 'max_steps' },
+    );
+});
+
+check('超预算时停下,status 为 timeout', () => {
+    assert.deepEqual(
+        evaluateStop({
+            attempts: 0,
+            elapsedMs: 100000,
+            maxSteps: 12,
+            budgetMs: 100000,
+            consecutiveLowConfidence: 0,
+        }),
+        { stop: true, status: 'timeout' },
+    );
+});
+
+check('连续 3 步低置信度时停下,status 为 uncertain', () => {
+    assert.deepEqual(
+        evaluateStop({
+            attempts: 0,
+            elapsedMs: 0,
+            maxSteps: 12,
+            budgetMs: 100000,
+            consecutiveLowConfidence: 3,
+        }),
+        { stop: true, status: 'uncertain' },
+    );
+});
+
+check('都没到时不停止', () => {
+    assert.deepEqual(
+        evaluateStop({
+            attempts: 0,
+            elapsedMs: 0,
+            maxSteps: 12,
+            budgetMs: 100000,
+            consecutiveLowConfidence: 0,
+        }),
+        { stop: false },
+    );
+});
+
+checkAsync('校验失败后的重新观察也计一个单位(ADR-0009 决策点 6)', async () => {
+    // 每次都返回越界目标:每一步都会重试 3 轮,但 attempts 也随之上涨,
+    // 所以 maxSteps=3 时应该在第 3 次尝试后停下,而不是无限重试。
+    const bad = {
+        answers: {
+            operation: { choice: 'CLICK', confidence: 0.9 },
+            click_target: { choice: '999', confidence: 0.9 },
+            goal_met: { noul: 0.1 },
+            stuck: { noul: 0.1 },
+        },
+    };
+    let decides = 0;
+    const result = await runLoop({
+        goal: 'g',
+        maxSteps: 3,
+        budgetMs: 100000,
+        now: () => 0,
+        observe: async () => SNAPSHOT,
+        decide: async () => {
+            decides += 1;
+            return bad;
+        },
+        execute: async () => {},
+    });
+    assert.ok(result.status === 'max_steps' || result.status === 'error');
+    assert.ok(decides <= 4, `不该无限重试,实际调了 ${decides} 次`);
+});
+
+/** 回路测试用的假依赖:一次 CLICK,然后 DONE。 */
+function fakeDeps({ responses, snapshot = SNAPSHOT }) {
+    let clock = 0;
+    const executed = [];
+    const queue = [...responses];
+    return {
+        executed,
+        now: () => clock,
+        advance: (ms) => {
+            clock += ms;
+        },
+        observe: async () => snapshot,
+        decide: async () => queue.shift(),
+        execute: async (action) => {
+            executed.push(action);
+        },
+    };
+}
+
+const CLICK_THEN_DONE = [
+    {
+        answers: {
+            operation: { choice: 'CLICK', confidence: 0.9 },
+            click_target: { choice: '1', confidence: 0.9 },
+            goal_met: { noul: 0.1 },
+            stuck: { noul: 0.1 },
+        },
+    },
+    {
+        answers: {
+            operation: { choice: 'DONE', confidence: 0.95 },
+            goal_met: { noul: 0.95 },
+            stuck: { noul: 0.02 },
+        },
+    },
+];
+
+async function runWith(deps, overrides = {}) {
+    return runLoop({
+        goal: 'g',
+        maxSteps: 12,
+        budgetMs: 100000,
+        now: deps.now,
+        observe: deps.observe,
+        decide: deps.decide,
+        execute: deps.execute,
+        ...overrides,
+    });
+}
+
+checkAsync('回路执行 CLICK 后因 goal_met 停止', async () => {
+    const deps = fakeDeps({ responses: CLICK_THEN_DONE });
+    const result = await runWith(deps);
+    assert.equal(result.status, 'done');
+    assert.equal(result.steps.length, 2);
+    assert.equal(deps.executed.length, 1);
+    // 只断言这三个字段:action 上还挂着 snapshot 与 table(执行器要用)。
+    assert.equal(deps.executed[0].operation, 'CLICK');
+    assert.equal(deps.executed[0].targetIndex, 1);
+    assert.equal(deps.executed[0].text, undefined);
+});
+
+checkAsync('DONE 不声称目标真的达成 —— 只回报概率', async () => {
+    const deps = fakeDeps({ responses: CLICK_THEN_DONE });
+    const result = await runWith(deps);
+    assert.equal(result.goalMet, 0.95);
+    assert.ok(!('success' in result), '不该有 success 这种断言');
+});
+
+checkAsync('越界目标被拒后重新观察,不执行;重试 2 次后 error', async () => {
+    const bad = {
+        answers: {
+            operation: { choice: 'CLICK', confidence: 0.9 },
+            click_target: { choice: '999', confidence: 0.9 },
+            goal_met: { noul: 0.1 },
+            stuck: { noul: 0.1 },
+        },
+    };
+    const deps = fakeDeps({ responses: [bad, bad, bad] });
+    const result = await runWith(deps);
+    assert.equal(result.status, 'error');
+    assert.equal(deps.executed.length, 0, '越界目标一次都不该执行');
+});
+
+checkAsync('BLOCKED 映射到独立的 blocked 状态,与 stuck 分开', async () => {
+    const deps = fakeDeps({
+        responses: [
+            {
+                answers: {
+                    operation: { choice: 'BLOCKED', confidence: 0.9 },
+                    stuck: { noul: 0.1 },
+                },
+            },
+        ],
+    });
+    const result = await runWith(deps);
+    assert.equal(result.status, 'blocked');
+});
+
+checkAsync('stuck 高置信时停下,status 为 stuck', async () => {
+    const deps = fakeDeps({
+        responses: [
+            { answers: { operation: { choice: 'WAIT', confidence: 0.9 }, stuck: { noul: 0.9 } } },
+        ],
+    });
+    const result = await runWith(deps);
+    assert.equal(result.status, 'stuck');
+});
+
+checkAsync('decide 抛错时立即停,不静默重试', async () => {
+    let calls = 0;
+    const result = await runLoop({
+        goal: 'g',
+        maxSteps: 12,
+        budgetMs: 100000,
+        now: () => 0,
+        observe: async () => SNAPSHOT,
+        decide: async () => {
+            calls += 1;
+            throw new Error('boom');
+        },
+        execute: async () => {},
+    });
+    assert.equal(result.status, 'error');
+    assert.equal(calls, 1, '抛错后不该再调一次');
+    assert.match(result.error, /boom/);
+});
+
+checkAsync('TYPE_TEXT 没有逐字候选时停下,status 为 text_unavailable', async () => {
+    const deps = fakeDeps({
+        responses: [
+            {
+                answers: {
+                    operation: { choice: 'TYPE_TEXT', confidence: 0.9 },
+                    type_text_target: { choice: '4', confidence: 0.9 },
+                    goal_met: { noul: 0.1 },
+                    stuck: { noul: 0.1 },
+                },
+            },
+        ],
+    });
+    const result = await runWith(deps, { goal: '' });
+    assert.equal(result.status, 'text_unavailable');
+});
+
+// 回路用例:全部登记完再统一 await,失败才算数(见 checkAsync)。
+for (const { label, fn } of pendingChecks) {
+    try {
+        await fn();
+        record(label);
+    } catch (error) {
+        record(label, error);
+    }
+}
 
 if (failures.length > 0) {
     console.error(`\n${failures.length} 项失败 / 共 ${passed + failures.length} 项`);
