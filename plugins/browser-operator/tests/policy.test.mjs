@@ -28,6 +28,7 @@ import {
     pageProbe,
     readSnapshot,
 } from '../lib/snapshot.js';
+import { TYPESAFE_REF, createDecide, resolveApiKey } from '../lib/jev.js';
 import { createHarness } from './harness.mjs';
 
 /**
@@ -647,6 +648,81 @@ checkAsync('被拒一步的 reason 会留在下一步的台账上(不丢诊断)'
     assert.equal(result.steps.length, 2);
     assert.match(result.steps[0].reason, /999/, '被拒的原因该留在下一条记录上');
     assert.equal(result.steps[1].reason, '', '没被拒过的步 reason 仍为空串');
+});
+
+checkAsync('凭证服务不可用时抛出可读的错误', async () => {
+    await assert.rejects(() => resolveApiKey(undefined), /凭证服务/);
+});
+
+checkAsync('凭证未配置时错误里点名 TYPESAFE_API_KEY 并给出两条配置路径', async () => {
+    const credentials = { resolve: async () => undefined };
+    await assert.rejects(
+        () => resolveApiKey(credentials),
+        (error) => error.message.includes('TYPESAFE_API_KEY') && error.message.includes('.env'),
+    );
+});
+
+checkAsync('凭证就绪时返回值与来源', async () => {
+    const refs = [];
+    const credentials = {
+        resolve: async (ref) => {
+            refs.push(ref);
+            return { value: 'k-1', source: 'env' };
+        },
+    };
+    assert.deepEqual(await resolveApiKey(credentials), { value: 'k-1', source: 'env' });
+    // 引用名必须真的是 TYPESAFE_API_KEY —— 换成别的名字就查不到 key 了。
+    assert.deepEqual(refs, [TYPESAFE_REF]);
+});
+
+checkAsync('每次解析都重新问凭证服务(不跨操作缓存)', async () => {
+    let calls = 0;
+    const credentials = {
+        resolve: async () => {
+            calls += 1;
+            return { value: `k-${calls}`, source: 'env' };
+        },
+    };
+    await resolveApiKey(credentials);
+    const second = await resolveApiKey(credentials);
+    assert.equal(calls, 2);
+    assert.equal(second.value, 'k-2');
+});
+
+check('创建客户端时显式关掉 SDK 默认重试并传显式超时', () => {
+    let seen;
+    const decide = createDecide({
+        apiKey: 'k-1',
+        model: 'jev-latest',
+        timeoutMs: 5000,
+        clientFactory: (options) => {
+            seen = options;
+            return { systemOne: async () => ({ answers: {} }) };
+        },
+    });
+    assert.equal(seen.apiKey, 'k-1');
+    assert.equal(seen.model, 'jev-latest');
+    assert.equal(seen.timeout, 5000);
+    assert.deepEqual(seen.retry, { maxRetries: 0 });
+    assert.equal(typeof decide, 'function');
+});
+
+checkAsync('decide 把 state 与 questions 原样交给 systemOne', async () => {
+    const calls = [];
+    const decide = createDecide({
+        apiKey: 'k-1',
+        model: 'jev-latest',
+        timeoutMs: 5000,
+        clientFactory: () => ({
+            systemOne: async (request) => {
+                calls.push(request);
+                return { answers: { operation: { choice: 'DONE', confidence: 1 } } };
+            },
+        }),
+    });
+    const response = await decide({ state: { goal: 'g' }, questions: { operation: {} } });
+    assert.deepEqual(calls[0], { state: { goal: 'g' }, questions: { operation: {} } });
+    assert.equal(response.answers.operation.choice, 'DONE');
 });
 
 // 回路用例:全部登记完再统一 await,失败才算数(见 harness.mjs 的 checkAsync)。
