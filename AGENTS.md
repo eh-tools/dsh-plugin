@@ -35,16 +35,18 @@ DeepSeek Harness (DSH) 的插件集合。**每个插件 = `plugins/<plugin-id>/`
 
 ## 开发流
 
-### 1) 先开一个隔离分支(worktree)
+### 1) 先开一个隔离分支
 
-主分支 `main` 受保护,**禁止直接向 main 提交**。用 worktree 隔离开发:
+主分支 `main` 受保护,**禁止直接向 main 提交**(`no-commit-on-main` 钩子拦截)。在主工作区开分支开发:
 
 ```sh
-just wt <功能名>     # 建 .worktrees/<功能名> + 装依赖 + 软链 .env
-cd .worktrees/<功能名>
+git switch -c feat/<功能名>     # 例: feat/db-console-export
 ```
 
-分支命名建议 `feat/xxx`、`fix/xxx`、`docs/xxx`、`refactor/xxx`;合并后 `just wt-rm <功能名>` 清理 worktree 与分支。
+分支命名建议 `feat/xxx`、`fix/xxx`、`docs/xxx`、`refactor/xxx`;PR 合并后删除分支。
+
+> **本仓库走分支模式,不用 worktree**:不执行 `git worktree add`、不在主工作区之外另建检出。
+> 代价是主工作区同时只能进行一个任务。开发流等个人偏好正本见 `PERSONAL.md`。
 
 ### 2) 提交前必过门禁
 

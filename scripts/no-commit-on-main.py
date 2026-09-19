@@ -25,8 +25,8 @@ def main() -> int:
         return 0
     print(
         "禁止直接在 main 上提交。\n"
-        "请用 worktree 开发: just wt <功能名>\n"
-        "完成后回到主工作区合并: git merge --no-ff <分支>",
+        "请先开分支: git switch -c <分支名> (或 just branch <分支名>)\n"
+        "开发完成后提 PR 合并。",
         file=sys.stderr,
     )
     return 1
