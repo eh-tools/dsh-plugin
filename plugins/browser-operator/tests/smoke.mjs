@@ -55,6 +55,9 @@ function makeCtx() {
     const disposers = [];
     return {
         tools: { register: (definition) => tools.set(definition.name, definition) },
+        // browser_act 会 ctx.get('credentials');真实 Cordis ctx 一定有这个方法,
+        // 这个假 ctx 也得有,否则拿到的是 TypeError 而不是「缺凭证」那句人话。
+        get: () => undefined,
         on(event, handler) {
             if (event === 'dispose') disposers.push(handler);
         },
@@ -213,6 +216,7 @@ const EXPECTED_TOOLS = [
     'browser_console',
     'browser_network',
     'browser_artifacts',
+    'browser_act',
 ];
 
 check('注册了全部 browser_* 工具', () => {
@@ -304,6 +308,23 @@ await checkAsync('未导航就调只读工具时给出人话提示', async () =>
         /先调一次 browser_navigate/,
     );
     await fresh.dispose();
+});
+
+await checkAsync('browser_act 在没打开页面时指向 browser_navigate', async () => {
+    const bare = makeCtx();
+    apply(bare, { profileDir: path.join(scratch, 'profile-bare'), headless: false });
+    await assert.rejects(
+        () => callTool(bare, 'browser_act', { goal: 'g' }, project),
+        /browser_navigate/,
+    );
+    await bare.dispose();
+});
+
+await checkAsync('browser_act 缺凭证时报可读错误而不是崩掉', async () => {
+    await assert.rejects(
+        () => callTool(ctx, 'browser_act', { goal: 'g' }, project),
+        /凭证服务|TYPESAFE_API_KEY/,
+    );
 });
 
 // ── 4. 收尾:不残留进程 ────────────────────────────────────────────────────
