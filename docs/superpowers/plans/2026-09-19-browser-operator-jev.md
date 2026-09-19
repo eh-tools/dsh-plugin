@@ -530,7 +530,7 @@ export function buildQuestions({ goal, table }) {
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `node plugins/browser-operator/tests/policy.test.mjs`
-Expected: PASS —— 13 项(7 项来自 Task 1)。
+Expected: PASS —— 14 项(7 项来自 Task 1 + Task 2 自己的 7 项)。判定以 exit 0 与「无 not ok」为准,下面的数字只是参照。
 
 - [ ] **Step 5: 提交**
 
@@ -736,7 +736,7 @@ export function validateDecision(decision, table) {
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `node plugins/browser-operator/tests/policy.test.mjs`
-Expected: PASS —— 19 项。
+Expected: PASS —— 22 项。判定以 exit 0 与「无 not ok」为准。
 
 - [ ] **Step 5: 提交**
 
@@ -832,7 +832,7 @@ export function textCandidates(goal) {
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `node plugins/browser-operator/tests/policy.test.mjs`
-Expected: PASS —— 23 项。
+Expected: PASS —— 26 项。判定以 exit 0 与「无 not ok」为准。
 
 - [ ] **Step 5: 提交**
 
@@ -1274,7 +1274,7 @@ function finish(status, steps, goalMet, elapsedMs, error) {
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `node plugins/browser-operator/tests/policy.test.mjs`
-Expected: PASS —— 约 35 项。
+Expected: PASS —— 约 38 项。判定以 exit 0 与「无 not ok」为准。
 
 - [ ] **Step 5: 提交**
 
@@ -1502,7 +1502,7 @@ export async function elementHandle(page, index, selector = ELEMENT_SELECTOR) {
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `node plugins/browser-operator/tests/policy.test.mjs`
-Expected: PASS —— 约 40 项。
+Expected: PASS —— 约 43 项。判定以 exit 0 与「无 not ok」为准。
 
 - [ ] **Step 5: 提交**
 
@@ -1685,7 +1685,7 @@ export function createDecide({ apiKey, model, timeoutMs, clientFactory }) {
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `node plugins/browser-operator/tests/policy.test.mjs`
-Expected: PASS —— 约 46 项。
+Expected: PASS —— 约 49 项。判定以 exit 0 与「无 not ok」为准。
 
 - [ ] **Step 5: 提交**
 
@@ -1980,7 +1980,7 @@ import { createDecide, resolveApiKey } from './jev.js';
 - [ ] **Step 5: 跑测试确认通过**
 
 Run: `node plugins/browser-operator/tests/policy.test.mjs`
-Expected: PASS —— 约 50 项。
+Expected: PASS —— 约 53 项。判定以 exit 0 与「无 not ok」为准。
 
 - [ ] **Step 6: 提交**
 
