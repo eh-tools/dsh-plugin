@@ -1097,6 +1097,77 @@ checkAsync('目标问被省掉的操作 → 重新观察,重试额度用尽后 s
     assert.deepEqual(result.steps, [], '被拒的轮次没有决策,不该记步');
 });
 
+/** 回路用例里反复用的一次 CLICK(1 号元素)。 */
+const CLICK_ANSWER = {
+    answers: {
+        operation: { choice: 'CLICK', confidence: 0.9 },
+        click_target: { choice: '1', confidence: 0.9 },
+        goal_met: { noul: 0.1 },
+        stuck: { noul: 0.1 },
+    },
+};
+
+/** 「动作执行前的校验没过」:文案照 executeAction / elementHandle 的真实抛法写。 */
+function staleError(from, to) {
+    const error = new Error(`browser-operator: 页面在执行前变了(${from} → ${to})`);
+    error.stale = true;
+    return error;
+}
+
+checkAsync('动作执行前校验没过 → 重新观察重试,不直接以 error 收场(ADR-0009 决策点 6)', async () => {
+    // 报告里观测到的现场:搜索结果页还在渲染,元素数 48 → 59。旧行为是整次调用以 error
+    // 收场;ADR 决策点 6 与 executeAction 的注释都要求「重新观察,最多重试 2 次」。
+    const deps = fakeDeps({ responses: [CLICK_ANSWER, CLICK_ANSWER] });
+    let executes = 0;
+    const result = await runWith(deps, {
+        maxSteps: 2,
+        execute: async () => {
+            executes += 1;
+            if (executes === 1) throw staleError('48|u|1', '59|u|1');
+        },
+    });
+    assert.equal(result.status, 'max_steps', '重试成功后该由步数上界收场,不是 error');
+    assert.equal(executes, 2, '第一次抛、第二次真的执行');
+    assert.equal(result.steps.length, 2);
+    assert.match(result.steps[1].reason, /执行前校验失败/, '被拒的原因要留在下一步的台账上');
+});
+
+checkAsync('动作执行前校验连续失败用尽额度 → status 为 error', async () => {
+    // 额度 2 = 最多重试 2 次;连续第 3 次仍没过就收场,不能无界重试。
+    const deps = fakeDeps({ responses: [CLICK_ANSWER, CLICK_ANSWER, CLICK_ANSWER, CLICK_ANSWER] });
+    let observes = 0;
+    let executes = 0;
+    const result = await runWith(deps, {
+        observe: async () => {
+            observes += 1;
+            return SNAPSHOT;
+        },
+        execute: async () => {
+            executes += 1;
+            throw staleError('1|u|1', '2|u|1');
+        },
+    });
+    assert.equal(result.status, 'error');
+    assert.equal(executes, 3, '额度 2 → 连抛 3 次才收场');
+    assert.equal(observes, 3, '每次重试都重新观察,不拿旧快照接着问');
+    assert.match(result.error, /执行前连续 3 次校验失败/);
+});
+
+checkAsync('真正的执行失败不重试:没有 stale 标记就立即收场', async () => {
+    // 额度只给「动作执行前的校验」。点击超时这类失败若也重试,可能把同一次点击落两遍。
+    const deps = fakeDeps({ responses: [CLICK_ANSWER, CLICK_ANSWER] });
+    let executes = 0;
+    const result = await runWith(deps, {
+        execute: async () => {
+            executes += 1;
+            throw new Error('browser-operator: 点击超时');
+        },
+    });
+    assert.equal(result.status, 'error');
+    assert.equal(executes, 1, '没有 stale 标记就不该再试第二次');
+    assert.match(result.error, /点击超时/);
+});
+
 /** 目标字段(4 号 textbox)的 name 是 'Departure';2 号 'Where from?' 是标签代表。 */
 const TYPEABLE = SNAPSHOT;
 

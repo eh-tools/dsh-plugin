@@ -127,7 +127,11 @@ export async function elementHandle(page, index, selector = ELEMENT_SELECTOR) {
   const element = handle.asElement();
   if (element === null) {
     await handle.dispose();
-    throw new Error(`browser-operator: 元素 ${index} 在执行前已经不在了`);
+    const error = new Error(`browser-operator: 元素 ${index} 在执行前已经不在了`);
+    // 与 executeAction 的 freshness 失败同类:动作还没落下去,重试无副作用,
+    // 所以回路会重新观察重试(ADR-0009 决策点 6 的「目标仍在」)。
+    error.stale = true;
+    throw error;
   }
   return element;
 }

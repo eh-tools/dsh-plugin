@@ -1282,9 +1282,13 @@ export async function executeAction({ operation, targetIndex, text, page, settin
   // 重读快照:序号只在「同一份快照」内有效,过期就抛,让回路重来一轮。
   const current = await readSnapshot(page);
   if (typeof snapshot?.freshness === 'string' && current.freshness !== snapshot.freshness) {
-    throw new Error(
+    const error = new Error(
       `browser-operator: 页面在执行前变了(${snapshot.freshness} → ${current.freshness})`,
     );
+    // 标记「动作执行前的校验没过」:回路据此重新观察重试(ADR-0009 决策点 6)。
+    // 这里还一次页面操作都没落下去,重试没有副作用。
+    error.stale = true;
+    throw error;
   }
 
   await handler({ targetIndex, text, page, settings });

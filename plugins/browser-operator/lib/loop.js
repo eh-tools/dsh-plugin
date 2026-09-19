@@ -20,8 +20,14 @@ import {
 const LOW_CONFIDENCE = 0.35;
 /** 连续这么多步低置信度就停。 */
 const LOW_CONFIDENCE_RUN = 3;
-/** 一次动作的校验失败最多重试这么多轮(每轮重新观察)。 */
+/** 一次动作的校验失败最多重试这么多轮(每轮重新观察)。执行前的校验失败同额度。 */
 const MAX_VALIDATION_RETRIES = 2;
+/**
+ * 执行器抛出的「**动作执行前**的校验没过」错误(页面过期 / 目标已不在)带 `stale: true`。
+ * 只有这类错误重新观察重试 —— 此时一次页面操作都还没落下去,重试没有副作用。
+ * 真正的执行失败(点击超时之类)没有这个标记,立即收场:重试它可能把同一次点击落两遍。
+ */
+const STALE_FLAG = 'stale';
 /** goal_met / stuck 达到这个概率就停。 */
 const STOP_PROBABILITY = 0.8;
 /**
@@ -73,6 +79,13 @@ export async function runLoop({ goal, maxSteps, budgetMs, now, observe, decide, 
   let attempts = 0;
   let consecutiveLowConfidence = 0;
   let goalMet = 0;
+  /** 连续多少次「动作已选中、却在执行前的校验上没过」。与校验失败共用同一个额度。 */
+  let staleFailures = 0;
+  /**
+   * 上一轮被拒的原因,写进下一步的台账(见 `recordStep`)。**跨轮保留**:执行前的
+   * 校验失败发生在 `recordStep` 之后,要让下一次记录带上它,否则那几轮白花。
+   */
+  let lastReason = '';
 
   /**
    * 记一步。**每个被接受的决策都记**,包括终止的那一步(DONE / 高概率 goal_met /
@@ -112,7 +125,6 @@ export async function runLoop({ goal, maxSteps, budgetMs, now, observe, decide, 
       // 每一轮都计一个 attempts 单位,包括失败的那些轮 —— 否则一个持续越界的目标
       // 可以把回路拖成无界重试。
       let action = null;
-      let lastReason = '';
       for (let retry = 0; action === null && retry <= MAX_VALIDATION_RETRIES; retry += 1) {
         attempts += 1;
         if (attempts > maxSteps) return finish('max_steps', steps, goalMet, now() - startedAt);
@@ -171,6 +183,7 @@ export async function runLoop({ goal, maxSteps, budgetMs, now, observe, decide, 
 
         // 文本是 **Jev 选中的**那一份逐字片段 —— 不是候选里的第一个。
         recordStep(decision, checked.targetIndex, checked.text, lastReason);
+        lastReason = ''; // 已写进台账,下一步从干净状态开始
         consecutiveLowConfidence =
           decision.confidence < LOW_CONFIDENCE ? consecutiveLowConfidence + 1 : 0;
         action = {
@@ -185,7 +198,37 @@ export async function runLoop({ goal, maxSteps, budgetMs, now, observe, decide, 
       if (action === null) {
         return finish('error', steps, goalMet, now() - startedAt, `动作校验连续失败:${lastReason}`);
       }
-      await execute(action);
+
+      // 动作**执行前**的校验(页面过期 / 目标已不在)失败 → 重新观察重试,与上面那道
+      // 校验共用同一个额度(ADR-0009 决策点 6)。此时的失败都发生在页面操作落下之前,
+      // 重试没有副作用;真正的执行失败不带标记,立即收场。
+      try {
+        await execute(action);
+      } catch (error) {
+        if (error?.[STALE_FLAG] !== true) {
+          return finish(
+            'error',
+            steps,
+            goalMet,
+            now() - startedAt,
+            error?.message ?? String(error),
+          );
+        }
+        staleFailures += 1;
+        if (staleFailures > MAX_VALIDATION_RETRIES) {
+          return finish(
+            'error',
+            steps,
+            goalMet,
+            now() - startedAt,
+            `动作执行前连续 ${staleFailures} 次校验失败:${error?.message ?? String(error)}`,
+          );
+        }
+        lastReason = `执行前校验失败:${error?.message ?? String(error)}`;
+        continue; // 重新观察
+      }
+      // 执行成功即清零:额度限的是**连续**失败。
+      staleFailures = 0;
 
       const elapsedAfter = now() - startedAt;
       if (elapsedAfter >= budgetMs) return finish('timeout', steps, goalMet, elapsedAfter);

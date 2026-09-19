@@ -27,6 +27,9 @@
 
 ### Changed
 
+- `browser-operator`:`browser_act` 的「动作执行前校验」(页面过期 / 目标已不在)失败不再直接把整次
+  调用收成 `status: 'error'`,改为**重新观察、重试最多 2 次** —— 与动作校验失败共用同一额度,对齐
+  `docs/adr/0009` 决策点 6;真正的执行失败(点击超时等)不带该标记,仍然立即收场不重试
 - `just check` / `pnpm test`:browser-operator 的自检**从门禁里摘掉** —— 它会真的拉起一个有头浏览器窗口,
   门禁不再要求本机装有 Chrome / Edge / Playwright chromium;要跑请手动
   `node plugins/obsolete/browser-operator/tests/smoke.mjs`
