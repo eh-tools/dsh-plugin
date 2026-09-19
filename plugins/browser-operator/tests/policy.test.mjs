@@ -17,6 +17,7 @@ import {
     buildState,
     parseDecision,
     renderElementTable,
+    textCandidates,
     validateDecision,
 } from '../lib/policy.js';
 
@@ -282,6 +283,28 @@ check('DONE / BLOCKED 不需要目标', () => {
         const decision = { ...parseDecision(RESPONSE), operation };
         assert.deepEqual(validateDecision(decision, table), { ok: true, targetIndex: null });
     }
+});
+
+check('从 goal 里切出逐字候选', () => {
+    const candidates = textCandidates('Fly from Zurich to London on 2026-09-20, one adult');
+    assert.ok(candidates.includes('Zurich'));
+    assert.ok(candidates.includes('London'));
+    assert.ok(candidates.includes('2026-09-20'));
+});
+
+check('候选保持出现顺序并去重', () => {
+    const candidates = textCandidates('Zurich then London then Zurich');
+    assert.deepEqual(candidates, ['Zurich', 'then', 'London']);
+});
+
+check('剔除过短片段(1 个字符的词不要)', () => {
+    const candidates = textCandidates('Fly from Zurich to London');
+    assert.ok(!candidates.includes('to'));
+});
+
+check('空 goal 给出空候选(调用方据此回 text_unavailable)', () => {
+    assert.deepEqual(textCandidates(''), []);
+    assert.deepEqual(textCandidates(undefined), []);
 });
 
 if (failures.length > 0) {

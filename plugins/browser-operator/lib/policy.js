@@ -257,3 +257,34 @@ export function validateDecision(decision, table) {
 
   return { ok: true, targetIndex };
 }
+
+/** 逐字候选片段的最小长度。2 个字符的英文虚词(of / to / on / in)当候选没有意义。 */
+const MIN_CANDIDATE_CHARS = 3;
+/** 逐字候选的数量上限,挡住超长 goal 把 questions 撑爆。 */
+const MAX_CANDIDATES = 20;
+
+/**
+ * 从 goal 里切出**逐字片段**候选。
+ *
+ * 这是本插件对 `TYPE_TEXT` 的全部策略:文本必须原样来自 goal,不是生成的。
+ * 调用方把候选交给 Jev 选一个;候选为空时该步只能停下(`text_unavailable`)。
+ *
+ * 切分口径:按空白与常见标点断词,保留出现顺序,去重,丢弃过短片段。
+ *
+ * @param {string|undefined} goal
+ * @returns {string[]}
+ */
+export function textCandidates(goal) {
+  if (typeof goal !== 'string' || goal.trim() === '') return [];
+  const seen = new Set();
+  const candidates = [];
+  for (const raw of goal.split(/[\s,;，、。:：!?！？()（）"'`]+/u)) {
+    const piece = raw.replace(/[.]+$/u, '');
+    if (piece.length < MIN_CANDIDATE_CHARS) continue;
+    if (seen.has(piece)) continue;
+    seen.add(piece);
+    candidates.push(piece);
+    if (candidates.length >= MAX_CANDIDATES) break;
+  }
+  return candidates;
+}
