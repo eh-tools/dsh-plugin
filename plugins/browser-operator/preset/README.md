@@ -10,7 +10,7 @@ cp -r plugins/browser-operator/preset ~/.dsh/.agent-presets/browser-operator
 拷过去之后**新建会话**即可生效。改插件源码要**重启 DSH**(host 侧插件不热更)。
 
 - `preset.yml`:preset 的名字与描述(选择器里显示的那两行)。
-- `agent.cordis.yml`:一份 **shipped `standard` preset 的副本**,只改了三处 —— 开头的 `persona`
+- `agent.cordis.yml`:一份 **shipped `standard` preset 的副本**,只改了两处 —— 开头的 `persona`
   (人设换成「浏览器操作员」,并在人设里申明产物目录规则与 `browser_act` 的用法)与末尾的
   `browser-operator` 插件行。**其余行不是本插件的东西**,是那份 `standard` 的样子,别当成仓库配置来读。
 
@@ -21,6 +21,9 @@ cp -r plugins/browser-operator/preset ~/.dsh/.agent-presets/browser-operator
 直接 import,因此**不需要**把插件装进 profile。代价是这份 preset 绑定了本机路径,仓库搬家后要跟着改。
 仓库里这份用 `<repo-abs-path>` 占位符,符合仓库的路径约定。
 
-⚠ 本文件带 `!!js` 自定义标签(`disabled: !!js process.platform === 'win32'`),PyYAML 解析不了,
-所以 `.pre-commit-config.yaml` 的 `check-yaml` 把它排除了;`.prettierignore` 也排除本目录
-(prettier 会重排 persona 的 `>-` 折叠块缩进,那会改变语义)。
+⚠ **`agent.cordis.yml`** 带 `!!js` 自定义标签(`disabled: !!js process.platform === 'win32'`),
+PyYAML 解析不了,所以 `.pre-commit-config.yaml` 的 `check-yaml` 把它排除了 —— 排除项**只有它**这一个
+文件(`preset.yml` 与本文件都不在那个排除项里)。
+
+⚠ `.prettierignore` 另外排除的是**整个 `preset/` 目录**,与上面的 `check-yaml` 是两套机制:
+理由是 prettier 会重排 YAML,包括 persona 的 `>-` 折叠块缩进,那会改变语义。

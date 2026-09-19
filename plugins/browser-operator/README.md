@@ -92,10 +92,14 @@ canvas、文件上传、弹窗新 tab、嵌套滚动、任意键盘控件**都�
 
 ### 哪些测试进 `just check`
 
-| 测试                    | 进 `just check`?   | 需要什么                                   |
-| ----------------------- | ------------------ | ------------------------------------------ |
-| `tests/policy.test.mjs` | ✅ 进              | 什么都不要(离线、无浏览器、无 key、无网络) |
-| `tests/smoke.mjs`       | ❌ 不进,只能手动跑 | 本机装有 Chrome;会真的拉起一个有头窗口     |
+| 测试                     | 进 `just check`?   | 需要什么                                   |
+| ------------------------ | ------------------ | ------------------------------------------ |
+| `tests/policy.test.mjs`  | ✅ 进              | 什么都不要(离线、无浏览器、无 key、无网络) |
+| `tests/harness.test.mjs` | ✅ 进              | 什么都不要(离线、无浏览器、无 key、无网络) |
+| `tests/smoke.mjs`        | ❌ 不进,只能手动跑 | 本机装有 Chrome;会真的拉起一个有头窗口     |
+
+`tests/harness.test.mjs` 是测试脚手架自己的用例:`tests/harness.mjs` 的守卫(什么时候抛错、账本
+怎么记)不能只靠读代码保证,所以它拿一个临时 harness 实例装故意坏掉的用例,断言计数与输出。
 
 门禁保持「离线」是有意的(见 ADR-0009 决策点 4):回路逻辑全在纯策略层与可注入的回路里,
 所以离线单测覆盖得到;浏览器 I/O 与真实 Jev 往返只能手动验证。
@@ -133,20 +137,24 @@ git 不可用时才退化到本地 `.gitignore` 解析。
 
 ## 配置项
 
-| 键                    | 默认值                               | 说明                                            |
-| --------------------- | ------------------------------------ | ----------------------------------------------- |
-| `browser`             | `chrome`                             | `chrome` / `edge` / `chromium`(Playwright 自带) |
-| `executablePath`      | `''`                                 | 指定浏览器可执行文件;填了就忽略 `browser` 通道  |
-| `headless`            | `false`                              | 有头可见(SSO / 验证码需人工接管,默认就该看得见) |
-| `profileDir`          | `$DSH_HOME/browser-operator/profile` | 独立 profile;登录态就存在这里                   |
-| `artifactDir`         | `''`                                 | 指定产物目录;省略 = 上面的自动探测              |
-| `artifactCandidates`  | 见上                                 | 覆盖候选目录名列表                              |
-| `logCap`              | `500`                                | console / network 环形缓冲条数上限              |
-| `navigationTimeoutMs` | `60000`                              | 导航超时                                        |
-| `actionTimeoutMs`     | `15000`                              | 动作(点击 / 填充 / 元素截图)超时                |
-| `launchTimeoutMs`     | `60000`                              | 拉起浏览器超时                                  |
-| `maxTextChars`        | `20000`                              | 文本 / 求值结果的截断上限                       |
-| `locale`              | `zh-CN`                              | 浏览器 locale                                   |
+| 键                    | 默认值                               | 说明                                                              |
+| --------------------- | ------------------------------------ | ----------------------------------------------------------------- |
+| `browser`             | `chrome`                             | `chrome` / `edge` / `chromium`(Playwright 自带)                   |
+| `executablePath`      | `''`                                 | 指定浏览器可执行文件;填了就忽略 `browser` 通道                    |
+| `headless`            | `false`                              | 有头可见(SSO / 验证码需人工接管,默认就该看得见)                   |
+| `profileDir`          | `$DSH_HOME/browser-operator/profile` | 独立 profile;登录态就存在这里                                     |
+| `artifactDir`         | `''`                                 | 指定产物目录;省略 = 上面的自动探测                                |
+| `artifactCandidates`  | 见上                                 | 覆盖候选目录名列表                                                |
+| `logCap`              | `500`                                | console / network 环形缓冲条数上限                                |
+| `navigationTimeoutMs` | `60000`                              | 导航超时                                                          |
+| `actionTimeoutMs`     | `15000`                              | 动作(点击 / 填充 / 元素截图)超时                                  |
+| `launchTimeoutMs`     | `60000`                              | 拉起浏览器超时                                                    |
+| `maxTextChars`        | `20000`                              | 文本 / 求值结果的截断上限                                         |
+| `maxSteps`            | `12`                                 | `browser_act` 回路的步数上限(硬上限 `40`,超了截断)                |
+| `budgetMs`            | `100000`                             | `browser_act` 回路的时间预算;必须严格小于工具声明的 `120000` 超时 |
+| `jevTimeoutMs`        | `5000`                               | 单次 Jev 决策请求的超时                                           |
+| `jevModel`            | `jev-latest`                         | Jev 模型名                                                        |
+| `locale`              | `zh-CN`                              | 浏览器 locale                                                     |
 
 配错的键会在**加载时**直接报错(不静默),`browser` 只接受那三个值。
 
