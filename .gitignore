@@ -12,9 +12,6 @@ Thumbs.db
 .env
 .env.local
 
-# ---- worktree 工作区 ----
-.worktrees/
-
 # ---- Claude Code 本地状态 ----
 .claude/settings.local.json
 
