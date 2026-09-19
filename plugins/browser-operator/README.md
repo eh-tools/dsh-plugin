@@ -21,7 +21,7 @@
 所以**不**用 `dsh plugin --profile web add link:` 装 —— 它挂进的是 **agent preset**:
 
 ```sh
-# 1) 装依赖(只有一个:playwright-core;浏览器用系统已装的 Chrome)
+# 1) 装依赖(两个:@typesafe-ai/sdk 与 playwright-core;浏览器用系统已装的 Chrome,不下载浏览器)
 pnpm --dir <repo-abs-path>/plugins/browser-operator install
 ```
 

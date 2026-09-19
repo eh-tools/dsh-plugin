@@ -87,7 +87,7 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/batch-archive
 
 ### browser-operator —— 常驻可见浏览器 + 目标级 `browser_act`(挂 agent preset,不走 profile)
 
-- **纯 host 插件**(无 client 半),所以**不**走 `dsh plugin --profile web add link:`。先装依赖(仅 `playwright-core`,用系统 Chrome,不下载浏览器):
+- **纯 host 插件**(无 client 半),所以**不**走 `dsh plugin --profile web add link:`。先装依赖(两个:`@typesafe-ai/sdk` 与 `playwright-core`;浏览器用系统已装的 Chrome,不下载浏览器二进制):
 
   ```sh
   pnpm --dir <repo-abs-path>/plugins/browser-operator install

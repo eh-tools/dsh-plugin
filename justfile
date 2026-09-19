@@ -38,7 +38,8 @@ e2e:
 #    `just check` 里一直是绿的, 而 Dependabot 报了警 —— 口径现在与它对齐(全量)。
 audit:
     pnpm audit
-    # 仓库没有 pnpm workspace: 根 audit 覆盖不到插件的依赖, 所以插件目录单独扫一遍
+    # 仓库没有 pnpm workspace: 根 audit 覆盖不到插件的依赖。本行只扫 plugins/browser-operator
+    # (本仓库唯一因本计划新增运行时依赖的插件目录);db-console 等其它带 lockfile 的插件目录尚未覆盖
     pnpm --dir plugins/browser-operator audit
 
 # ---- 全量检查(等同 pre-push 的内容) ----
