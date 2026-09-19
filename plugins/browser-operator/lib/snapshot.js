@@ -19,9 +19,8 @@ export const ELEMENT_SELECTOR =
 /** 元素数量上限,挡住超长页面。 */
 export const MAX_ELEMENTS = 200;
 
-const MAX_NAME_CHARS = 120;
-const MAX_VALUE_CHARS = 200;
-const MAX_TEXT_CHARS = 4000;
+// ⚠ 截断上限**不能**放在模块作用域:pageProbe 会被 Playwright 序列化进页面,
+// 页面里没有这些名字。它们一律以字面量写进函数体(见下)。
 
 /**
  * 页面侧探测函数。两种模式:
@@ -65,7 +64,7 @@ export function pageProbe(options) {
     )
       .trim()
       .replace(/\s+/g, ' ')
-      .slice(0, MAX_NAME_CHARS);
+      .slice(0, 120);
   const kindOf = (element) => {
     const tag = element.tagName.toLowerCase();
     const role = (element.getAttribute('role') || '').toLowerCase();
@@ -84,13 +83,11 @@ export function pageProbe(options) {
     index: position + 1,
     role: (element.getAttribute('role') || element.tagName.toLowerCase()).trim(),
     name: nameOf(element),
-    value: typeof element.value === 'string' ? element.value.slice(0, MAX_VALUE_CHARS) : '',
+    value: typeof element.value === 'string' ? element.value.slice(0, 200) : '',
     disabled: element.disabled === true || element.getAttribute('aria-disabled') === 'true',
     kind: kindOf(element),
   }));
-  const text = (document.body ? document.body.innerText : '')
-    .replace(/\s+/g, ' ')
-    .slice(0, MAX_TEXT_CHARS);
+  const text = (document.body ? document.body.innerText : '').replace(/\s+/g, ' ').slice(0, 4000);
 
   return {
     url: location.href,

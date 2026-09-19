@@ -127,11 +127,35 @@ checkAsync('元素在执行前消失时抛错', async () => {
     assert.ok(disposed, '拿不到元素时该把句柄清掉,不能泄漏');
 });
 
-check('pageProbe 是不依赖闭包的普通函数(可被序列化进页面)', () => {
-    assert.equal(typeof pageProbe, 'function');
-    const source = pageProbe.toString();
-    assert.ok(!source.includes('require('), '不该引用 Node 模块');
-    assert.ok(!source.includes('import '), '不该有 import');
+check('pageProbe 真的能被序列化进页面并跑通读模式', () => {
+    // 只查源码里有没有 `require(` / `import` 是**空转的**:它检测不出函数体引用了
+    // 模块作用域的标识符,而那正是 Playwright 序列化时唯一会炸的东西。
+    // 这里复刻 Playwright 的做法:只拿函数源码,在一个**只有页面全局、没有模块作用域**
+    // 的环境里重新求值,再拿假 DOM 真调一次读模式。
+    const factory = new Function(
+        'document',
+        'window',
+        'location',
+        `return (${pageProbe.toString()});`,
+    );
+    const fakeDocument = {
+        querySelectorAll: () => [
+            {
+                tagName: 'BUTTON',
+                innerText: 'Round trip',
+                value: '',
+                disabled: false,
+                isContentEditable: false,
+                getAttribute: () => null,
+                getBoundingClientRect: () => ({ width: 10, height: 10 }),
+            },
+        ],
+    };
+    const fakeWindow = { getComputedStyle: () => ({ visibility: 'visible', display: 'block' }) };
+    const fn = factory(fakeDocument, fakeWindow, { href: 'https://example.test/' });
+    const snapshot = fn({ selector: ELEMENT_SELECTOR, limit: MAX_ELEMENTS });
+    assert.equal(snapshot.elements.length, 1);
+    assert.equal(snapshot.elements[0].name, 'Round trip');
 });
 
 check('动作空间闭合在 8 个操作上', () => {
