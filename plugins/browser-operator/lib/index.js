@@ -48,7 +48,7 @@ import {
 } from './artifacts.js';
 import { createDecide, resolveApiKey } from './jev.js';
 import { runLoop } from './loop.js';
-import { STATUS } from './policy.js';
+import { ACTION_SPACE, STATUS } from './policy.js';
 import { elementHandle, readSnapshot } from './snapshot.js';
 
 /** 插件名:loader 行标识与日志标签。 */
@@ -960,6 +960,12 @@ export function apply(ctx, config = {}) {
       '给一个目标,让 Jev 决策回路在当前页面上连跑若干步(观察 → 决策 → 执行),把精简的步进轨迹交回来。' +
       '适合"在这个页面上完成某件事"这种一次能说清的目标;要精确控制单步(指定选择器、读 console、截图)' +
       '就用对应的 browser_* 单步工具。**本工具不导航** —— 先去哪个页面请自己用 browser_navigate 决定。' +
+      '它的动作空间是闭合的 8 个:' +
+      `${ACTION_SPACE.join(' / ')};没有 NAVIGATE、没有任意键盘、没有 JS 求值 —— 要那些用单步工具。` +
+      '**SELECT 只会取目标元素的第一个选项**,不会去挑你想选的那个值(常见 `<select>` 的第一项就是' +
+      '"请选择…"占位项,于是那一步等于没选);**要选确切的值,请用单步工具**(browser_fill 填输入框、' +
+      'browser_eval 改状态,或 browser_click 点自定义下拉的选项)。' +
+      'TYPE_TEXT 只能填 goal 或字段标签里的逐字片段,要为输入框生成文本也用 browser_fill。' +
       '返回的 status 为 done 时**不代表目标真的达成**,那只是回路停了;需要确认就用 browser_snapshot 复核。',
     timeoutMs: TOOL_TIMEOUT_MS,
     parameters: {
