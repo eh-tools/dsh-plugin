@@ -1213,17 +1213,39 @@ function argMaxSteps(value, fallback) {
 
 /**
  * 真的需要落到页面上的 6 个操作 —— 3 个要目标(CLICK / TYPE_TEXT / SELECT),
- * 3 个不要(SCROLL_UP / SCROLL_DOWN / WAIT)。
- * `DONE` / `BLOCKED` 是终止决策,由回路收下并结束,永远不该走到执行器。
+ * 3 个不要(SCROLL_UP / SCROLL_DOWN / WAIT)—— 与它们各自的实现,**只此一张表**。
+ *
+ * 之前这里是「一个字符串列表决定放行谁 + 一条 if 链决定怎么做」两处并列:两者一旦漂移,
+ * 后果是**静默**的 —— 列表放行了、链上没有对应的分支,那一步就等于没做,却会被记成成功。
+ * 现在放行与实现同出一张表,漂移在结构上不可能发生。
+ *
+ * `DONE` / `BLOCKED` 不在表里:它们是终止决策,由回路收下并结束,永远不该走到执行器。
  */
-const PAGE_OPERATIONS = Object.freeze([
-  'CLICK',
-  'TYPE_TEXT',
-  'SELECT',
-  'SCROLL_UP',
-  'SCROLL_DOWN',
-  'WAIT',
-]);
+const PAGE_HANDLERS = Object.freeze({
+  CLICK: async ({ targetIndex, page, settings }) => {
+    const element = await elementHandle(page, targetIndex);
+    await element.click({ timeout: settings.actionTimeoutMs });
+  },
+  TYPE_TEXT: async ({ targetIndex, text, page, settings }) => {
+    const element = await elementHandle(page, targetIndex);
+    await element.fill(text, { timeout: settings.actionTimeoutMs });
+  },
+  SELECT: async ({ targetIndex, page, settings }) => {
+    // 已知限制(见 README 的边界小节):**只取第 0 项,不挑值** —— 回路不会去问
+    // 「你想选哪一个」,所以这里没有可挑的值。
+    const element = await elementHandle(page, targetIndex);
+    await element.selectOption({ index: 0 }, { timeout: settings.actionTimeoutMs });
+  },
+  SCROLL_UP: async ({ page }) => {
+    await page.mouse.wheel(0, -600);
+  },
+  SCROLL_DOWN: async ({ page }) => {
+    await page.mouse.wheel(0, 600);
+  },
+  WAIT: async () => {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  },
+});
 
 /**
  * 把回路选定的动作落到页面上。
@@ -1237,9 +1259,8 @@ const PAGE_OPERATIONS = Object.freeze([
  * `snapshot.js` 的 `freshness`(元素数|URL|文本长度)就是为这一刻准备的信号;不用它,
  * 「模型输出永不直接变成选择器」这道闸就漏在了序号上。
  *
- * **分支必须穷尽**并显式列出:上面那张表决定放行谁,这里的每个分支决定怎么做。
- * 两者一旦漂移(往列表里加了项却没加分支),末尾的 `WAIT` 会把这一步**静默吞掉并
- * 记成成功** —— 那正是「静默成功」的失败模式。所以 WAIT 显式成支,末尾**无条件抛错**。
+ * 顺序也是契约:操作校验(查 `PAGE_HANDLERS`)排在**一切页面访问之前** —— 不认识的
+ * 操作连 `page.evaluate` 都不该碰。校验过后才执行表里那一份实现。
  *
  * 导出只为让离线用例能证明上面两条(R2 与过期校验):离线测试造不出「模型给出空间外
  * 操作」的真实链路 —— `parseDecision` 会先把它拦掉 —— 所以直接对执行器本身设防。
@@ -1247,11 +1268,13 @@ const PAGE_OPERATIONS = Object.freeze([
  * @param {{ operation: string, targetIndex?: number|null, text?: string, page: object, settings: object, snapshot?: object }} options
  */
 export async function executeAction({ operation, targetIndex, text, page, settings, snapshot }) {
-  // 不认识的操作连页面都不碰(同 R2 的离线用例:假页面的 evaluate 会当场抛)。
-  if (!PAGE_OPERATIONS.includes(operation)) {
+  // 查表用 `Object.hasOwn`,不用裸下标、也不用 `in`:`toString` / `__proto__` 这些
+  // 原型上的键**不是**操作,裸下标会把它们当成「已实现」放行。
+  const handler = Object.hasOwn(PAGE_HANDLERS, operation) ? PAGE_HANDLERS[operation] : undefined;
+  if (handler === undefined) {
     throw new Error(
       `browser-operator: 执行器没有实现 operation ${String(operation)} —— ` +
-        `只认识 ${PAGE_OPERATIONS.join(' / ')};` +
+        `只认识 ${Object.keys(PAGE_HANDLERS).join(' / ')};` +
         'DONE / BLOCKED 是终止决策,不该走到执行器。',
     );
   }
@@ -1264,31 +1287,5 @@ export async function executeAction({ operation, targetIndex, text, page, settin
     );
   }
 
-  if (operation === 'CLICK') {
-    const element = await elementHandle(page, targetIndex);
-    await element.click({ timeout: settings.actionTimeoutMs });
-    return;
-  }
-  if (operation === 'TYPE_TEXT') {
-    const element = await elementHandle(page, targetIndex);
-    await element.fill(text, { timeout: settings.actionTimeoutMs });
-    return;
-  }
-  if (operation === 'SELECT') {
-    const element = await elementHandle(page, targetIndex);
-    await element.selectOption({ index: 0 }, { timeout: settings.actionTimeoutMs });
-    return;
-  }
-  if (operation === 'SCROLL_UP' || operation === 'SCROLL_DOWN') {
-    const delta = operation === 'SCROLL_DOWN' ? 600 : -600;
-    await page.mouse.wheel(0, delta);
-    return;
-  }
-  if (operation === 'WAIT') {
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    return;
-  }
-
-  // 走到这里说明上面的表与分支漂移了 —— 大声失败,别把这一步静默当成 WAIT 记成成功。
-  throw new Error(`browser-operator: 执行器没有实现 operation ${String(operation)}`);
+  await handler({ targetIndex, text, page, settings });
 }

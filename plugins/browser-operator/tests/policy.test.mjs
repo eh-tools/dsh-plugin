@@ -1238,6 +1238,73 @@ checkAsync('未被执行器实现的 operation 一律失败,不静默成功(R2 d
     );
 });
 
+checkAsync('表外的 operation 一律抛,原型上的键也不是操作(R2 的门=那张表)', async () => {
+    // 重构前这里是「一个字符串列表决定放行 + 一条 if 链决定怎么做」两处并列,链尾
+    // 那个兜底抛错**任何已提交用例都到不了**(列表先放行,链就必然接得住)。现在放行与
+    // 实现同出一张表(handler map),门就是查表 —— 这条用例走的正是那条路径。
+    // `toString` / `__proto__` 是原型上的键:裸下标查表会把它们当成「已实现」放行。
+    const page = {
+        evaluate: () => {
+            throw new Error('不该碰页面:operation 校验必须排在页面访问之前');
+        },
+    };
+    for (const operation of ['NAVIGATE', 'DONE', 'BLOCKED', 'toString', '__proto__', '']) {
+        await assert.rejects(
+            () => executeAction({ operation, page, settings: {}, snapshot: {} }),
+            /没有实现 operation/,
+            `${operation} 不该被那张表认下`,
+        );
+    }
+});
+
+checkAsync('六个页面操作各自落到位(表驱动重构后行为不变)', async () => {
+    // 表只有一个了,所以「表里有这一项」不再等于「真的做得对」—— 六个都真跑一遍,记下
+    // 各自碰了页面的哪里。`WAIT` 的 1000 ms 是真的等,所以它放最后。
+    const calls = [];
+    const element = {
+        click: async (options) => calls.push(['click', options.timeout]),
+        fill: async (text, options) => calls.push(['fill', text, options.timeout]),
+        selectOption: async (options, rest) => calls.push(['selectOption', options, rest.timeout]),
+    };
+    const snapshot = {
+        url: 'https://example.test/list',
+        title: 'list',
+        freshness: '2|https://example.test/list|0',
+        text: '',
+        elements: [],
+    };
+    const page = {
+        evaluate: async () => snapshot,
+        evaluateHandle: async () => ({ asElement: () => element, dispose: async () => {} }),
+        mouse: { wheel: async (x, y) => calls.push(['wheel', x, y]) },
+    };
+    const settings = { actionTimeoutMs: 1234 };
+
+    await executeAction({ operation: 'CLICK', targetIndex: 2, page, settings, snapshot });
+    await executeAction({
+        operation: 'TYPE_TEXT',
+        targetIndex: 2,
+        text: 'Zurich',
+        page,
+        settings,
+        snapshot,
+    });
+    await executeAction({ operation: 'SELECT', targetIndex: 2, page, settings, snapshot });
+    await executeAction({ operation: 'SCROLL_UP', page, settings, snapshot });
+    await executeAction({ operation: 'SCROLL_DOWN', page, settings, snapshot });
+    // WAIT 不碰元素、不碰鼠标 —— 跑完上面五次调用之后 calls 不该再多一项。
+    await executeAction({ operation: 'WAIT', page, settings, snapshot });
+
+    assert.deepEqual(calls, [
+        ['click', 1234],
+        ['fill', 'Zurich', 1234],
+        // SELECT 的已知限制:只取第 0 项,不挑值。
+        ['selectOption', { index: 0 }, 1234],
+        ['wheel', 0, -600],
+        ['wheel', 0, 600],
+    ]);
+});
+
 checkAsync('执行前重读快照:同 URL 下 freshness 变了就必须抛,不许点错元素', async () => {
     // 离线用假页面:readSnapshot 会经 page.evaluate 拿快照,这里按调用顺序喂两份。
     // 两次 URL 相同、freshness 不同 —— 正是「只比 URL」漏掉的那种页面变动
