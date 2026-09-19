@@ -975,7 +975,8 @@ export function apply(ctx, config = {}) {
       '**SELECT 只会取目标元素的第一个选项**,不会去挑你想选的那个值(常见 `<select>` 的第一项就是' +
       '"请选择…"占位项,于是那一步等于没选);**要选确切的值,请用单步工具**(browser_fill 填输入框、' +
       'browser_eval 改状态,或 browser_click 点自定义下拉的选项)。' +
-      'TYPE_TEXT 只能填 goal 或字段标签里的逐字片段,要为输入框生成文本也用 browser_fill。' +
+      'TYPE_TEXT 的文本要么由 text 参数给定,要么从 goal 与字段标签的逐字片段里挑 —— ' +
+      '本工具**不生成**文本,要凭空生成请用 browser_fill。' +
       '返回的 status 为 done 时**不代表目标真的达成**,那只是回路停了;需要确认就用 browser_snapshot 复核。',
     timeoutMs: TOOL_TIMEOUT_MS,
     parameters: {
@@ -988,6 +989,13 @@ export function apply(ctx, config = {}) {
         maxSteps: {
           type: 'integer',
           description: `最多跑多少步,默认 12、上限 ${MAX_STEPS}。每一步都计一个单位。`,
+        },
+        text: {
+          type: 'string',
+          description:
+            'TYPE_TEXT 要输入的**逐字文本**;给了就只用它,不再从 goal 里切片段。' +
+            '需要往输入框填具体文字(搜索词、名称、地址…)时传它 —— 中文目标句往往没有分隔符,' +
+            '不传的话回路只能从 goal 的字面片段里挑,可能把整句指令填进去。',
         },
       },
       required: ['goal'],
@@ -1074,6 +1082,8 @@ export function apply(ctx, config = {}) {
     }),
     async execute(args) {
       const goal = assertString(args.goal, 'goal');
+      // 可选的逐字文本。给了就只用它一个候选 —— 这一步的校验同样排在一切 I/O 之前。
+      const text = args.text === undefined ? undefined : assertString(args.text, 'text');
       // 参数校验排在一切 I/O 之前:非有限的 maxSteps 绝不许离开这个函数(见 argMaxSteps)。
       const maxSteps = argMaxSteps(args.maxSteps, settings.maxSteps);
       // 预算同样在进回路前夹一次,但**别指望这句挡非有限值** —— `Math.min(NaN, 119000)`
@@ -1095,6 +1105,7 @@ export function apply(ctx, config = {}) {
 
       return await runLoop({
         goal,
+        text,
         maxSteps,
         budgetMs,
         now: () => Date.now(),

@@ -1325,6 +1325,54 @@ checkAsync('同一个操作重复但页面每步都在变 → 不算原地踏步
     assert.equal(result.status, 'max_steps', '页面在动就不算原地踏步');
 });
 
+checkAsync('调用方给了 text → 只用它一个候选,goal 片段不再进候选', async () => {
+    // 中文目标句没有分隔符,切词只能切出「整句指令」—— 实测把整句填进了搜索框。
+    // 调用方给 text,就是把「填什么」这一步替回路定下来。
+    const asks = [];
+    const typed = [];
+    await runLoop({
+        goal: '在搜索框输入哥德尔不完备定理并搜索',
+        text: '哥德尔不完备定理',
+        maxSteps: 1,
+        budgetMs: 100000,
+        now: () => 0,
+        observe: async () => SNAPSHOT,
+        decide: async ({ questions }) => {
+            asks.push(questions);
+            return {
+                answers: {
+                    operation: { choice: 'TYPE_TEXT', confidence: 0.9 },
+                    type_text_target: { choice: '4', confidence: 0.9 },
+                    type_text_value: { choice: '0', confidence: 0.9 },
+                    goal_met: { noul: 0.1 },
+                    stuck: { noul: 0.1 },
+                },
+            };
+        },
+        execute: async (action) => {
+            typed.push(action.text);
+        },
+    });
+    assert.deepEqual(asks[0].type_text_value.criteria, { 0: '哥德尔不完备定理' });
+    assert.deepEqual(typed, ['哥德尔不完备定理'], '输入的就是调用方给的逐字文本');
+
+    // 反面对照:同一句话,不给 text 时那一问的候选里就是**整句指令** —— 这正是 text 要治的。
+    const goalOnly = buildQuestions({
+        goal: '在搜索框输入哥德尔不完备定理并搜索',
+        table: buildElementTable(SNAPSHOT),
+        typeTextCandidates: typeTextCandidates({
+            goal: '在搜索框输入哥德尔不完备定理并搜索',
+            element: SNAPSHOT.elements[3],
+        }),
+    });
+    assert.ok(
+        Object.values(goalOnly.type_text_value.criteria).includes(
+            '在搜索框输入哥德尔不完备定理并搜索',
+        ),
+        '不给 text 时,候选里就是整句指令',
+    );
+});
+
 /** 目标字段(4 号 textbox)的 name 是 'Departure';2 号 'Where from?' 是标签代表。 */
 const TYPEABLE = SNAPSHOT;
 
@@ -1627,6 +1675,20 @@ check('browser_act 已注册且带齐门禁要求的四件套', () => {
     assert.equal(definition.timeoutMs, 120000);
 });
 
+checkAsync('browser_act 的 text 是可选参数,且空串在一切 I/O 之前被拒', async () => {
+    const ctx = makeCtx();
+    apply(ctx, {});
+    const definition = ctx.toolsByName.get('browser_act');
+    assert.ok(definition.parameters.properties.text, '缺 text 参数');
+    assert.equal(
+        definition.parameters.required.includes('text'),
+        false,
+        'text 必须可选 —— 不传时行为与从前一致',
+    );
+    // exec 是 undefined:参数校验必须发生在一切 I/O 之前,不该被碰到。
+    await assert.rejects(() => definition.execute({ goal: 'g', text: '   ' }), /text/);
+});
+
 check('browser_act 的 render 把 reason 带进模型可见的输出', () => {
     // 这个洞咬过两次:模型看到的是 render,不是 output.schema 声明的那份结构值。
     // 在此之前门禁里唯一碰 render 的断言只是 `typeof === 'function'` —— 从不调用它,
@@ -1678,11 +1740,11 @@ check('browser_act 的描述向模型说清动作空间与 SELECT 的已知边�
     assert.match(description, /SELECT [^。]*第一个选项/);
 });
 
-check('browser_act 的参数只有 goal 与 maxSteps', () => {
+check('browser_act 的参数只有 goal / maxSteps / text,且只有 goal 必填', () => {
     const ctx = makeCtx();
     apply(ctx, {});
     const parameters = ctx.toolsByName.get('browser_act').parameters;
-    assert.deepEqual(Object.keys(parameters.properties).sort(), ['goal', 'maxSteps']);
+    assert.deepEqual(Object.keys(parameters.properties).sort(), ['goal', 'maxSteps', 'text']);
     assert.deepEqual(parameters.required, ['goal']);
     assert.equal(parameters.additionalProperties, false);
 });

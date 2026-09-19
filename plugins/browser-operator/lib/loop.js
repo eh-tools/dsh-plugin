@@ -70,6 +70,7 @@ export function evaluateStop({
  *
  * @param {object} options
  * @param {string} options.goal
+ * @param {string} [options.text] 调用方给定的**逐字文本**;给了就只用它一个候选,不再从 goal 切片
  * @param {number} options.maxSteps
  * @param {number} options.budgetMs
  * @param {() => number} options.now
@@ -78,7 +79,7 @@ export function evaluateStop({
  * @param {(action: { operation: string, targetIndex: number|null, text: string|undefined, snapshot: object, table: object }) => Promise<void>} options.execute
  * @returns {Promise<{ status: string, steps: object[], goalMet: number, elapsedMs: number, error?: string }>}
  */
-export async function runLoop({ goal, maxSteps, budgetMs, now, observe, decide, execute }) {
+export async function runLoop({ goal, text, maxSteps, budgetMs, now, observe, decide, execute }) {
   const startedAt = now();
   const steps = [];
   /**
@@ -161,10 +162,11 @@ export async function runLoop({ goal, maxSteps, budgetMs, now, observe, decide, 
         // 请求体不可能等它,所以字段标签那半截取元素表里第一个能切出片段的可填字段当代表
         // (见 `labelSource`)。spec 要求的「按页面字段旁的标签 / 占位符切出的片段」因此一定
         // 在被问过的那份清单里;校验与输入共用同一份,不会出现「问了 A 却按 B 校验」。
-        const candidates = typeTextCandidates({
-          goal,
-          element: labelSource(table),
-        });
+        // 调用方直接给了逐字文本时,**只用它一个**候选:「填什么」已经不由回路决定,再并列
+        // goal 片段只会多给模型一次挑错的机会。中文目标句没有分隔符,靠切词只能切出整句指令 ——
+        // 实测把「在搜索框输入哥德尔不完备定理并搜索」整句填进了搜索框。
+        const candidates =
+          text === undefined ? typeTextCandidates({ goal, element: labelSource(table) }) : [text];
         const questions = buildQuestions({ goal, table, typeTextCandidates: candidates });
         const response = await decide({ goal, state, questions, snapshot });
         // usage 由 SDK 的 `SystemOneResult` 提供(见 @typesafe-ai/sdk 的类型);缺了按 0 计,

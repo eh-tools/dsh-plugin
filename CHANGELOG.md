@@ -8,6 +8,10 @@
 
 ### Added
 
+- `browser-operator`:`browser_act` 新增可选参数 **`text`** —— 给了就**只用它一个候选**作为 `TYPE_TEXT`
+  要输入的逐字文本,不再从 goal 切片段。**中文目标句往往没有分隔符**,切词只能切出整句指令:实测
+  `goal: "在搜索框输入哥德尔不完备定理并搜索"` 时,候选里唯一 goal 片段就是这一整句,于是整句被填进了
+  搜索框,而 `status` 是 `done`、`goalMet=0.53`,**看起来像成功**。要填确切文字时请传 `text`
 - `browser-operator`:新增目标级工具 `browser_act` —— 给一个目标,内部用 TypeSafe 的 Jev
   连跑「观察 → 决策 → 执行」,最多 12 步(上限 40),返回精简轨迹与 `goalMet` 概率。需要
   `TYPESAFE_API_KEY`;没有它时只有这个工具报错,其余 9 个照常。决策与边界见 `docs/adr/0009`
