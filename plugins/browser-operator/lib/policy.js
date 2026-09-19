@@ -299,14 +299,25 @@ export function validateDecision(decision, table, { candidates = [] } = {}) {
   if (field === undefined) return { ok: true, targetIndex: null };
 
   const targetIndex = decision[field];
+  const allowed = table.eligible[decision.operation];
   if (!Number.isInteger(targetIndex)) {
+    // 目标那一问在 **criteria 为空时整问不发**(见 buildQuestions)。那种情况下模型根本
+    // 没有机会给出目标,报「拿到 undefined」会让人以为模型乱答 —— 实测就这么被误导过一轮。
+    // 两种成因分开报,否则这条诊断等于没有。
+    if (allowed.length === 0) {
+      return {
+        ok: false,
+        reason:
+          `${decision.operation} 在本页没有可选目标 —— 目标那一问没有发出,` +
+          `回答里不可能带目标(拿到 ${String(targetIndex)})`,
+      };
+    }
     return {
       ok: false,
       reason: `${decision.operation} 需要一个整数目标,拿到 ${String(targetIndex)}`,
     };
   }
 
-  const allowed = table.eligible[decision.operation];
   if (!allowed.includes(targetIndex)) {
     const element = table.byIndex.get(targetIndex);
     if (element === undefined) {

@@ -1128,6 +1128,29 @@ checkAsync('目标问被省掉的操作 → 重新观察,重试额度用尽后 s
     assert.deepEqual(result.steps, [], '被拒的轮次没有决策,不该记步');
 });
 
+check('目标那一问没发出时,理由必须说「本页没有可选目标」而不是「拿到 undefined」', () => {
+    // 实测(维基搜索页,TYPE_TEXT):收场串原本是「需要一个整数目标,拿到 undefined」,
+    // 读的人会以为 Jev 乱答。真实成因是 criteria 为空时那一问整问没发,模型没机会给目标。
+    // 两种成因必须分开报,否则这条诊断没有价值。
+    const table = buildElementTable(pageOf('clickable', 'clickable')); // 没有 typeable
+    const decision = {
+        operation: 'TYPE_TEXT',
+        typeTextTarget: undefined,
+        typeTextValue: undefined,
+    };
+    const result = validateDecision(decision, table, { candidates: ['Zurich'] });
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /没有可选目标/);
+    assert.match(result.reason, /没有发出/);
+
+    // 反过来:本页**有**可选目标却没拿到整数 → 仍按「模型没给」报,别混为一谈。
+    const withTypeable = buildElementTable(pageOf('typeable'));
+    const other = validateDecision(decision, withTypeable, { candidates: ['Zurich'] });
+    assert.equal(other.ok, false);
+    assert.match(other.reason, /需要一个整数目标/);
+    assert.doesNotMatch(other.reason, /没有可选目标/);
+});
+
 /** 回路用例里反复用的一次 CLICK(1 号元素)。 */
 const CLICK_ANSWER = {
     answers: {
