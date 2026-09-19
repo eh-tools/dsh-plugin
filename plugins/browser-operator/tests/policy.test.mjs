@@ -29,6 +29,7 @@ import {
     readSnapshot,
 } from '../lib/snapshot.js';
 import { TYPESAFE_REF, createDecide, resolveApiKey } from '../lib/jev.js';
+import { apply, executeAction } from '../lib/index.js';
 import { createHarness } from './harness.mjs';
 
 /**
@@ -726,6 +727,96 @@ checkAsync('decide 把 state 与 questions 原样交给 systemOne', async () => 
     const response = await decide({ state: { goal: 'g' }, questions: { operation: {} } });
     assert.deepEqual(calls[0], { state: { goal: 'g' }, questions: { operation: {} } });
     assert.equal(response.answers.operation.choice, 'DONE');
+});
+
+/**
+ * 假 ctx:捕获工具定义,记住 dispose 回调,可选提供 `get()`。
+ *
+ * 刻意**只**提供工具注册表与 `get`,不提供别的 —— 这样「apply 期碰了凭证 / 浏览器」
+ * 会当场炸掉,而不是被一个过分宽松的假对象掩盖。
+ */
+function makeCtx({ credentials } = {}) {
+    const tools = new Map();
+    const disposers = [];
+    return {
+        tools: { register: (definition) => tools.set(definition.name, definition) },
+        get: (name) => (name === 'credentials' ? credentials : undefined),
+        on(event, handler) {
+            if (event === 'dispose') disposers.push(handler);
+        },
+        toolsByName: tools,
+        async dispose() {
+            for (const handler of disposers) await handler();
+        },
+    };
+}
+
+/** 工具执行上下文:只用到 agent.session.id / header.cwd。 */
+const execIn = (cwd) => ({ agent: { session: { id: 'offline', header: { cwd } } } });
+
+check('browser_act 已注册且带齐门禁要求的四件套', () => {
+    const ctx = makeCtx();
+    apply(ctx, {});
+    const definition = ctx.toolsByName.get('browser_act');
+    assert.ok(definition !== undefined, 'browser_act 没有注册');
+    assert.equal(typeof definition.timeoutMs, 'number');
+    assert.ok(definition.output?.schema, '缺 output.schema');
+    assert.equal(typeof definition.output.render, 'function', '缺 output.render');
+    assert.equal(typeof definition.presentCall, 'function', '缺 presentCall');
+    assert.equal(definition.timeoutMs, 120000);
+});
+
+check('注册只发生在 apply 期,不在 apply 里解析凭证', () => {
+    // makeCtx() 故意不提供 get() 之外的 credentials —— 若 apply 期解析就会抛。
+    assert.doesNotThrow(() => apply(makeCtx(), {}));
+});
+
+check('browser_act 的参数只有 goal 与 maxSteps', () => {
+    const ctx = makeCtx();
+    apply(ctx, {});
+    const parameters = ctx.toolsByName.get('browser_act').parameters;
+    assert.deepEqual(Object.keys(parameters.properties).sort(), ['goal', 'maxSteps']);
+    assert.deepEqual(parameters.required, ['goal']);
+    assert.equal(parameters.additionalProperties, false);
+});
+
+checkAsync('没打开页面时 browser_act 指向 browser_navigate(而不是先抱怨缺 key)', async () => {
+    const ctx = makeCtx();
+    apply(ctx, {});
+    await assert.rejects(
+        () => ctx.toolsByName.get('browser_act').execute({ goal: 'g' }, execIn(process.cwd())),
+        /browser_navigate/,
+    );
+});
+
+checkAsync('非有限的 maxSteps 在离开工具之前就被拒(不许传进回路)', async () => {
+    const ctx = makeCtx();
+    apply(ctx, {});
+    const execute = ctx.toolsByName.get('browser_act').execute;
+    // exec 是 undefined:参数校验必须发生在一切 I/O 之前,所以连 exec 都不该被碰到。
+    // 非有限值若走到 runLoop,`attempts >= maxSteps` 永不成立 → 回路不返回;
+    // 它还会 starving 掉 Node 的 timer 相位,连从内部打断都做不到。
+    for (const bad of [Infinity, -Infinity, NaN, 0, -3, 6.5, '12']) {
+        await assert.rejects(
+            () => execute({ goal: 'g', maxSteps: bad }),
+            /maxSteps/,
+            `${String(bad)} 不该被当成合法步数放过去`,
+        );
+    }
+});
+
+checkAsync('未被执行器实现的 operation 一律失败,不静默成功(R2 default-deny)', async () => {
+    // 这个 operation 连 `ACTION_SPACE` 都不在 —— `parseDecision` 之外没人拦得住它。
+    // 执行器必须**抛**,否则回路会把一次没发生的事记成成功。
+    const page = {
+        evaluate: () => {
+            throw new Error('不该碰页面:operation 校验必须排在页面访问之前');
+        },
+    };
+    await assert.rejects(
+        () => executeAction({ operation: 'NAVIGATE', page, settings: {}, snapshot: {} }),
+        /NAVIGATE/,
+    );
 });
 
 // 回路用例:全部登记完再统一 await,失败才算数(见 harness.mjs 的 checkAsync)。
