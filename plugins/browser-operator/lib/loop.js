@@ -76,6 +76,14 @@ export function evaluateStop({
 export async function runLoop({ goal, maxSteps, budgetMs, now, observe, decide, execute }) {
   const startedAt = now();
   const steps = [];
+  /**
+   * 这一步回路花掉的 Jev token 总量,**含重试**:`systemOne` 每次返回都带 `usage`,
+   * 校验失败后的重新观察照样要付钱,所以一并累加 —— 那正是要看得见的成本。
+   */
+  const usage = { inputTokens: 0, outputTokens: 0, calls: 0 };
+  /** 与 `finish` 同形,但把本轮的 token 用量一起带上。 */
+  const done = (status, recorded, met, elapsed, error) =>
+    finish(status, recorded, met, elapsed, error, usage);
   let attempts = 0;
   let consecutiveLowConfidence = 0;
   let goalMet = 0;
@@ -119,7 +127,7 @@ export async function runLoop({ goal, maxSteps, budgetMs, now, observe, decide, 
         budgetMs,
         consecutiveLowConfidence,
       });
-      if (verdict.stop) return finish(verdict.status, steps, goalMet, elapsedMs);
+      if (verdict.stop) return done(verdict.status, steps, goalMet, elapsedMs);
 
       // 观察 → 决策。校验失败时整轮重来,最多 MAX_VALIDATION_RETRIES 次;
       // 每一轮都计一个 attempts 单位,包括失败的那些轮 —— 否则一个持续越界的目标
@@ -127,7 +135,7 @@ export async function runLoop({ goal, maxSteps, budgetMs, now, observe, decide, 
       let action = null;
       for (let retry = 0; action === null && retry <= MAX_VALIDATION_RETRIES; retry += 1) {
         attempts += 1;
-        if (attempts > maxSteps) return finish('max_steps', steps, goalMet, now() - startedAt);
+        if (attempts > maxSteps) return done('max_steps', steps, goalMet, now() - startedAt);
         const snapshot = await observe();
         const table = buildElementTable(snapshot);
         const state = buildState({ goal, snapshot, table, steps });
@@ -146,24 +154,34 @@ export async function runLoop({ goal, maxSteps, budgetMs, now, observe, decide, 
           element: labelSource(table),
         });
         const questions = buildQuestions({ goal, table, typeTextCandidates: candidates });
-        const decision = parseDecision(await decide({ goal, state, questions, snapshot }));
+        const response = await decide({ goal, state, questions, snapshot });
+        // usage 由 SDK 的 `SystemOneResult` 提供(见 @typesafe-ai/sdk 的类型);缺了按 0 计,
+        // 不让一个可选字段把回路憋死。
+        if (Number.isFinite(response?.usage?.input_tokens)) {
+          usage.inputTokens += response.usage.input_tokens;
+        }
+        if (Number.isFinite(response?.usage?.output_tokens)) {
+          usage.outputTokens += response.usage.output_tokens;
+        }
+        usage.calls += 1;
+        const decision = parseDecision(response);
 
         if (decision.goalMet >= STOP_PROBABILITY) {
           goalMet = decision.goalMet;
           recordStep(decision, null, undefined, lastReason);
-          return finish('done', steps, goalMet, now() - startedAt);
+          return done('done', steps, goalMet, now() - startedAt);
         }
         if (decision.stuck >= STOP_PROBABILITY) {
           recordStep(decision, null, undefined, lastReason);
-          return finish('stuck', steps, decision.goalMet, now() - startedAt);
+          return done('stuck', steps, decision.goalMet, now() - startedAt);
         }
         if (decision.operation === 'BLOCKED') {
           recordStep(decision, null, undefined, lastReason);
-          return finish('blocked', steps, decision.goalMet, now() - startedAt);
+          return done('blocked', steps, decision.goalMet, now() - startedAt);
         }
         if (decision.operation === 'DONE') {
           recordStep(decision, null, undefined, lastReason);
-          return finish('done', steps, decision.goalMet, now() - startedAt);
+          return done('done', steps, decision.goalMet, now() - startedAt);
         }
 
         if (decision.operation === 'TYPE_TEXT' && candidates.length === 0) {
@@ -172,7 +190,7 @@ export async function runLoop({ goal, maxSteps, budgetMs, now, observe, decide, 
           // 读轨迹的人以为「已经确认要填 3 号元素」。所以这里不记目标(与别的分支一致:
           // 只有 `checked.targetIndex` 那种校验过的值才进台账)。
           recordStep(decision, null, undefined, lastReason);
-          return finish('text_unavailable', steps, decision.goalMet, now() - startedAt, NO_TEXT);
+          return done('text_unavailable', steps, decision.goalMet, now() - startedAt, NO_TEXT);
         }
 
         const checked = validateDecision(decision, table, { candidates });
@@ -196,7 +214,7 @@ export async function runLoop({ goal, maxSteps, budgetMs, now, observe, decide, 
       }
 
       if (action === null) {
-        return finish('error', steps, goalMet, now() - startedAt, `动作校验连续失败:${lastReason}`);
+        return done('error', steps, goalMet, now() - startedAt, `动作校验连续失败:${lastReason}`);
       }
 
       // 动作**执行前**的校验(页面过期 / 目标已不在)失败 → 重新观察重试,与上面那道
@@ -206,17 +224,11 @@ export async function runLoop({ goal, maxSteps, budgetMs, now, observe, decide, 
         await execute(action);
       } catch (error) {
         if (error?.[STALE_FLAG] !== true) {
-          return finish(
-            'error',
-            steps,
-            goalMet,
-            now() - startedAt,
-            error?.message ?? String(error),
-          );
+          return done('error', steps, goalMet, now() - startedAt, error?.message ?? String(error));
         }
         staleFailures += 1;
         if (staleFailures > MAX_VALIDATION_RETRIES) {
-          return finish(
+          return done(
             'error',
             steps,
             goalMet,
@@ -231,17 +243,18 @@ export async function runLoop({ goal, maxSteps, budgetMs, now, observe, decide, 
       staleFailures = 0;
 
       const elapsedAfter = now() - startedAt;
-      if (elapsedAfter >= budgetMs) return finish('timeout', steps, goalMet, elapsedAfter);
+      if (elapsedAfter >= budgetMs) return done('timeout', steps, goalMet, elapsedAfter);
     }
   } catch (error) {
-    return finish('error', steps, goalMet, now() - startedAt, error?.message ?? String(error));
+    return done('error', steps, goalMet, now() - startedAt, error?.message ?? String(error));
   }
 }
 
 /** 统一的收尾形状。`status: 'done'` 只表示回路停了,**不表示目标真的达成**。 */
-function finish(status, steps, goalMet, elapsedMs, error) {
+function finish(status, steps, goalMet, elapsedMs, error, usage) {
   const result = { status, steps, goalMet, elapsedMs };
   if (error !== undefined) result.error = error;
+  if (usage !== undefined) result.usage = usage;
   return result;
 }
 

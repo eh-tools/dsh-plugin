@@ -1168,6 +1168,34 @@ checkAsync('真正的执行失败不重试:没有 stale 标记就立即收场', 
     assert.match(result.error, /点击超时/);
 });
 
+checkAsync('token 用量按次累加:重试那几次也要算进去', async () => {
+    // `systemOne` 每次返回都带 usage。重试同样要付钱,所以累加值必须覆盖全部请求 ——
+    // 否则「Jev 这一步贵不贵」只能靠猜。
+    const deps = fakeDeps({ responses: [CLICK_ANSWER, CLICK_ANSWER] });
+    let calls = 0;
+    const result = await runWith(deps, {
+        maxSteps: 2,
+        decide: async () => {
+            calls += 1;
+            return {
+                ...CLICK_ANSWER,
+                usage: { input_tokens: 1000 + calls, output_tokens: 200 + calls },
+            };
+        },
+    });
+    assert.equal(result.usage.calls, 2);
+    assert.equal(result.usage.inputTokens, 1001 + 1002);
+    assert.equal(result.usage.outputTokens, 201 + 202);
+});
+
+checkAsync('decide 不带 usage 时按 0 计,不产生 NaN', async () => {
+    // usage 是可以缺的:测试注入的 decide、以及任何非 SDK 的实现都不会有它。
+    // 缺了按 0 计,不能把整个结果污染成 NaN。
+    const deps = fakeDeps({ responses: CLICK_THEN_DONE });
+    const result = await runWith(deps);
+    assert.deepEqual(result.usage, { inputTokens: 0, outputTokens: 0, calls: 2 });
+});
+
 /** 目标字段(4 号 textbox)的 name 是 'Departure';2 号 'Where from?' 是标签代表。 */
 const TYPEABLE = SNAPSHOT;
 

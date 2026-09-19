@@ -13,6 +13,8 @@
   `TYPESAFE_API_KEY`;没有它时只有这个工具报错,其余 9 个照常。决策与边界见 `docs/adr/0009`
 - `browser-operator`:新增离线单测 `tests/policy.test.mjs`(策略层 + 回路 + 注册形状)与
   `tests/harness.test.mjs`(测试脚手架自身),进 `just check`
+- `browser-operator`:`browser_act` 的返回值新增 `usage = { inputTokens, outputTokens, calls }` ——
+  整次回路的 Jev token 开销(含校验失败后重新观察的那几轮),不必再去 console 查用量
 
 ### Removed
 

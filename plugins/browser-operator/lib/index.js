@@ -1012,8 +1012,19 @@ export function apply(ctx, config = {}) {
           goalMet: { type: 'number', description: 'Jev 报的目标达成概率;不是断言。' },
           elapsedMs: { type: 'integer' },
           error: { type: 'string' },
+          usage: {
+            type: 'object',
+            description: '本次回路花掉的 Jev token 总量,含校验失败后重新观察的那几次。',
+            properties: {
+              inputTokens: { type: 'integer' },
+              outputTokens: { type: 'integer' },
+              calls: { type: 'integer', description: 'Jev 请求次数(含重试)。' },
+            },
+            required: ['inputTokens', 'outputTokens', 'calls'],
+            additionalProperties: false,
+          },
         },
-        required: ['status', 'steps', 'goalMet', 'elapsedMs'],
+        required: ['status', 'steps', 'goalMet', 'elapsedMs', 'usage'],
         additionalProperties: false,
       },
       render: (_args, value) => [
@@ -1021,6 +1032,9 @@ export function apply(ctx, config = {}) {
           type: 'text',
           text:
             `${value.status} · ${value.steps.length} 步 · goalMet=${value.goalMet} · ${value.elapsedMs}ms` +
+            (value.usage
+              ? ` · Jev ${value.usage.calls} 次 ${value.usage.inputTokens} in / ${value.usage.outputTokens} out`
+              : '') +
             (value.error ? `\n${value.error}` : '') +
             (value.steps.length > 0
               ? '\n' +
