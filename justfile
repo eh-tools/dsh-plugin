@@ -11,8 +11,8 @@ lint:
 
 # ---- 单元测试 ----
 # 全部离线可跑: 不需要 DSH 进程, 也不需要浏览器。
-# (归档的 browser-operator 自检会真的拉起一个有头浏览器窗口, 已从门禁里摘掉 ——
-#  手动跑法见 plugins/obsolete/browser-operator/README.md)
+# (browser-operator 的浏览器自检会真的拉起一个有头浏览器窗口, 已从门禁里摘掉 ——
+#  手动跑法见 plugins/browser-operator/README.md)
 test:
     node plugins/obsolete/tool-vision/tests/smoke.mjs
     node plugins/obsolete/paste-image/tests/save.test.mjs
@@ -38,6 +38,8 @@ e2e:
 #    `just check` 里一直是绿的, 而 Dependabot 报了警 —— 口径现在与它对齐(全量)。
 audit:
     pnpm audit
+    # 仓库没有 pnpm workspace: 根 audit 覆盖不到插件的依赖, 所以插件目录单独扫一遍
+    pnpm --dir plugins/browser-operator audit
 
 # ---- 全量检查(等同 pre-push 的内容) ----
 check: lint test audit

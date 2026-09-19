@@ -6,6 +6,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- `browser-operator`:新增目标级工具 `browser_act` —— 给一个目标,内部用 TypeSafe 的 Jev
+  连跑「观察 → 决策 → 执行」,最多 12 步(上限 40),返回精简轨迹与 `goalMet` 概率。需要
+  `TYPESAFE_API_KEY`;没有它时只有这个工具报错,其余 9 个照常。决策与边界见 `docs/adr/0009`
+- `browser-operator`:新增离线单测 `tests/policy.test.mjs`(策略层 + 回路 + 注册形状),进 `just check`
+
 ### Removed
 
 - `file-git-explorer`:**退役归档** —— 源码、装配护栏(`verify-client-bundles`)与 3 条用例整体搬进
@@ -36,6 +43,13 @@
   插件、补上 `plugins/obsolete/` 归档口径;根 `CONTEXT.md` 的 § file-git-explorer 与 § browser-operator 词表
   整节搬进各自归档目录(`plugins/obsolete/<插件>/CONTEXT.md`),`docs/adr/0002`–`0006` 标注「插件已归档,
   仅作历史记录」
+- `browser-operator`:**复活** —— 从 `plugins/obsolete/` 移回 `plugins/browser-operator/`
+  (ADR-0008 写明的回滚路径),源码行为除新增 `browser_act` 外未改;它的 preset 快照改造成在役模板
+- `justfile` / 根 `package.json`:`test` / `check` 加入 `browser-operator` 的离线单测;
+  `audit` 加跑插件目录(`pnpm --dir plugins/browser-operator audit`)—— 仓库没有 pnpm workspace,
+  根 `pnpm audit` 覆盖不到插件的依赖
+- `.pre-commit-config.yaml` / `.prettierignore`:两处针对 browser-operator preset 的排除路径
+  随插件移出 `obsolete/` 而更新
 
 ## [0.4.0] - 2026-09-17
 

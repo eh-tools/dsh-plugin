@@ -8,17 +8,17 @@
 
 ## 插件清单
 
-| 插件                     | 状态   | 一句话说明                                                      |
-| ------------------------ | ------ | --------------------------------------------------------------- |
-| `ds-balance`             | 维护中 | 状态栏第二行:余额 + 今日/本月 token,5 分钟自动刷新              |
-| `db-console`             | 维护中 | 会话头部「数据库」页签:PG 登录、schema 树、SQL 编辑器、结果网格 |
-| `deepseek-harness`       | 维护中 | 蓝色粒子鲸鱼背景,跟随官方明/暗/系统主题                         |
-| `stylevault-localchrome` | 维护中 | 读本机 Chrome 配色 → 生成并应用 StyleVault 预设                 |
-| `batch-archive`          | 维护中 | 侧边栏「批量归档」按钮,一次归档多个会话                         |
-| `tool-vision`            | 已归档 | 本地视觉模型描述图片(读图 / OCR / 版面)                         |
-| `paste-image`            | 已归档 | 粘贴图片落盘成文件,路径写入草稿                                 |
-| `file-git-explorer`      | 已归档 | 右栏 Git 页签 + 详情悬浮面板 + 终端抽屉(自建界面已退场)         |
-| `browser-operator`       | 已归档 | 常驻可见浏览器 + 9 个 `browser_*` 工具(纯 host,挂 agent preset) |
+| 插件                     | 状态   | 一句话说明                                                                              |
+| ------------------------ | ------ | --------------------------------------------------------------------------------------- |
+| `ds-balance`             | 维护中 | 状态栏第二行:余额 + 今日/本月 token,5 分钟自动刷新                                      |
+| `db-console`             | 维护中 | 会话头部「数据库」页签:PG 登录、schema 树、SQL 编辑器、结果网格                         |
+| `deepseek-harness`       | 维护中 | 蓝色粒子鲸鱼背景,跟随官方明/暗/系统主题                                                 |
+| `stylevault-localchrome` | 维护中 | 读本机 Chrome 配色 → 生成并应用 StyleVault 预设                                         |
+| `batch-archive`          | 维护中 | 侧边栏「批量归档」按钮,一次归档多个会话                                                 |
+| `browser-operator`       | 维护中 | 常驻可见浏览器 + 10 个 `browser_*` 工具(含目标级 `browser_act`;纯 host,挂 agent preset) |
+| `tool-vision`            | 已归档 | 本地视觉模型描述图片(读图 / OCR / 版面)                                                 |
+| `paste-image`            | 已归档 | 粘贴图片落盘成文件,路径写入草稿                                                         |
+| `file-git-explorer`      | 已归档 | 右栏 Git 页签 + 详情悬浮面板 + 终端抽屉(自建界面已退场)                                 |
 
 > 归档插件源码在 `plugins/obsolete/`,不再维护、不列入默认安装。
 > 每个插件的配置项与细节见其自身 `plugins/<plugin-id>/README.md`。
@@ -46,6 +46,7 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/batch-archive
   dsh plugin --profile web add github:GptsApp/dsh-stylevault
   dsh plugin --profile web add link:<repo-abs-path>/plugins/stylevault-localchrome
   ```
+- **例外**:`browser-operator` 是**纯 host 插件**,不装 profile,拷进 agent preset(见下)。
 
 ## 插件使用说明
 
@@ -83,6 +84,29 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/batch-archive
 - 已装上游且同意后,首次启动弹窗询问,同意即每次启动自动应用当前 Chrome 配色;之后可在 **Settings → StyleVault · Local Chrome** 卡片改主意。
 - 不装上游则只生成预设,不接管主题。
 - 不挂载也能用 CLI 生成预设:`node plugins/stylevault-localchrome/scripts/build-preset.js`。
+
+### browser-operator —— 常驻可见浏览器 + 目标级 `browser_act`(挂 agent preset,不走 profile)
+
+- **纯 host 插件**(无 client 半),所以**不**走 `dsh plugin --profile web add link:`。先装依赖(仅 `playwright-core`,用系统 Chrome,不下载浏览器):
+
+  ```sh
+  pnpm --dir <repo-abs-path>/plugins/browser-operator install
+  ```
+
+- 再把插件自带的 preset 模板拷进本机,拷完把 `agent.cordis.yml` 里的 `<repo-abs-path>` 换成仓库绝对路径:
+
+  ```sh
+  cp -r plugins/browser-operator/preset ~/.dsh/.agent-presets/browser-operator
+  ```
+
+  **新建会话**即可生效;改 `lib/index.js`(host 侧代码)需**重启 DSH**。模板里另外两处改动(persona 与插件行)与 `!!js` 标签的注意事项见 `plugins/browser-operator/preset/README.md`。
+
+- 常驻**有头**浏览器,独立 profile,与日常 Chrome 并存,登录态跨轮次、跨 DSH 重启复用(首次在可见窗口人工登录一次)。
+- **10 个工具**:9 个单步工具 —— `browser_navigate`、`browser_snapshot`、`browser_click`、`browser_fill`、`browser_eval`、`browser_screenshot`、`browser_console`、`browser_network`、`browser_artifacts`;外加唯一的目标级工具 `browser_act`。
+- `browser_act` 接一个自然语言目标,内部用 TypeSafe 的 **Jev** 连跑「观察 → 决策 → 执行」(最多 12 步,上限 40),返回精简轨迹与 `goalMet` 概率。**它需要 `TYPESAFE_API_KEY`**(TypeSafe 是按量付费的外部服务),凭证写进 `.env` 或 `~/.dsh/.credentials.yaml`;**没有 key 时只有它报错,其余 9 个工具照常可用**。
+- `browser_act` **不导航** —— 先去哪个页面由 `browser_navigate` 决定;它停在 `status` 上,`done` 不代表目标真的达成,要确认就自己 `browser_snapshot` 复核一次。
+- 截图等产物落在项目已 ignore 的目录下,**不脏仓库**。
+- 浏览器自检(`tests/smoke.mjs`)会真的拉起一个有头窗口,**不进 `just check`**,只能手动跑(需本机装有 Chrome):`node plugins/browser-operator/tests/smoke.mjs`。
 
 ## 常见问题速查
 
