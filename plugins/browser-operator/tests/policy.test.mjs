@@ -306,8 +306,15 @@ check('state 带上 goal、当前 URL/标题、元素表与已走过的步数', 
     assert.equal(state.steps.length, 1);
 });
 
-check('questions 的键恰好是那七个', () => {
-    const questions = buildQuestions({ goal: 'g', table: buildElementTable(SNAPSHOT) });
+check('页面每种目标都有、候选也不空时,questions 的键恰好是那七个', () => {
+    // 目标问是**按需**发的(空 criteria 会被服务端 400 拒,见下面几条),所以这一条
+    // 特意把七问都凑齐:SNAPSHOT 里 CLICK / TYPE_TEXT / SELECT 都有 eligible,
+    // 再给一份非空文本候选,`type_text_value` 才发得出来。
+    const questions = buildQuestions({
+        goal: 'g',
+        table: buildElementTable(SNAPSHOT),
+        typeTextCandidates: ['Zurich'],
+    });
     assert.deepEqual(Object.keys(questions).sort(), [
         'click_target',
         'goal_met',
@@ -336,9 +343,12 @@ check('文本那一问是 choice,标签是候选下标的十进制写法,描述�
     assert.equal(questions.type_text_value.instructions.length > 0, true);
 });
 
-check('没给候选时文本那一问的 criteria 为空(不乱编标签)', () => {
+check('没给候选时文本那一问整个不发(空 criteria 会被服务端 400 拒)', () => {
+    // 之前这里发的是 `criteria: {}`,服务端回 400
+    // `Choice question must have at least one choice`。没有候选时既不补占位项,
+    // 也不发空对象 —— 那一问直接消失。
     const questions = buildQuestions({ goal: 'g', table: buildElementTable(SNAPSHOT) });
-    assert.deepEqual(questions.type_text_value.criteria, {});
+    assert.equal('type_text_value' in questions, false, '没有候选时不该发那一问');
 });
 
 check('每个问题都带 type 判别字段,且 noul 不带 criteria', () => {
@@ -394,11 +404,153 @@ check('criteria 的值就是元素表里那一行', () => {
     assert.equal(questions.click_target.criteria['1'], '[1] button "Round trip"');
 });
 
-check('没有合法目标时依然给出 questions(交给 Jev 选 DONE/BLOCKED)', () => {
+/**
+ * 造一个只有若干元素的最小快照。`kind` 取 `clickable` / `typeable` / `selectable`
+ * 三者之一(buildElementTable 的 eligible 就按它分派)。
+ */
+function pageOf(...kinds) {
+    return {
+        elements: kinds.map((kind, position) => ({
+            index: position + 1,
+            role: kind,
+            name: `e${position + 1}`,
+            value: '',
+            disabled: false,
+            kind,
+        })),
+    };
+}
+
+check('每个目标问在对应 eligible 为空时整个不发,有目标时才发', () => {
+    // 四道目标问各自与自己的 eligible 列表绑定:空列表 → 整问消失,绝不发空 criteria。
+    const cases = [
+        { key: 'click_target', present: 'clickable', absent: 'typeable' },
+        { key: 'type_text_target', present: 'typeable', absent: 'clickable' },
+        { key: 'select_target', present: 'selectable', absent: 'clickable' },
+    ];
+    for (const { key, present, absent } of cases) {
+        const withEligible = buildQuestions({
+            goal: 'g',
+            table: buildElementTable(pageOf(present)),
+        });
+        assert.ok(withEligible[key] !== undefined, `${key} 有 eligible 目标时该发出来`);
+        assert.ok(
+            Object.keys(withEligible[key].criteria).length > 0,
+            `${key} 的 criteria 不该是空的`,
+        );
+
+        const without = buildQuestions({ goal: 'g', table: buildElementTable(pageOf(absent)) });
+        assert.equal(without[key], undefined, `${key} 没有 eligible 目标时整个不该发`);
+    }
+
+    // 文本那一问的 eligible 是「逐字候选」,不是元素 —— 候选为空同样整问不发。
+    const noCandidates = buildQuestions({
+        goal: 'g',
+        table: buildElementTable(pageOf('typeable')),
+    });
+    assert.equal('type_text_value' in noCandidates, false);
+    const withCandidates = buildQuestions({
+        goal: 'g',
+        table: buildElementTable(pageOf('typeable')),
+        typeTextCandidates: ['Zurich'],
+    });
+    assert.deepEqual(withCandidates.type_text_value.criteria, { 0: 'Zurich' });
+});
+
+check('任何时候都不会发出 criteria 为空的 choice(那正是 400 的成因)', () => {
+    // 这一条钉的是**已确认的线上形状**:一个空 criteria 的 choice 单独发出去也会 400。
+    // 所以从公开面逐个数:凡是 choice,criteria 至少有一项;noul 一律不带 criteria。
+    const pages = [
+        SNAPSHOT,
+        { elements: [] },
+        pageOf('typeable'),
+        pageOf('selectable'),
+        pageOf('clickable'),
+        pageOf('clickable', 'typeable', 'selectable'),
+        {
+            elements: [
+                {
+                    index: 1,
+                    role: 'button',
+                    name: 'Search',
+                    value: '',
+                    disabled: true,
+                    kind: 'clickable',
+                },
+            ],
+        },
+    ];
+    for (const snapshot of pages) {
+        for (const candidateSet of [[], ['Zurich']]) {
+            const questions = buildQuestions({
+                goal: 'g',
+                table: buildElementTable(snapshot),
+                typeTextCandidates: candidateSet,
+            });
+            for (const [name, question] of Object.entries(questions)) {
+                assert.ok(
+                    ['choice', 'noul'].includes(question.type),
+                    `${name} 的 type 不对:${question.type}`,
+                );
+                if (question.type === 'noul') {
+                    assert.ok(!('criteria' in question), `${name} 是 noul,不该带 criteria`);
+                    continue;
+                }
+                const keys = Object.keys(question.criteria ?? {});
+                assert.ok(keys.length > 0, `${name} 发了空 criteria(服务端会回 400)`);
+            }
+        }
+    }
+});
+
+check('没有任何 eligible 目标时,question 集仍然有效:operation/goal_met/stuck 三问俱全', () => {
     const table = buildElementTable({ elements: [] });
     const questions = buildQuestions({ goal: 'g', table });
-    assert.deepEqual(questions.click_target.criteria, {});
+    // 四道目标问全被省掉 —— 但它们本来也无从可选。
+    assert.deepEqual(Object.keys(questions).sort(), ['goal_met', 'operation', 'stuck']);
+    // operation 照旧列出全部 8 个操作(交给 Jev 选 DONE / BLOCKED),说明永远有内容。
     assert.deepEqual(Object.keys(questions.operation.criteria), [...ACTION_SPACE]);
+    assert.equal(questions.operation.type, 'choice');
+    assert.ok(questions.goal_met.instructions.length > 0);
+    assert.ok(questions.stuck.instructions.length > 0);
+    assert.equal(questions.goal_met.type, 'noul');
+    assert.equal(questions.stuck.type, 'noul');
+});
+
+check('选了目标问被省掉的操作 → 校验拒绝(没问过 = 没答,不回落)', () => {
+    const table = buildElementTable(pageOf('clickable'));
+    const questions = buildQuestions({ goal: 'g', table });
+    // 「没有 selectable 元素」正是一张典型真实页面的样子(绝大多数页面没有 <select>)。
+    assert.equal('select_target' in questions, false);
+    assert.deepEqual(Object.keys(questions.operation.criteria), [...ACTION_SPACE]);
+
+    // Jev 仍旧可以答 SELECT —— operation 那一问列出全部 8 个操作。但那一问没发出去,
+    // 于是回答里没有 select_target,parseDecision 不许因此抛错,只当作「没给目标」。
+    const decision = parseDecision({
+        answers: {
+            operation: { choice: 'SELECT', confidence: 0.9 },
+            goal_met: { noul: 0.1 },
+            stuck: { noul: 0.1 },
+        },
+    });
+    assert.equal(decision.operation, 'SELECT');
+    assert.equal(decision.selectTarget, undefined);
+
+    const verdict = validateDecision(decision, table);
+    assert.equal(verdict.ok, false, '没有 eligible 目标的 SELECT 必须被拒');
+    assert.match(verdict.reason, /SELECT/);
+
+    // 就算 Jev 硬答一个标签(理论上问都没问),它也不在 SELECT 的 eligible 里 → 同样拒。
+    const answered = parseDecision({
+        answers: {
+            operation: { choice: 'SELECT', confidence: 0.9 },
+            select_target: { choice: '1', confidence: 0.9 },
+            goal_met: { noul: 0.1 },
+            stuck: { noul: 0.1 },
+        },
+    });
+    assert.equal(answered.selectTarget, 1, '十进制标签照旧能解析出来');
+    assert.equal(validateDecision(answered, table).ok, false, '不在 eligible 里就得拒');
 });
 
 check('goal_met 与 stuck 是带实质文案的概率问题', () => {
@@ -856,6 +1008,94 @@ checkAsync(
         assert.equal(step.targetIndex, undefined, '没校验过的目标不该写进轨迹');
     },
 );
+
+checkAsync('没有逐字候选时 type_text_value 整问不发,回路照旧收在 text_unavailable', async () => {
+    // 候选为空时那一问的 criteria 只能是空的 —— 发出去就是 400,回路连判断的机会都没有。
+    // 省掉它之后回路必须**仍然**走 `text_unavailable`(那条分支只看候选,不看问没问)。
+    const bare = {
+        ...SNAPSHOT,
+        elements: SNAPSHOT.elements.map((element) =>
+            element.kind === 'typeable' ? { ...element, name: '' } : element,
+        ),
+    };
+    const deps = fakeDeps({
+        responses: [
+            {
+                answers: {
+                    operation: { choice: 'TYPE_TEXT', confidence: 0.9 },
+                    type_text_target: { choice: '4', confidence: 0.9 },
+                    goal_met: { noul: 0.1 },
+                    stuck: { noul: 0.1 },
+                },
+            },
+        ],
+        snapshot: bare,
+    });
+    const seen = [];
+    const result = await runLoop({
+        goal: '',
+        maxSteps: 12,
+        budgetMs: 100000,
+        now: deps.now,
+        observe: deps.observe,
+        decide: async ({ questions }) => {
+            seen.push(questions);
+            return deps.decide();
+        },
+        execute: deps.execute,
+    });
+    assert.equal(result.status, 'text_unavailable');
+    assert.match(result.error, /browser_fill/);
+    assert.equal(deps.executed.length, 0);
+    assert.equal('type_text_value' in seen[0], false, '没有候选时那一问不该发出去');
+    // 目标那问仍有 eligible(2 号 / 4 号可填),所以它照常发出 —— 两条问的取舍彼此独立。
+    assert.ok('type_text_target' in seen[0]);
+});
+
+checkAsync('目标问被省掉的操作 → 重新观察,重试额度用尽后 status 为 error', async () => {
+    // 页面没有任何 selectable 元素(典型真实页面):`select_target` 那一问被省掉。
+    // Jev 若答 SELECT,回答里就没有目标 —— 与 B1 的「没答/解析不出」走同一条拒绝路径:
+    // 重新观察,额度用尽即 error,**不是**静默 no-op。
+    const noSelect = {
+        ...SNAPSHOT,
+        elements: SNAPSHOT.elements.filter((element) => element.kind !== 'selectable'),
+    };
+    const selectAnswer = {
+        answers: {
+            operation: { choice: 'SELECT', confidence: 0.9 },
+            goal_met: { noul: 0.1 },
+            stuck: { noul: 0.1 },
+        },
+    };
+    let observes = 0;
+    const asks = [];
+    const result = await runLoop({
+        goal: 'g',
+        maxSteps: 12,
+        budgetMs: 100000,
+        now: () => 0,
+        observe: async () => {
+            observes += 1;
+            return noSelect;
+        },
+        decide: async ({ questions }) => {
+            asks.push(questions);
+            return selectAnswer;
+        },
+        execute: async () => {
+            throw new Error('被省掉目标的操作一次都不该执行');
+        },
+    });
+    assert.equal(result.status, 'error', '没有目标可选必须收在 error,不能静默放过');
+    // MAX_VALIDATION_RETRIES = 2 → 三轮「观察 → 决策」,每轮都重新观察。
+    assert.equal(observes, 3, '每一轮重试都要重新观察,不能拿旧快照接着问');
+    assert.equal(asks.length, 3);
+    for (const questions of asks) {
+        assert.equal('select_target' in questions, false, '没有 selectable 元素时不该发目标问');
+    }
+    assert.match(result.error, /SELECT/);
+    assert.deepEqual(result.steps, [], '被拒的轮次没有决策,不该记步');
+});
 
 /** 目标字段(4 号 textbox)的 name 是 'Departure';2 号 'Where from?' 是标签代表。 */
 const TYPEABLE = SNAPSHOT;

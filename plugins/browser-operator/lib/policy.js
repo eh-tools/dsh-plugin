@@ -106,17 +106,26 @@ const OPERATION_HINTS = Object.freeze({
 });
 
 /**
- * 一次请求里同时问完 operation 与所有兼容 target —— 两个决策,一次网络往返。
+ * 一次请求里同时问完 operation 与所有**当前真有可选目标**的操作 —— 两个决策,一次网络往返。
  *
  * ⚠ 形状必须与 SDK 的 `Question` 联合一致(见 `@typesafe-ai/sdk/dist/index.d.mts`):
  * 每个问题都带 `type`;`choice` 的 `criteria` 是「标签 → 描述」的对象;`noul` 不带
  * criteria。**标签就是元素序号的十进制写法** —— `parseDecision` 靠它把回答映射回索引。
  *
+ * ⚠ **criteria 会为空的 choice 一律不发**(实测:服务端对空 criteria 的 choice 回 400
+ * `Choice question must have at least one choice`)。一个操作在此页没有可选目标时,它那一问
+ * 整个消失 —— 不补占位项、也不发空对象:模型因此**没有机会**挑一个不存在的目标;它若仍旧
+ * 答了那个操作(operation 那一问照旧列出全部 8 个操作),`validateDecision` 会照常拒掉,
+ * 走「重新观察 → 重试额度用尽 → `status: 'error'`」那条路。`operation` / `goal_met` /
+ * `stuck` 永远有内容,不会被省。
+ *
  * 文本那一问(`type_text_value`)的标签是**候选列表里的下标**(`'0'` / `'1'` …),
  * 描述才是片段本身 —— 与元素目标同一套十进制标签口径,于是 `parseDecision` /
  * `validateDecision` 的映射逻辑不必分叉,而一个乱答的标签也没有任何机会变成被输入的文本。
+ * 候选为空时它同样不发;回路在**校验之前**就把 `TYPE_TEXT` 收在 `text_unavailable`。
  *
  * @param {{ goal: string, table: object, typeTextCandidates?: string[] }} options
+ * @returns {Record<string, object>} 只含本次真的问得起的问题
  */
 export function buildQuestions({ goal, table, typeTextCandidates: candidates = [] }) {
   const criteriaFor = (indexes) => {
@@ -137,7 +146,7 @@ export function buildQuestions({ goal, table, typeTextCandidates: candidates = [
   const operationCriteria = {};
   for (const operation of ACTION_SPACE) operationCriteria[operation] = OPERATION_HINTS[operation];
 
-  return {
+  const questions = {
     operation: {
       type: 'choice',
       instructions:
@@ -148,47 +157,58 @@ export function buildQuestions({ goal, table, typeTextCandidates: candidates = [
         'BLOCKED means a human is required (login, SSO, captcha).',
       criteria: operationCriteria,
     },
-    click_target: {
-      type: 'choice',
-      instructions:
-        'Which element should be clicked? Answer with the element number. ' +
-        'Only meaningful when operation is CLICK.',
-      criteria: criteriaFor(table.eligible.CLICK),
-    },
-    type_text_target: {
-      type: 'choice',
-      instructions:
-        'Which element should receive text? Answer with the element number. ' +
-        'Only meaningful when operation is TYPE_TEXT.',
-      criteria: criteriaFor(table.eligible.TYPE_TEXT),
-    },
-    type_text_value: {
-      type: 'choice',
-      instructions:
-        'Which of these verbatim fragments should be typed into the target element? ' +
-        'Answer with the fragment number. The fragments come from the goal and from the ' +
-        'target field label; pick exactly one and it is typed unchanged. ' +
-        'Only meaningful when operation is TYPE_TEXT.',
-      criteria: candidateCriteria(candidates),
-    },
-    select_target: {
-      type: 'choice',
-      instructions:
-        'Which element should be selected? Answer with the element number. ' +
-        'Only meaningful when operation is SELECT.',
-      criteria: criteriaFor(table.eligible.SELECT),
-    },
-    goal_met: {
-      type: 'noul',
-      instructions: `The goal is already satisfied by the page as it stands: ${goal}`,
-    },
-    stuck: {
-      type: 'noul',
-      instructions:
-        'No offered operation can make further progress on this goal, and repeating the ' +
-        'last operation would not help.',
-    },
   };
+
+  /**
+   * 加一道「选目标」的 choice —— **criteria 为空就整问不加**。
+   *
+   * 服务端拒收空 criteria 的 choice(400),而没有可选目标的操作本来也不该被问:问了只会
+   * 让模型选到一个不存在的目标,再由 `validateDecision` 拒掉、白花一轮。
+   */
+  const askTarget = (key, instructions, criteria) => {
+    if (Object.keys(criteria).length === 0) return;
+    questions[key] = { type: 'choice', instructions, criteria };
+  };
+
+  askTarget(
+    'click_target',
+    'Which element should be clicked? Answer with the element number. ' +
+      'Only meaningful when operation is CLICK.',
+    criteriaFor(table.eligible.CLICK),
+  );
+  askTarget(
+    'type_text_target',
+    'Which element should receive text? Answer with the element number. ' +
+      'Only meaningful when operation is TYPE_TEXT.',
+    criteriaFor(table.eligible.TYPE_TEXT),
+  );
+  askTarget(
+    'type_text_value',
+    'Which of these verbatim fragments should be typed into the target element? ' +
+      'Answer with the fragment number. The fragments come from the goal and from the ' +
+      'target field label; pick exactly one and it is typed unchanged. ' +
+      'Only meaningful when operation is TYPE_TEXT.',
+    candidateCriteria(candidates),
+  );
+  askTarget(
+    'select_target',
+    'Which element should be selected? Answer with the element number. ' +
+      'Only meaningful when operation is SELECT.',
+    criteriaFor(table.eligible.SELECT),
+  );
+
+  questions.goal_met = {
+    type: 'noul',
+    instructions: `The goal is already satisfied by the page as it stands: ${goal}`,
+  };
+  questions.stuck = {
+    type: 'noul',
+    instructions:
+      'No offered operation can make further progress on this goal, and repeating the ' +
+      'last operation would not help.',
+  };
+
+  return questions;
 }
 
 /** 需要目标的三个操作与它们各自读取的字段名。 */
