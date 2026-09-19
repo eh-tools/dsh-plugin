@@ -39,3 +39,9 @@ docs/x-thread-draft.md
 docs/xiaoheihe-final.md
 docs/xiaoheihe-publish.md
 article/
+
+# ---- 个人 demo 目录(不入库,与 docs/ 平级) ----
+# 放个人自动化/试验脚本,与仓库工具链无关。注意别把仓库自己的工具放进来:
+# scripts/ 下那 5 个门禁与自检脚本是 justfile / package.json /
+# .pre-commit-config.yaml 的依赖,必须留在版本控制里。
+demos/
