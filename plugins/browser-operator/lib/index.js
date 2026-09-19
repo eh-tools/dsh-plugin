@@ -1055,7 +1055,10 @@ export function apply(ctx, config = {}) {
                       (step.targetIndex === null || step.targetIndex === undefined
                         ? ''
                         : ` [${step.targetIndex}]`) +
-                      ` (${step.confidence})`,
+                      ` (${step.confidence})` +
+                      // reason 只有被拒过之后才有值。**必须渲染** —— 模型看到的是 render,
+                      // 不是 schema 声明的那份结构值;漏在这里,那几轮重试就白花了。
+                      (step.reason ? ` · ${step.reason}` : ''),
                   )
                   .join('\n')
               : ''),

@@ -1529,6 +1529,40 @@ check('browser_act 已注册且带齐门禁要求的四件套', () => {
     assert.equal(definition.timeoutMs, 120000);
 });
 
+check('browser_act 的 render 把 reason 带进模型可见的输出', () => {
+    // 这个洞咬过两次:模型看到的是 render,不是 output.schema 声明的那份结构值。
+    // 在此之前门禁里唯一碰 render 的断言只是 `typeof === 'function'` —— 从不调用它,
+    // 所以「结构化值里有 reason、渲染时把它丢掉」这种事完全测不出来。
+    const ctx = makeCtx();
+    apply(ctx, {});
+    const [block] = ctx.toolsByName.get('browser_act').output.render(
+        { goal: 'g' },
+        {
+            status: 'error',
+            steps: [
+                { step: 1, operation: 'CLICK', targetIndex: 17, reason: '', confidence: 1 },
+                {
+                    step: 2,
+                    operation: 'CLICK',
+                    targetIndex: 17,
+                    reason: '执行前校验失败:页面在执行前变了',
+                    confidence: 0.78,
+                },
+            ],
+            goalMet: 0,
+            elapsedMs: 3580,
+            usage: { inputTokens: 24394, outputTokens: 5538, calls: 3 },
+            error: '动作执行前连续 3 次校验失败',
+        },
+    );
+    assert.equal(block.type, 'text');
+    const text = block.text;
+    assert.match(text, /^error · 2 步 · goalMet=0 · 3580ms · Jev 3 次 24394 in \/ 5538 out/);
+    assert.match(text, /动作执行前连续 3 次校验失败/);
+    assert.match(text, /^1\. CLICK \[17\] \(1\)$/m, '没有 reason 的那步不该多出尾巴');
+    assert.match(text, /执行前校验失败:页面在执行前变了/, '重试原因必须进模型可见的输出');
+});
+
 check('注册只发生在 apply 期,不在 apply 里解析凭证', () => {
     // makeCtx() 故意不提供 get() 之外的 credentials —— 若 apply 期解析就会抛。
     assert.doesNotThrow(() => apply(makeCtx(), {}));

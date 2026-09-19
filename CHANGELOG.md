@@ -27,6 +27,13 @@
   **同时把它的 agent preset 也从本机拿掉**(`~/.dsh/.agent-presets/browser-operator/`);
   退役当天的两份 yml 快照留档在该目录 `preset/` 下(绝对路径已换成 `<repo-abs-path>`)。决策见 `docs/adr/0008`
 
+### Fixed
+
+- `browser-operator`:`browser_act` 的 render **补上每步的 `reason`** —— 此前它只渲染
+  `序号/操作/目标/置信度`,而「上一次被拒的原因」明明算出来、也过了 schema 校验,却在渲染时被丢掉,
+  于是模型永远看不到重试发生过。门禁里唯一碰 render 的断言只是 `typeof === 'function'`,从不调用它,
+  所以这个缺口一直测不出来;现补一条**真正调用 render** 的用例钉住模型可见面
+
 ### Changed
 
 - `browser-operator`:`browser_act` 的载荷上限变成配置项 —— 新增 `maxElements`(默认 `200`)与
