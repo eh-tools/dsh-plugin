@@ -11,11 +11,11 @@
 //   │    42px 高 / 12px 圆角 / hover 交互底色 / 展开态图标+文字, rail 态 36px 圆钮。
 //   └─ 归档面板: 复刻官方设置浮层(VOzbGW overlay/mask/panel):
 //        bg-mask-1 + mask-blur 遮罩, bg-layer-2 + shadow-lv3 + 24px 圆角面板,
-//        官方滚动条 token, 自定义复选框(官方 IconCheckOutline14 勾选),
+//        官方滚动条 token, 自定义复选框(官方 IconCheckOutlineRegular 勾选),
 //        官方 Button(primary / ghost / outline)。
 //
 // 功能:
-//   ├─ sidebar.footer.action: 「批量归档」入口按钮(官方 IconArchiveOutline20)
+//   ├─ sidebar.footer.action: 「批量归档」入口按钮(官方 IconArchiveOutlineRegular)
 //   └─ shell.overlay: 按工作区分组列出未归档会话, 勾选/全选, 两次点击确认,
 //        逐个调用 ctx.workspaces.archiveSession(id) 归档。
 window.__ModuleLoader__.load({
@@ -26,9 +26,9 @@ window.__ModuleLoader__.load({
     Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' });
     var React = require('react');
     var UI = require('@deepseek-ai/dsh-client-ui-primitives');
-    var IconArchiveOutline20 = UI.IconArchiveOutline20;
-    var IconCheckOutline14 = UI.IconCheckOutline14;
-    var IconCloseOutline16 = UI.IconCloseOutline16;
+    var IconArchiveOutlineRegular = UI.IconArchiveOutlineRegular;
+    var IconCheckOutlineRegular = UI.IconCheckOutlineRegular;
+    var IconCloseOutlineRegular = UI.IconCloseOutlineRegular;
     var Btn = UI.Button;
 
     exports.name = 'dsh-batch-archive';
@@ -196,7 +196,7 @@ window.__ModuleLoader__.load({
           React.createElement(
             'span',
             { className: 'baCheckBox' },
-            props.checked ? React.createElement(IconCheckOutline14, {}) : null,
+            props.checked ? React.createElement(IconCheckOutlineRegular, {}) : null,
           ),
         );
       }
@@ -219,7 +219,7 @@ window.__ModuleLoader__.load({
               },
             },
             [
-              React.createElement(IconArchiveOutline20, { key: 'icon', size: wide ? 16 : 18 }),
+              React.createElement(IconArchiveOutlineRegular, { key: 'icon', size: wide ? 16 : 18 }),
               wide
                 ? React.createElement(
                     'span',
@@ -277,7 +277,7 @@ window.__ModuleLoader__.load({
             },
             [
               props.allSelected
-                ? React.createElement(IconCheckOutline14, { key: 'ck', className: 'baGroupCheck' })
+                ? React.createElement(IconCheckOutlineRegular, { key: 'ck', className: 'baGroupCheck' })
                 : null,
               React.createElement(
                 'span',
@@ -448,7 +448,7 @@ window.__ModuleLoader__.load({
                 React.createElement(
                   'div',
                   { className: 'baTitle' },
-                  React.createElement(IconArchiveOutline20, { className: 'baTitleIcon' }),
+                  React.createElement(IconArchiveOutlineRegular, { className: 'baTitleIcon' }),
                   React.createElement('span', { className: 'baTitleText' }, '批量归档'),
                 ),
                 React.createElement(
@@ -461,7 +461,7 @@ window.__ModuleLoader__.load({
                       store.setOpen(false);
                     },
                   },
-                  React.createElement(IconCloseOutline16, {}),
+                  React.createElement(IconCloseOutlineRegular, {}),
                 ),
               ),
               React.createElement('div', { className: 'baEmptyText' }, '会话列表暂不可用'),
@@ -685,7 +685,7 @@ window.__ModuleLoader__.load({
               React.createElement(
                 'div',
                 { className: 'baTitle' },
-                React.createElement(IconArchiveOutline20, { className: 'baTitleIcon' }),
+                React.createElement(IconArchiveOutlineRegular, { className: 'baTitleIcon' }),
                 React.createElement('span', { className: 'baTitleText' }, '批量归档'),
               ),
               React.createElement(
@@ -715,7 +715,7 @@ window.__ModuleLoader__.load({
                     store.setOpen(false);
                   },
                 },
-                React.createElement(IconCloseOutline16, {}),
+                React.createElement(IconCloseOutlineRegular, {}),
               ),
             ),
             React.createElement('div', { className: 'baList' }, rows),
