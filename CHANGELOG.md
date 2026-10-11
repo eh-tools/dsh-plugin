@@ -36,6 +36,12 @@
 
 ### Fixed
 
+- `batch-archive`:修掉「侧边栏底部按钮根本不出现」—— `lib/client.js` 取的三个图标
+  `IconArchiveOutline20` / `IconCheckOutline14` / `IconCloseOutline16` 在官方
+  `@deepseek-ai/dsh-client-ui-primitives` 里**都已不存在**(现名是 `…Regular` / `…Medium`),
+  `React.createElement(undefined)` 首帧即抛,槽的错误边界把该条目**退役**(`abdicated`),
+  于是条目仍在注册台账上、按钮永不渲染(`shell.overlay` 的面板因为关闭时渲染 `null` 才没暴露
+  同一处错误,一打开同样会抛)。改用官方现名后按钮与面板恢复
 - `browser-operator`:`browser_act` 的 render **补上每步的 `reason`** —— 此前它只渲染
   `序号/操作/目标/置信度`,而「上一次被拒的原因」明明算出来、也过了 schema 校验,却在渲染时被丢掉,
   于是模型永远看不到重试发生过。门禁里唯一碰 render 的断言只是 `typeof === 'function'`,从不调用它,
