@@ -49,6 +49,10 @@
 - `browser-operator`:`browser_act` 的校验失败理由分开报两种成因 —— 「本页没有可选目标(那一问
   根本没发出)」与「模型没给整数目标」此前都渲染成同一句 `拿到 undefined`,读的人会误判成模型
   乱答。实机跑维基搜索页时就被这条误导向过一次
+- `batch-archive`:面板里无持久标题的会话改显示「未命名」,与官方侧栏同一口径 —— 此前行标题取
+  `SessionSummary.displayTitle` 的兜底(标题 → cwd 目录名 → id),于是「未分组」里会显示成一排
+  `dsh-plugin` 这类仓库名,看起来像子代理/内部会话;官方侧栏对这些行显示本地化「未命名」
+  (`session.untitled`),两处对不上
 
 ### Changed
 

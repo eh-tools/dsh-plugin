@@ -232,6 +232,16 @@ window.__ModuleLoader__.load({
         );
       }
 
+      // ---- 行标题: 与官方侧栏口径一致(有持久标题用标题, 否则「未命名」) ----
+      // 不能用 SessionSummary.displayTitle —— 它按「标题 → cwd 目录名 → id」兜底,
+      // 于是无标题会话会显示成 "dsh-plugin" 这类仓库名, 在「未分组」里看着像
+      // 子代理/内部会话; 官方侧栏对这些行统一显示本地化的「未命名」
+      // (dsh-client-ui-workspace 的 session.untitled)。
+      function rowTitleOf(s) {
+        if (typeof s.title === 'string' && s.title.trim() !== '') return s.title;
+        return '未命名';
+      }
+
       // ---- 行 / 分组头: React.memo + 原始值 props + 稳定回调 ----
       // 会话 store 每次 flush 都从零重建 byId(新引用), 面板必然重渲染; 把行与分组头
       // 提成 memo 组件后, 只有自身原始值真的变了的行才重渲染, 不再全量重排整列表。
@@ -247,7 +257,7 @@ window.__ModuleLoader__.load({
             },
             'aria-label': props.title,
           }),
-          React.createElement('span', { className: 'baRowTitle' }, props.title),
+          React.createElement('span', { className: 'baRowTitle', title: props.title }, props.title),
           React.createElement(
             'span',
             { className: 'baRowMeta' },
@@ -636,7 +646,7 @@ window.__ModuleLoader__.load({
               React.createElement(Row, {
                 key: id,
                 id: id,
-                title: s.displayTitle || s.title || id,
+                title: rowTitleOf(s),
                 time: timeAgo(s.updatedAt),
                 running: !!s.running,
                 checked: !!selected[id],
