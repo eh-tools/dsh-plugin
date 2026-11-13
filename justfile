@@ -42,6 +42,12 @@ audit:
     # (本仓库唯一因本计划新增运行时依赖的插件目录);db-console 等其它带 lockfile 的插件目录尚未覆盖
     pnpm --dir plugins/browser-operator audit
 
+# ---- 主题 token 漂移检查(升级 dsh 后手动跑) ----
+# 不进 check: 需要本机装有 dsh(读它的 ui-theme bundle), CI 没有。
+# 对比官方语义 token 与方案 / stylevault 补丁层的覆盖, 列出缺口。
+theme-drift:
+    node scripts/check-theme-token-drift.mjs
+
 # ---- 全量检查(等同 pre-push 的内容) ----
 check: lint test audit
 
