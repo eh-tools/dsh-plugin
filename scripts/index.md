@@ -12,6 +12,7 @@
 | ------------------------------------------------------------ | ------ | ---------------------------------------- | ------------------------------------------------------------------- |
 | [`verify-plugin-manifests.mjs`](verify-plugin-manifests.mjs) | Node   | `just test` / `just check` / `pnpm test` | 离线重放 dsh 的插件安装链校验,把"重启才发现装不上"提前到提交前      |
 | [`verify-ds-balance.mjs`](verify-ds-balance.mjs)             | Node   | `just test` / `just check` / `pnpm test` | ds-balance 的 host 逻辑冒烟测试(mock ctx + HTTP 路由,无网络)        |
+| [`check-theme-token-drift.mjs`](check-theme-token-drift.mjs) | Node   | 手动 / `just theme-drift`                | 对比官方语义 token 与方案覆盖,列升级 dsh 后漏掉的主题 token         |
 | [`no-commit-on-main.py`](no-commit-on-main.py)               | Python | pre-commit(`pre-commit` 阶段)            | 拒绝在 main 上直接提交,放行非 main / merge / 首个提交               |
 | [`commit-message-body.py`](commit-message-body.py)           | Python | pre-commit(`commit-msg` 阶段)            | `fix`/`perf`/`refactor` 必须用「标签: 内容」行补齐 body             |
 | [`enable-branch-protection.sh`](enable-branch-protection.sh) | Bash   | 手动,一次性                              | 用 GitHub rulesets 给 main 开分支保护(禁删、禁 force-push、必须 PR) |
@@ -85,6 +86,29 @@ scripts/enable-branch-protection.sh <owner>/<repo>
 
 它替身掉 `globalThis.fetch` 喂固定的真实响应结构,所以全程无网络。改 ds-balance 的 host 逻辑
 后跑它,别只靠肉眼看面板。
+
+## 诊断类(手动, 不进 `just check`)
+
+### `check-theme-token-drift.mjs`
+
+升级 dsh 后跑一次:`just theme-drift`(或 `node scripts/check-theme-token-drift.mjs`)。
+
+StyleVault 那一层是「按 token 名覆盖」的 —— 它只认自己清单里的 90 来个语义 token。
+DSH 每加一批 token(`0.2.1` 的 `--dsw-menu-surface-fill` 就是一例),这些新 token 就退回
+官方配色;浅色方案跑在深色外壳上时,弹层会变成深色底板 + 深色字。这类回归靠肉眼看,通常
+要等某个弹层变灰才发现。
+
+脚本从本机 dsh 的 `dsh-client-ui-theme` stylesheet 提取官方语义 token(alias / specific /
+menu / elevation / mask / shadow / linear / gradient),再与方案 JSON 的 `tokens`、以及
+profile 里 `patches/dsh-stylevault@0.3.0.patch` 的补丁层做差集,按影响面(弹层/菜单、
+设置面板、引导页、diff、状态色…)列出缺口与官方浅/深值。
+
+口径里**不含** `--dsw-static-*`(原始色板)与 `--dsw-font-*`(字号体系) —— 它们不是主题
+该逐个覆盖的东西。`--json` 给脚本消费;`--fail-on-drift` 让有缺口时退出 1(默认只报告);
+`--dsh-root` / `--scheme` / `--patch` 可覆盖默认路径。
+
+为什么放进本仓库而不是插件里:它检查的是「本机 dsh ↔ 方案 ↔ 本地补丁」三方关系,
+需要读本机 dsh 安装,跟着仓库的升级节奏走最合适。
 
 ## 个人脚本在哪
 

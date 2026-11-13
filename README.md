@@ -84,6 +84,7 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/batch-archive
 - 已装上游且同意后,首次启动弹窗询问,同意即每次启动自动应用当前 Chrome 配色;之后可在 **Settings → StyleVault · Local Chrome** 卡片改主意。
 - 不装上游则只生成预设,不接管主题。
 - 不挂载也能用 CLI 生成预设:`node plugins/stylevault-localchrome/scripts/build-preset.js`。
+- **升级 DSH 后先跑 `just theme-drift`**:StyleVault 是「按 token 名覆盖」的,DSH 新增的主题 token 不在它的清单里,会退回官方配色——浅色方案跑在深色外壳上时,弹层就是「灰底黑字」。脚本会列出缺口与官方浅/深值;处理口径见 `scripts/index.md` 的 `check-theme-token-drift.mjs`。
 
 ### browser-operator —— 常驻可见浏览器 + 目标级 `browser_act`(挂 agent preset,不走 profile)
 
@@ -110,13 +111,14 @@ dsh plugin --profile web add link:<repo-abs-path>/plugins/batch-archive
 
 ## 常见问题速查
 
-| 现象           | 解决                                                                 |
-| -------------- | -------------------------------------------------------------------- |
-| 装了插件没效果 | 重启 DSH + 硬刷新浏览器;确认安装命令用的是仓库**绝对路径**           |
-| 改了代码不生效 | `lib/client.js` 改动刷新浏览器即可;`lib/index.js` 改动需重启 DSH     |
-| 如何更新插件   | `git pull` 后重跑安装命令                                            |
-| 如何卸载       | `dsh plugin --profile web remove <插件id>`,然后重启 DSH              |
-| 凭证放哪       | `~/.dsh/.credentials.yaml`(或环境变量),**不要写进代码 / 提交到 git** |
+| 现象           | 解决                                                                                                                               |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| 装了插件没效果 | 重启 DSH + 硬刷新浏览器;确认安装命令用的是仓库**绝对路径**                                                                         |
+| 改了代码不生效 | `lib/client.js` 改动刷新浏览器即可;`lib/index.js` 改动需重启 DSH                                                                   |
+| 如何更新插件   | `git pull` 后重跑安装命令                                                                                                          |
+| 如何卸载       | `dsh plugin --profile web remove <插件id>`,然后重启 DSH                                                                            |
+| 凭证放哪       | `~/.dsh/.credentials.yaml`(或环境变量),**不要写进代码 / 提交到 git**                                                               |
+| 弹层灰底黑字   | 跑 `just theme-drift` 看缺口;确认 profile 的 `ui-theme.preference` 与方案同侧(浅色方案配 `light`),并按方案明暗补 stylevault 补丁层 |
 
 ## 贡献与开发
 
